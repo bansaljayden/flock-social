@@ -13,9 +13,17 @@
 //     are not progress.json's notFound (a partial city, or one with no count),
 //     whose replay stopped (a record for another day, a weekday that named
 //     none, an answer with no venue list, each by its own name), with a
-//     malformed record, whose month is not one, whose progress record
+//     malformed record, a curve slot that is no number from 0 to 100, a short
+//     page whose venues_n says more were there, a box still at the 500 cap at
+//     the smallest tile, whose month is not one, whose progress record
 //     disagrees with the plan, that the plan marks config:true or whose key is
 //     a holdout, beijing or a training city (those folders are never opened);
+//   * the import never holds a BestTime key: a key variable set before it
+//     loads, or loaded by a module, refuses it before any answer is read, and
+//     a clean run reads none and never loads a .env from its working folder
+//     (in child processes);
+//   * the twin rule and identity rule 4 reach every longitude cell 40 m spans,
+//     at 70 degrees too, and one cell either side wherever that is enough;
 //   * one global placement: a venue nearer a training city, a holdout, beijing
 //     or a refused cache city is dropped, and so is one within 80 km of a
 //     holdout or beijing wherever it is placed; one inside two cities' circles
@@ -27,7 +35,10 @@
 //     of any ml_venues row or of any venue the export holds; the 2 km search
 //     reaches every grid cell 2 km spans, at any latitude; without the
 //     snapshot both are "pending"; an export holding a venue the snapshot
-//     lacks, or cache rows already, is refused;
+//     lacks, or cache rows already, is refused; --write and --parity refuse a
+//     snapshot without its meta, one row short of the table (an unlabelled
+//     venue no export shows), changed after its hash was taken, or taken with
+//     a WHERE, and a dry run says a snapshot without one is unproven;
 //   * the rows: the export's 48-column HEADER, city world_cache, synthetic ids
 //     from 1,000,000,000, no Google types or price, month 11 and fall, the
 //     venue's own value as its baseline, rating as NUMERIC(2,1) stores it;
@@ -35,12 +46,14 @@
 //   * the peak-hour check flags a city whose bar or nightclub mode moves 3 h
 //     or more from the training cities' (3 h flags, 2 h does not, in both
 //     directions and for nightclubs too), and --write leaves it out unless
-//     named;
+//     named; a comparison an empty, unreadable or partial reference cannot
+//     make is reported unavailable, and --write refuses;
 //   * END TO END: fixture answers written by the harvester's own --offline
 //     --commit into a real migrated Postgres, exported by the real exporter,
 //     and --parity finds every exported weekly row of the venues this folder
 //     wrote equal to the generator's, leaving out live rows and the venues
-//     another pass wrote (by the snapshot's created_at), never as mismatches.
+//     another pass wrote (by the snapshot's created_at), never as mismatches;
+//     a correct row held twice fails it.
 //
 // HOW TO RUN
 //   cd backend && node --test __tests__/importFilterCache.test.js
@@ -75,6 +88,12 @@ const I = require('../scripts/ml/train/importFilterCache');
 const exporter = require('../scripts/ml/train/export_training_data');
 const { bestTimeSlotToLocal } = require('../scripts/ml/collectWeekly');
 const { bestTimeDayToJsDay, VENUE_TARGETS } = require('../scripts/ml/config');
+const { kmBetween } = require('../scripts/ml/addDemandVenues');
+
+// Every module is loaded, so no dotenv call is left to make: the import refuses
+// to run while any BESTTIME_API_KEY* variable is set (NO KEY in its header).
+const KEY_NAME_RE = /^BESTTIME_API_KEY/i;
+for (const name of Object.keys(process.env)) if (KEY_NAME_RE.test(name)) delete process.env[name];
 
 // Not a key: the fake never checks it, and the cache files hold none.
 const FIXTURE_KEY = 'pri_fixturefixturefixture';
@@ -190,6 +209,35 @@ const rewriteAnswer = (file, change) => {
   fs.writeFileSync(file, JSON.stringify(entry));
 };
 
+// A snapshot's meta as plan step C.4 writes it, from the CSV as it stands:
+// every count agrees with the file unless `overrides` says the table held
+// something else.
+function writeSnapshotMeta(file, overrides = {}) {
+  const bytes = fs.readFileSync(file);
+  const ids = I.parseCsv(bytes.toString('utf8')).slice(1).filter((r) => r.length > 1).map((r) => Number(r[0]));
+  const meta = {
+    table: 'ml_venues', query: I.SNAPSHOT_QUERY, isolation: 'REPEATABLE READ READ ONLY, one transaction',
+    snapshotAt: '2026-11-25T19:31:05.168Z', tableCount: ids.length, tableMinId: ids[0], tableMaxId: ids[ids.length - 1],
+    rowsWritten: ids.length, firstId: ids[0], lastId: ids[ids.length - 1],
+    csvSha256: crypto.createHash('sha256').update(bytes).digest('hex'), ...overrides,
+  };
+  fs.writeFileSync(I.snapshotMetaFile(file), JSON.stringify(meta, null, 2));
+  return meta;
+}
+
+// A cache root of one city, filled by the harvester's own questions, with
+// its plan and a progress record of the 404s it met.
+async function singleCityRoot(c, venues) {
+  const dir = tmp('flock-import-one-');
+  const filled = await fillCache(path.join(dir, `${c.key}-2026-11-r${c.radiusKm}`), {
+    cities: [c.key], radiusKm: c.radiusKm, centroids: { [c.key]: { lat: c.lat, lon: c.lon } }, venues,
+  });
+  fs.writeFileSync(path.join(dir, 'progress.json'), JSON.stringify({ cities: { [c.key]: progressRecord(c, filled.notFound) } }));
+  const planPath = path.join(dir, 'cities.json');
+  fs.writeFileSync(planPath, JSON.stringify([{ key: c.key, name: c.key, lat: c.lat, lon: c.lon, radiusKm: c.radiusKm }]));
+  return { root: dir, plan: planPath, ...filled };
+}
+
 // ---------------------------------------------------------------------------
 // The fixture cache: a plan, its progress, its folders, a training reference.
 // ---------------------------------------------------------------------------
@@ -213,6 +261,8 @@ const C = {
   malformtown: { key: 'malformtown', lat: -16.0, lon: -30.0, radiusKm: 5 },
   movedtown: { key: 'movedtown', lat: -18.0, lon: -30.0, radiusKm: 5 },
   decembertown: { key: 'decembertown', lat: -20.0, lon: -30.0, radiusKm: 5 },
+  stringtown: { key: 'stringtown', lat: -26.0, lon: -30.0, radiusKm: 5 },
+  shorttown: { key: 'shorttown', lat: -28.0, lon: -30.0, radiusKm: 5 },
   // Refused (the cacher stopped it, no folder), 18.9 km north of testville.
   haltedtown: { key: 'haltedtown', lat: 10.17, lon: 10.0, radiusKm: 10 },
 };
@@ -278,6 +328,7 @@ let root;
 let planFile;
 let refDir;
 let snapshotFile;
+let shortFile;
 let exportDir;
 let absentExportDir;
 let cacheExportDir;
@@ -360,6 +411,20 @@ async function buildFixture() {
   await fill(C.movedtown, [one('movedtown', 85)], { progress: { lat: -18.5 } });
   // decembertown: fetched on 30 November, already December east of UTC+12.
   await fill(C.decembertown, [one('decembertown', 89)], { fetchedAt: '2026-11-30T12:00:00.000Z' });
+  // stringtown: Tuesday's curve holds "35" in slot 7, a string readHours
+  // would make a hole: 167 rows and nothing counted malformed.
+  await fill(C.stringtown, [one('stringtown', 91)], {
+    mutate: ({ day }, rec) => {
+      if (day === 1) { rec.day_raw_whole = rec.day_raw_whole.slice(); rec.day_raw_whole[7] = '35'; }
+      return rec;
+    },
+  });
+  // shorttown: an answer listing its one venue says venues_n 2, and it is a
+  // short page, so paging stopped there.
+  const st = await fill(C.shorttown, [one('shorttown', 95)]);
+  const listing = fs.readdirSync(st.dir).find((f) => JSON.parse(fs.readFileSync(path.join(st.dir, f), 'utf8')).data.venues.length === 1);
+  rewriteAnswer(path.join(st.dir, listing), (entry) => { entry.data.venues_n = 2; });
+  shortFile = listing;
   // haltedtown: the cacher stopped it before it made a folder.
   progress.cities.haltedtown = progressRecord(C.haltedtown, 0, 'stopped');
   // A training city's key on a plan entry the plan forgot to mark config,
@@ -390,19 +455,23 @@ async function buildFixture() {
     fs.writeFileSync(path.join(run, name), JSON.stringify({ url: `ref-${d}`, fetchedAt: FETCHED_AT, data: { venues: ref.map((v) => record(v, d)) } }));
   }
 
-  // The identity snapshot (plan step C.4's columns, and besttime_status).
+  // The identity snapshot (plan step C.4's columns) and its meta.
   snapshotFile = path.join(root, 'ml_venues_snapshot.csv');
+  const at = '2026-10-01T00:00:00.000000Z';
   fs.writeFileSync(snapshotFile, [
-    'id,besttime_venue_id,google_place_id,name,latitude,longitude,city,besttime_status',
-    '101,ven_t_h_knownbt,ChIJsnapshotKnownBt001,Known Bt Row,9.96,10.0,philly,',
-    '102,,ChIJtestvilleKnownPlI1,"Joe\'s ""Place"", Inc",10.0,9.96,philly,found',
+    'id,besttime_venue_id,google_place_id,name,latitude,longitude,city,besttime_status,created_at',
+    `101,ven_t_h_knownbt,ChIJsnapshotKnownBt001,Known Bt Row,9.96,10.0,philly,,${at}`,
+    `102,,ChIJtestvilleKnownPlI1,"Joe's ""Place"", Inc",10.0,9.96,philly,found,${at}`,
     // 1.5 km north of ven_t_j_near, nobody's identity.
-    '103,ven_unrelated,ChIJsnapshotUnrelated1,Unrelated Row,9.9735,10.04,philly,harvested',
+    `103,ven_unrelated,ChIJsnapshotUnrelated1,Unrelated Row,9.9735,10.04,philly,harvested,${at}`,
     // 2.5 km north of ven_t_d_cafe: outside the 2 km rule.
-    '104,ven_far_row,ChIJsnapshotFarRow0001,Far Row,10.0625,10.0,philly,',
-    '105,,ChIJsnapshotNearDup01,The Brass Lantern,10.0301,10.03,philly,',
+    `104,ven_far_row,ChIJsnapshotFarRow0001,Far Row,10.0625,10.0,philly,,${at}`,
+    `105,,ChIJsnapshotNearDup01,The Brass Lantern,10.0301,10.03,philly,,${at}`,
+    // A corpus venue with no labelled rows: in neither export file.
+    `106,,ChIJsnapshotUnlabelled1,Unlabelled Row,50.0,50.0,philly,found,${at}`,
     '',
   ].join('\n'));
+  writeSnapshotMeta(snapshotFile);
   // The export the rows join: 104 sits 1.1 km from ven_w_d_exportnear there,
   // wherever the snapshot puts it.
   exportDir = writeExportDir([[101, 9.96, 10.0, 'philly'], [104, 10.03, 10.2, 'philly'], [103, 9.9735, 10.04, 'philly']],
@@ -564,6 +633,117 @@ test('the arguments refuse what would make an import unsafe', () => {
 });
 
 // ---------------------------------------------------------------------------
+// No key, ever (NO KEY in the importer's header).
+// ---------------------------------------------------------------------------
+// Preloaded into a child with -r: every read of a BESTTIME_API_KEY* variable
+// through process.env, with the file that made it; every file named .env
+// opened; dotenv calls (SPY_STUB_PATHED: a call naming a path, which is how
+// the collectors load backend/.env, is recorded and skipped, so the child
+// behaves the same whatever this checkout's backend/.env holds; a call
+// naming none, which would load the working folder's .env, runs for real);
+// SPY_LOAD_KEY: a key set the moment collectWeekly.js is loaded, as its
+// dotenv does from a backend/.env that holds one. Reported to SPY_OUT at exit.
+const SPY = `
+const fs = require('fs');
+const path = require('path');
+const Module = require('module');
+const real = process.env;
+const seen = { keyReads: [], envFiles: [], dotenv: [] };
+process.env = new Proxy(real, {
+  get(t, k) {
+    const v = Reflect.get(t, k);
+    if (typeof k === 'string' && /^BESTTIME_API_KEY/i.test(k)) {
+      const from = (new Error().stack.split('\\n').slice(2).find((l) => !l.includes('node:')) || '').trim();
+      seen.keyReads.push({ name: k, defined: v !== undefined, from });
+    }
+    return v;
+  },
+});
+for (const name of ['readFileSync', 'openSync', 'readFile', 'createReadStream']) {
+  const inner = fs[name];
+  fs[name] = function spied(p, ...rest) {
+    if (typeof p === 'string' && path.basename(p) === '.env') seen.envFiles.push(path.resolve(p));
+    return inner.call(this, p, ...rest);
+  };
+}
+const load = Module._load;
+Module._load = function spiedLoad(request, ...rest) {
+  const out = load.call(this, request, ...rest);
+  if (request === 'dotenv' && real.SPY_STUB_PATHED) {
+    return { ...out, config: (o) => {
+      seen.dotenv.push(o && o.path ? path.resolve(o.path) : null);
+      return o && o.path ? { parsed: {} } : out.config(o);
+    } };
+  }
+  if (/collectWeekly$/.test(request) && real.SPY_LOAD_KEY) real.BESTTIME_API_KEY = real.SPY_LOAD_KEY;
+  return out;
+};
+process.on('exit', () => {
+  const canaries = Object.entries(real).filter(([, v]) => /canary/.test(String(v))).map(([k]) => k);
+  const loaded = Object.keys(require.cache).filter((f) => /harvestVenueFilter/.test(f));
+  fs.writeFileSync(real.SPY_OUT, JSON.stringify({ ...seen, canaries, loaded }));
+});
+`;
+
+test('the import never holds a key: one set before it loads or loaded by a module refuses it, and a clean run reads none', async () => {
+  const { spawnSync } = require('node:child_process');
+  const work = tmp('flock-import-nokey-');
+  const spyFile = path.join(work, 'spy.js');
+  fs.writeFileSync(spyFile, SPY);
+  // A .env in the working folder, holding keys a default dotenv call would load.
+  fs.writeFileSync(path.join(work, '.env'), 'BESTTIME_API_KEY=pri_canary_dotenv_0000000000\nBESTTIME_API_KEY_PUBLIC=pub_canary_dotenv_00000\n');
+  const importer = path.join(__dirname, '..', 'scripts', 'ml', 'train', 'importFilterCache.js');
+  const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !KEY_NAME_RE.test(k)));
+  const child = (name, env) => {
+    const spyOut = path.join(work, `${name}.json`);
+    const r = spawnSync(process.execPath, ['-r', spyFile, importer, '--dry-run', `--cache-root=${root}`, `--plan=${planFile}`], {
+      cwd: work, env: { ...base, SPY_OUT: spyOut, SPY_STUB_PATHED: '1', ...env }, encoding: 'utf8', timeout: 120000,
+    });
+    return { status: r.status, out: `${r.stdout}${r.stderr}`, spy: JSON.parse(fs.readFileSync(spyOut, 'utf8')) };
+  };
+
+  // A key in the environment: refused before any module of the repository
+  // loads, and its value never read.
+  const set = child('set', { BESTTIME_API_KEY: 'pri_canary_env_000000000000' });
+  assert.equal(set.status, 2, set.out);
+  assert.match(set.out, /REFUSED: BESTTIME_API_KEY is set in the environment/);
+  assert.doesNotMatch(set.out, /canary|DRY RUN/);
+  assert.deepEqual(set.spy.keyReads, []);
+  assert.deepEqual(set.spy.loaded, [], 'harvestVenueFilter.js was loaded');
+
+  // A key a module loads (as collectWeekly.js's dotenv would from a
+  // backend/.env holding one): refused once the modules are loaded, before
+  // any answer is read.
+  const loaded = child('loaded', { SPY_LOAD_KEY: 'pri_canary_loaded_0000000000' });
+  assert.equal(loaded.status, 2, loaded.out);
+  assert.match(loaded.out, /REFUSED: BESTTIME_API_KEY is set in this process once its modules were loaded/);
+  assert.doesNotMatch(loaded.out, /canary|DRY RUN/);
+
+  // A clean run: the dry run goes on, the working folder's .env is never
+  // opened, no dotenv call loads a file by default, and the only look at a
+  // key variable in the whole process is discoverBestTime.js's, at load,
+  // finding nothing.
+  const clean = child('clean', {});
+  assert.equal(clean.status, 0, clean.out);
+  assert.match(clean.out, /DRY RUN \(nothing is written\)/);
+  assert.ok(!clean.spy.envFiles.includes(path.join(work, '.env')), JSON.stringify(clean.spy.envFiles));
+  assert.ok(clean.spy.dotenv.every((p) => p !== null), 'a dotenv call with no path would load the working folder\'s .env');
+  assert.deepEqual(clean.spy.canaries, []);
+  assert.ok(clean.spy.keyReads.every((r) => !r.defined && /discoverBestTime\.js/.test(r.from)), JSON.stringify(clean.spy.keyReads));
+
+  // In process too: run() refuses while one is set, by name.
+  process.env.BESTTIME_API_KEY_PUBLIC = 'pub_canary_inprocess_000000';
+  try {
+    const { result, out } = await runImport(['--dry-run', ...baseArgs()]);
+    assert.equal(result.exitCode, 2);
+    assert.match(out, /REFUSED: BESTTIME_API_KEY_PUBLIC is set in this process/);
+    assert.doesNotMatch(out, /canary/);
+  } finally {
+    delete process.env.BESTTIME_API_KEY_PUBLIC;
+  }
+});
+
+// ---------------------------------------------------------------------------
 // The dry run over the fixture cache.
 // ---------------------------------------------------------------------------
 test('a dry run refuses every city that fails a rule, by that rule, and never opens a holdout or training city\'s folder', async () => {
@@ -607,6 +787,16 @@ test('a dry run refuses every city that fails a rule, by that rule, and never op
   assert.match(c.brokentown.reasons.find((r) => r.reason === 'replayAbort').detail, /without a venue list/);
   assert.deepEqual(reasons(c.malformtown), ['malformedRecords']);
   assert.equal(c.malformtown.malformed, 1);
+  // A string in one curve slot: nothing malformed, every file read, the
+  // offline check alone, naming the city, the file and the slot.
+  assert.deepEqual(reasons(c.stringtown), ['invalidCurveValues']);
+  assert.deepEqual([c.stringtown.malformed, c.stringtown.invalidCurveValues, c.stringtown.filesRead], [0, 1, c.stringtown.filesHeld]);
+  assert.match(c.stringtown.reasons[0].detail, /stringtown [0-9a-f]{64}\.json day_int 1 slot 7 \(a string of 2 characters\)/);
+  // A short page whose venues_n says one more venue was there.
+  assert.deepEqual(reasons(c.shorttown), ['shortPageBelowTotal']);
+  assert.equal(c.shorttown.shortOfTotal, 1);
+  assert.match(c.shorttown.reasons[0].detail, new RegExp(`shorttown ${shortFile.replace('.', '\\.')} day_int \\d page 0: `
+    + '1 listed, 1 in the box so far, venues_n 2'));
   assert.deepEqual(reasons(c.movedtown), ['progressDisagrees']);
   assert.deepEqual(reasons(c.decembertown), ['monthUnknown']);
   assert.deepEqual(reasons(c.haltedtown), ['cacherNotDone', 'noFolder']);
@@ -618,10 +808,28 @@ test('a dry run refuses every city that fails a rule, by that rule, and never op
     assert.equal(c[key].state, 'accepted', key);
     assert.equal(c[key].filesRead, c[key].filesHeld, `${key} left a file unread`);
     assert.equal(c[key].misses, c[key].notFound, key);
-    assert.deepEqual([c[key].malformed, c[key].truncatedTiles, c[key].strayFiles], [0, 0, 0], key);
+    assert.deepEqual([c[key].malformed, c[key].truncatedTiles, c[key].strayFiles, c[key].invalidCurveValues, c[key].shortOfTotal],
+      [0, 0, 0, 0, 0], key);
   }
   assert.equal(result.report.totals.accepted, accepted.length);
-  assert.match(out, /malformed 0 {2}no day 0 {2}cut 0 {2}stray 0/);
+  assert.match(out, /malformed 0 {2}no day 0 {2}cut 0 {2}stray 0 {2}bad slots 0 {2}short of total 0/);
+});
+
+test('a box still at the 500 cap at the smallest tile refuses its city: venues there were never listed', async () => {
+  // 500 listings on one spot, off every tile edge: each split leaves them in
+  // one quarter until the box cannot split, every day of the week.
+  const c = { key: 'crowdedtown', lat: -32.0004, lon: -29.9996, radiusKm: 5 };
+  const crowd = Array.from({ length: 500 }, (_, i) => vn(`ven_crowd_${String(i).padStart(3, '0')}`, c.lat, c.lon, 'RESTAURANT',
+    `ChIJcrowdedtown${String(i).padStart(6, '0')}`, weekFor(i)));
+  const single = await singleCityRoot(c, crowd);
+  const { result, out } = await runImport(['--dry-run', `--cache-root=${single.root}`, `--plan=${single.plan}`]);
+  assert.equal(result.exitCode, 0, out);
+  const r = result.report.cities.crowdedtown;
+  assert.deepEqual(reasons(r), ['truncatedTiles']);
+  assert.equal(r.truncatedTiles, 7, 'one smallest box, seven days');
+  assert.deepEqual([r.filesRead, r.misses, r.notFound, r.malformed], [r.filesHeld, 0, 0, 0]);
+  assert.match(r.reasons[0].detail, /7 boxes reached the 500 cap at the smallest tile/);
+  assert.equal(result.report.totals.accepted, 0);
 });
 
 test('one global placement: training-city, holdout and beijing venues are dropped, a venue in two circles counts once', async () => {
@@ -686,7 +894,111 @@ test('with the snapshot, a venue the corpus holds and one within 2 km of a corpu
   assert.ok(kept.has(W.exportNear.id));
   assert.equal(result.report.totals.identityRules, 'applied');
   assert.equal(result.report.totals.keepAwayRule, 'applied (snapshot only)');
-  assert.match(out, /5 ml_venues rows/);
+  assert.match(out, /6 ml_venues rows/);
+  assert.match(out, /the table held 6 rows, ids 101 to 106, every one in the CSV/);
+  assert.equal(result.report.totals.snapshotCompleteness.proven, true);
+});
+
+test('the twin rule and identity rule 4 reach every longitude cell 40 m spans: one either side below 68.9 degrees, two at 70', () => {
+  for (const lat of [0, 35, -45, 60, 64.3, 68.9]) assert.equal(H.nearDupLngCells(lat), 1, String(lat));
+  assert.deepEqual([H.nearDupLngCells(70), H.nearDupLngCells(-70)], [2, 2]);
+  // Two listings of one bar 38.8 m apart at 70 degrees, two longitude cells
+  // apart (20000 and 20002): before, both were kept as new venues.
+  const days = new Map([[0, Array(24).fill(30)]]);
+  const bar = (id, lng, placeId) => ({ venueId: id, name: 'Nordlys Bar', placeId, rawPlaceId: placeId, lat: 70.0005, lng, type: 'BAR', days });
+  const a = bar('ven_arctic_a', 20.00099, 'ChIJarcticBarA0000001');
+  const b = bar('ven_arctic_b', 20.00201, 'ChIJarcticBarB0000001');
+  const m = kmBetween(a.lat, a.lng, b.lat, b.lng) * 1000;
+  assert.ok(m > 38.5 && m < 39, String(m));
+  assert.deepEqual([Math.floor(a.lng * 1000), Math.floor(b.lng * 1000)], [20000, 20002]);
+  const opts = { markets: { arctic: { lat: 70.0, lon: 20.0 } }, insideRadius: () => true };
+  const twins = H.planVenues([a, b], { byBtId: new Map(), byPlaceId: new Map(), nearby: [] }, ['arctic'], opts);
+  assert.deepEqual(twins.plan.map((p) => [p.kind, p.venue.venueId]), [['new', a.venueId]]);
+  assert.equal(twins.skipped.nearDuplicateInRun, 1);
+  // A corpus row under the same name two cells off is the venue (rule 4).
+  const row = { id: 7, name: 'Nordlys Bar', latitude: b.lat, longitude: b.lng, besttime_venue_id: null, google_place_id: 'ChIJarcticRow00000001' };
+  const known = H.planVenues([a], { byBtId: new Map(), byPlaceId: new Map(), nearby: [row] }, ['arctic'], opts);
+  assert.deepEqual(known.plan.map((p) => [p.kind, p.row && p.row.id]), [['known_near', 7]]);
+});
+
+// --write's arguments with another snapshot and another reference.
+const writeArgsWith = (outDir, { snap = snapshotFile, ref = refDir } = {}) => ['--write', ...baseArgs(),
+  `--identity-snapshot=${snap}`, `--export-dir=${exportDir}`, `--harvest-cache=${ref}`, `--out-dir=${outDir}`];
+const nothingWritten = (outDir) => Object.values(I.OUTPUT_FILES).every((f) => !fs.existsSync(path.join(outDir, f)));
+
+test('the snapshot must prove it is the whole table: no meta, a row short, a changed byte or a WHERE refuses --write', async () => {
+  const dir = tmp('flock-import-snap-');
+  const full = fs.readFileSync(snapshotFile, 'utf8');
+  const copy = (name, text = full) => { const f = path.join(dir, name); fs.writeFileSync(f, text); return f; };
+  const refused = async (snap, pattern) => {
+    const outDir = tmp('flock-import-out-');
+    const { result, out } = await runImport(writeArgsWith(outDir, { snap }));
+    assert.equal(result.exitCode, 1, out);
+    assert.match(out, pattern);
+    assert.doesNotMatch(out, /BY CITY/, 'refused before any folder is replayed');
+    assert.ok(nothingWritten(outDir));
+    return out;
+  };
+  // No meta: --write refuses; a dry run goes on and says completeness is unproven.
+  const bare = copy('bare.csv');
+  await refused(bare, /no bare\.meta\.json beside the snapshot: nothing shows it is the whole of ml_venues/);
+  const dry = await runImport(['--dry-run', ...baseArgs(), `--identity-snapshot=${bare}`]);
+  assert.equal(dry.result.exitCode, 0, dry.out);
+  assert.match(dry.out, /COMPLETENESS IS UNPROVEN/);
+  assert.equal(dry.result.report.totals.snapshotCompleteness.proven, false);
+  // The unlabelled venue left out: in neither export file, so only the meta
+  // can show it. The CSV hashes as written; the table held one row more.
+  const short = copy('short.csv', full.split('\n').filter((l) => !l.startsWith('106,')).join('\n'));
+  writeSnapshotMeta(short, { tableCount: 6, tableMaxId: 106 });
+  await refused(short, /the CSV holds 5 rows; the table held 6 and 5 were written; its last id is 105; the table's highest was 106/);
+  // A dry run refuses a meta that disagrees, too.
+  const dryShort = await runImport(['--dry-run', ...baseArgs(), `--identity-snapshot=${short}`]);
+  assert.equal(dryShort.result.exitCode, 1);
+  // One byte changed after the meta was written.
+  const edited = copy('edited.csv');
+  writeSnapshotMeta(edited);
+  fs.writeFileSync(edited, full.replace('Far Row', 'Far Rov'));
+  await refused(edited, /its csvSha256 [0-9a-f]{64} is not the CSV's [0-9a-f]{64}/);
+  // Taken with a WHERE: every count agrees with the CSV, and it is still not the table.
+  const where = copy('where.csv');
+  writeSnapshotMeta(where, { query: I.SNAPSHOT_QUERY.replace('FROM ml_venues', 'FROM ml_venues WHERE is_active') });
+  await refused(where, /its query is not SNAPSHOT_QUERY/);
+});
+
+test('the peak-hour check is never passed by a reference that cannot make it: empty, unreadable or missing a category', async () => {
+  const empty = tmp('flock-import-ref-empty-');
+  const unreadable = tmp('flock-import-ref-bad-');
+  fs.mkdirSync(path.join(unreadable, 'philly-2026-11'));
+  fs.writeFileSync(path.join(unreadable, 'philly-2026-11', `${'a'.repeat(64)}.json`), 'not json');
+  // Philly's bars and restaurants, and no nightclub.
+  const barsOnly = tmp('flock-import-ref-bars-');
+  fs.mkdirSync(path.join(barsOnly, 'philly-2026-11'));
+  const bars = Array.from({ length: 30 }, (_, i) => vn(`ven_refb_bar_${i}`, 39.95 + i * 0.001, -75.16, 'BAR', null, peakWeek(22)));
+  for (let d = 0; d < 7; d++) {
+    const name = `${crypto.createHash('sha256').update(`refb-${d}`).digest('hex')}.json`;
+    fs.writeFileSync(path.join(barsOnly, 'philly-2026-11', name), JSON.stringify({ url: `refb-${d}`, fetchedAt: FETCHED_AT,
+      data: { venues: bars.map((v) => record(v, d)) } }));
+  }
+  const all = { testville: ['bar'], twintown: ['bar', 'nightclub'], peaktown: ['bar', 'nightclub'] };
+  for (const [ref, want] of [[empty, all], [unreadable, all], [barsOnly, { twintown: ['nightclub'], peaktown: ['nightclub'] }]]) {
+    const dry = await runImport(['--dry-run', ...baseArgs(), `--harvest-cache=${ref}`]);
+    assert.equal(dry.result.exitCode, 0, dry.out);
+    assert.deepEqual(dry.result.report.totals.peakUnavailable, want, ref);
+    const n = Object.values(want).flat().length;
+    assert.equal(dry.result.report.totals.peakCheck, `run, ${n} bar or nightclub comparisons unavailable`);
+    assert.deepEqual(dry.result.report.cities.twintown.peakUnavailable, want.twintown);
+    assert.match(dry.out, new RegExp(`PEAK COMPARISONS UNAVAILABLE \\(${n};`));
+    assert.match(dry.out, /nightclub 01h n=1 NO REFERENCE/);
+    const outDir = tmp('flock-import-out-');
+    const w = await runImport(writeArgsWith(outDir, { ref }));
+    assert.equal(w.result.exitCode, 1, w.out);
+    assert.match(w.out, /REFUSED: the peak-hour check could not compare peaktown \(/);
+    assert.ok(nothingWritten(outDir));
+  }
+  // The full reference makes every comparison.
+  const full = await runImport(['--dry-run', ...baseArgs(), `--harvest-cache=${refDir}`]);
+  assert.deepEqual(full.result.report.totals.peakUnavailable, {});
+  assert.equal(full.result.report.totals.peakCheck, 'run');
 });
 
 test('with the export, its positions join the 2 km rule, and an export the snapshot does not cover is refused', async () => {
@@ -827,6 +1139,9 @@ test('--write with a flag accepted: every row is the export\'s, ids from 1,000,0
   assert.equal(manifest.outputs.venues.sha256, sha(path.join(outDir, 'cache_venues.csv')));
   assert.equal(manifest.outputs.rows.dataRows, rows.length);
   assert.equal(manifest.inputs.identitySnapshot.sha256, sha(snapshotFile));
+  assert.deepEqual(manifest.inputs.identitySnapshot.meta, {
+    file: I.snapshotMetaFile(snapshotFile), snapshotAt: '2026-11-25T19:31:05.168Z', tableCount: 6, csvSha256: sha(snapshotFile),
+  });
   assert.equal(manifest.inputs.plan.sha256, sha(planFile));
   assert.equal(manifest.inputs.export.files[0].sha256, sha(path.join(exportDir, 'training_data.csv')));
   assert.ok(manifest.git.commit === null || /^[0-9a-f]{40}$/.test(manifest.git.commit), String(manifest.git.commit));
@@ -911,12 +1226,26 @@ test('--offline answers from the cache alone: no fetch, no key, misses counted a
   assert.equal(missing.summary.aborted, true);
   assert.match(missing.summary.abortReason, /--cache-dir could not be read \(ENOENT\)/);
   assert.equal(fs.existsSync(path.join(phillyDir, 'nope')), false);
-  // No key in the environment is needed.
-  const savedKey = process.env.BESTTIME_API_KEY;
-  delete process.env.BESTTIME_API_KEY;
-  try {
+  // No key in the environment is needed (none is set: see the requires).
+  assert.deepEqual(Object.keys(process.env).filter((n) => KEY_NAME_RE.test(n)), []);
+  {
     const before = await countRows();
-    const dry = await harvestOffline(['--city=philly', '--new-only', '--offline', `--cache-dir=${phillyDir}`]);
+    // Not even looked for: every read of a key variable during the run.
+    const realEnv = process.env;
+    const keyReads = [];
+    process.env = new Proxy(realEnv, {
+      get(t, k) {
+        if (typeof k === 'string' && KEY_NAME_RE.test(k)) keyReads.push(k);
+        return Reflect.get(t, k);
+      },
+    });
+    let dry;
+    try {
+      dry = await harvestOffline(['--city=philly', '--new-only', '--offline', `--cache-dir=${phillyDir}`]);
+    } finally {
+      process.env = realEnv;
+    }
+    assert.deepEqual(keyReads, []);
     assert.equal(dry.summary.aborted, false, dry.summary.abortReason);
     assert.equal(dry.fetches, 0);
     assert.doesNotMatch(dry.out, /Account (before|after)/);
@@ -942,9 +1271,21 @@ test('--offline answers from the cache alone: no fetch, no key, misses counted a
     assert.equal(commit.summary.exitCode, 0);
     assert.equal(commit.fetches, 0);
     assert.equal(commit.summary.venuesInserted, 2);
-  } finally {
-    process.env.BESTTIME_API_KEY = savedKey;
   }
+  // A damaged copy: a string in one curve slot, and a short page whose
+  // venues_n says one more venue was there. Refused before planning.
+  const damagedDir = path.join(tmp('flock-import-philly-damaged-'), 'philly-2026-11');
+  fs.cpSync(phillyDir, damagedDir, { recursive: true });
+  const listing = fs.readdirSync(damagedDir).filter((f) => {
+    const n = JSON.parse(fs.readFileSync(path.join(damagedDir, f), 'utf8')).data.venues.length;
+    return n > 0 && n < 100;
+  });
+  rewriteAnswer(path.join(damagedDir, listing[0]), (entry) => { entry.data.venues[0].day_raw_whole[3] = null; });
+  rewriteAnswer(path.join(damagedDir, listing[1]), (entry) => { entry.data.venues_n = entry.data.venues.length + 1; });
+  const damaged = await harvestOffline(['--city=philly', '--new-only', '--offline', `--cache-dir=${damagedDir}`]);
+  assert.equal(damaged.summary.aborted, true);
+  assert.match(damaged.summary.abortReason, /REFUSED: 1 curve slots in --cache-dir were no number from 0 to 100, and 1 short pages/);
+  assert.equal(damaged.fetches, 0);
   // Inside an offline run any fetch is refused before it leaves.
   await assert.rejects(H.withNoNetwork(() => fetch('https://besttime.app/api/v1/keys/x')), /REFUSED: an --offline run makes no request/);
 });
@@ -961,19 +1302,31 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
                       THEN TIMESTAMPTZ '2026-11-24T13:00:00Z' ELSE TIMESTAMPTZ '2026-10-01T00:00:00Z' END`, [H.HARVEST_STATUS]);
   const outDir = tmp('flock-import-export-');
   const exported = await exporter.runExport({ pool: roPool, outDir, includeHarvested: true, log: () => {} });
-  // The snapshot, as THE SNAPSHOT in the importer's header takes it.
-  const { rows } = await pool.query(
-    'SELECT id, besttime_venue_id, google_place_id, name, latitude, longitude, city, besttime_status, created_at FROM ml_venues ORDER BY id'
-  );
+  // The snapshot, as THE SNAPSHOT in the importer's header takes it: its
+  // query and the table's count and id range in one read-only REPEATABLE
+  // READ transaction, the CSV, then the meta. `createdAt` rewrites a venue's
+  // created_at in the CSV, as if another writer had made its row then.
+  const client = await roPool.connect();
+  let rows;
+  let table;
+  try {
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    ({ rows } = await client.query(I.SNAPSHOT_QUERY));
+    ({ rows: [table] } = await client.query('SELECT COUNT(*)::int AS n, MIN(id)::int AS lo, MAX(id)::int AS hi FROM ml_venues'));
+    await client.query('COMMIT');
+  } finally {
+    client.release();
+  }
   const csv = (v) => (v === null || v === undefined ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
-  const snapshot = (name, { createdAt = {}, columns = 'all' } = {}) => {
+  const snapshot = (name, { createdAt = {}, columns = 'all', meta = true } = {}) => {
     const file = path.join(outDir, name);
     const head = ['id', 'besttime_venue_id', 'google_place_id', 'name', 'latitude', 'longitude', 'city',
       ...(columns === 'all' ? ['besttime_status', 'created_at'] : [])];
     fs.writeFileSync(file, `${[head.join(','), ...rows.map((r) => head.map((h) => {
-      if (h === 'created_at') return createdAt[r.besttime_venue_id] || r.created_at.toISOString();
+      if (h === 'created_at') return createdAt[r.besttime_venue_id] || r.created_at;
       return csv(r[h]);
     }).join(','))].join('\n')}\n`);
+    if (meta) writeSnapshotMeta(file, { tableCount: table.n, tableMinId: table.lo, tableMaxId: table.hi });
     return file;
   };
   const snap = snapshot('snapshot.csv');
@@ -995,9 +1348,13 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
 
   // A snapshot without besttime_status and created_at cannot tell which
   // venues this folder wrote: refused.
-  const bare = await parity(exported.trainPath, { snapFile: snapshot('bare.csv', { columns: 'seven' }) });
+  const bare = await parity(exported.trainPath, { snapFile: snapshot('bare.csv', { columns: 'seven', meta: false }) });
   assert.equal(bare.result.exitCode, 1);
   assert.match(bare.out, /lacks besttime_status and created_at/);
+  // Nor can one without its meta show it is the whole table.
+  const noMeta = await parity(exported.trainPath, { snapFile: snapshot('nometa.csv', { meta: false }) });
+  assert.equal(noMeta.result.exitCode, 1);
+  assert.match(noMeta.out, /PARITY REFUSED: no nometa\.meta\.json beside the snapshot/);
 
   const { rows: [one] } = await pool.query('SELECT id FROM ml_venues WHERE besttime_venue_id = $1', [NEW1.id]);
   const { rows: [two] } = await pool.query('SELECT id FROM ml_venues WHERE besttime_venue_id = $1', [NEW2.id]);
@@ -1029,6 +1386,17 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
   assert.equal(Object.values(bad.result.mismatches).reduce((a, b) => a + b, 0), 1);
   assert.equal(bad.result.missing, 1);
   assert.match(bad.out, /PARITY FAIL/);
+
+  // A correct weekly row held twice: every column of both equals the
+  // generator's, and it is still a mismatch.
+  const twice = [...lines];
+  twice.splice(mine[0] + 1, 0, lines[mine[0]]);
+  const dup = await parity(writeLines('duplicate.csv', twice));
+  assert.equal(dup.result.exitCode, 1, dup.out);
+  assert.equal(dup.result.mismatches.duplicateExportRow, 1);
+  assert.deepEqual([dup.result.rowsEqual, dup.result.missing, dup.result.extra], [dup.result.rowsCompared, 0, 0]);
+  assert.match(dup.out, /duplicateExportRow 1/);
+  assert.match(dup.out, /PARITY FAIL/);
 
   // Another pass wrote NEW2, from its own answers (another review count),
   // before this folder's first answer: left out, never a mismatch.
