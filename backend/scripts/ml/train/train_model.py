@@ -43,6 +43,11 @@ Environment knobs (all recorded in metadata.training_environment):
 Model size (recorded in metadata.hyperparameters.size_switches, not above):
   FLOCK_MAX_DEPTH=<int 1..16>          default FIXED_PARAMS max_depth (8)
   FLOCK_N_ESTIMATORS=<int 1..20000>    default FIXED_PARAMS n_estimators (800)
+
+X beside the pickle: a features_train.pkl whose X lives in features_train.X.npy
+(features_io.py) is memory-mapped, and every fit and predict then reads it a row
+chunk at a time (RowChunks, predict_rows), with the same booster and the same
+model_metadata.json as an X held in the pickle. See the block above RowChunks.
 """
 
 import json
@@ -54,6 +59,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import sklearn
 import xgboost
 from sklearn.base import clone
@@ -68,6 +74,7 @@ from xgboost import XGBRegressor
 # per-fold refit below has to key its cells exactly the way the map it replaces
 # was keyed, and a second copy of those key lists is a second thing to drift.
 from prepare_features import serving_population_mask, realtime_flags, CAT_KEYS, REFINED_KEYS
+from features_io import load_features
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -161,8 +168,15 @@ def assert_no_label_shaped_feature(X, feature_cols, probes) -> dict:
 
     worst = {}
     offences = []
+    # The sampled rows are read once, and each reference quantity is cut to the
+    # sample once: X may be memory-mapped from beside the pickle, and converting a
+    # whole reference column to float64 for every feature was 3 x 104 full-length
+    # copies. The values compared are the same.
+    sampled = np.asarray(X[idx])
+    refs = {probe_name: np.asarray(probe)[idx].astype(np.float64)
+            for probe_name, probe in probes.items()}
     for j, name in enumerate(feature_cols):
-        col = np.asarray(X[idx, j], dtype=np.float64)
+        col = np.asarray(sampled[:, j], dtype=np.float64)
         if len(np.unique(col)) <= 1:
             # A constant column carries nothing and can leak nothing. Skipping it
             # also removes the only false-positive class here: an all-zero dead
@@ -170,9 +184,8 @@ def assert_no_label_shaped_feature(X, feature_cols, probes) -> dict:
             # snapshots, where the delta is 0 by construction. prepare_features
             # already reports constant columns as DEAD SLOTS.
             continue
-        for probe_name, probe in probes.items():
-            share = float(np.mean(np.isclose(col, np.asarray(probe, dtype=np.float64)[idx],
-                                             rtol=1e-3, atol=1e-2)))
+        for probe_name, ref in refs.items():
+            share = float(np.mean(np.isclose(col, ref, rtol=1e-3, atol=1e-2)))
             if share > worst.get(name, (0.0, ''))[0]:
                 worst[name] = (share, probe_name)
             if share > COPY_DETECTION_THRESHOLD:
@@ -471,22 +484,29 @@ class FoldCategoryBaselines:
                 'grouped on the same key the folds are.')
         self.groups = [str(g) for g in cell_stats['groups']]
         self.group_index = {g: i for i, g in enumerate(self.groups)}
-        row_group = np.asarray(cell_stats['row_group'], dtype=np.int64)
+        row_group = _row_index(cell_stats['row_group'])
         if len(row_group) != n:
             raise LabelContractError(
                 f'category_cell_stats.row_group has {len(row_group)} entries for {n} rows. '
                 'It is a positional index into X; a length mismatch means the statistics '
                 'and the matrix came from different prepare_features.py runs.')
-        cities_arr = np.asarray(cities).astype(str)
-        mapped = np.asarray(self.groups, dtype=object)[row_group].astype(str)
-        if not np.array_equal(mapped, cities_arr):
-            bad = int((mapped != cities_arr).sum())
+        # Compared as integer city codes (city_codes), the same equality as comparing
+        # each row's group name with its city name: two <U copies of the city column
+        # were ~4 GB each at the third candidate's ~90 million rows.
+        names, codes = city_codes(cities)
+        code_of = {name: k for k, name in enumerate(names)}
+        group_code = np.array([code_of.get(g, -1) for g in self.groups], dtype=np.int32)
+        mismatch = group_code[row_group] != codes
+        del codes
+        if mismatch.any():
+            bad = int(mismatch.sum())
             raise LeakageError(
                 f'category_cell_stats.row_group disagrees with the city of {bad} rows. '
                 'The statistics are positionally aligned to X by construction, so a '
                 'disagreement means they describe a different row order — a per-fold map '
                 'built from them would exclude the wrong city and the "honest" number '
                 'would be fiction.')
+        del mismatch
         self.row_group = row_group
 
         y64 = np.asarray(y_actual, dtype=np.float64)
@@ -501,7 +521,7 @@ class FoldCategoryBaselines:
                     f'category_cell_stats[{name!r}] is keyed on {list(block["keys"])} but '
                     f'prepare_features keys that map on {list(keys)}. The refit would '
                     'aggregate over a different cell than the feature it replaces.')
-            row_cell = np.asarray(block['row_cell'], dtype=np.int64)
+            row_cell = _row_index(block['row_cell'])
             sums = np.asarray(block['sums'], dtype=np.float64)
             counts = np.asarray(block['counts'], dtype=np.int64)
             n_cells = len(block['cells'])
@@ -522,7 +542,7 @@ class FoldCategoryBaselines:
             # for the very reason the design is correct.
             rows_counts = np.asarray(block['rows_counts'], dtype=np.int64)
             rows_sums = np.asarray(block['rows_sums'], dtype=np.float64)
-            flat = row_group * n_cells + row_cell
+            flat = row_group.astype(np.int64) * n_cells + row_cell
             rebuilt_sum = np.bincount(flat[finite], weights=y64[finite],
                                       minlength=len(self.groups) * n_cells)
             rebuilt_cnt = np.bincount(flat[finite],
@@ -703,6 +723,42 @@ class FoldCategoryBaselines:
 # ---------------------------------------------------------------------------
 # The split
 # ---------------------------------------------------------------------------
+def city_codes(cities) -> tuple:
+    """(names, codes): the distinct cities as sorted strings, and each row's city
+    as its index into them (int16 below 32,768 cities).
+
+    The fold machinery compares these integers where it compared city strings: at
+    the third candidate's ~90 million rows a <U copy of the city column is ~4 GB,
+    and a set or np.unique over the object column walks every row through
+    Python's string comparison. Each value is read as str(value), as
+    .astype(str) read it, and the names sort as np.unique sorts them, so code
+    order is name order.
+    """
+    local, uniques = pd.factorize(np.asarray(cities, dtype=object), use_na_sentinel=False)
+    labels = [str(u) for u in uniques]
+    names = sorted(set(labels))
+    position = {name: k for k, name in enumerate(names)}
+    dtype = np.int16 if len(names) <= np.iinfo(np.int16).max else np.int32
+    remap = np.array([position[label] for label in labels], dtype=dtype)
+    return names, remap[local]
+
+
+def _row_index(values) -> np.ndarray:
+    """A per-row integer index, kept at its stored width when that is int32 or
+    narrower (prepare_features writes int32), else int64 as it always was. The
+    int64 copies of the group and cell indexes held 24 bytes a row."""
+    a = np.asarray(values)
+    if (a.dtype.kind == 'i' and a.dtype.itemsize <= 4) or (a.dtype.kind == 'u' and a.dtype.itemsize <= 2):
+        return a.astype(np.int32, copy=False)
+    return np.asarray(a, dtype=np.int64)
+
+
+def _cities_in(codes, rows, names) -> set:
+    """The names of the cities among `rows`, counted on the integer codes."""
+    present = np.bincount(codes[rows], minlength=len(names))
+    return {names[k] for k in np.flatnonzero(present)}
+
+
 class LocoFolds:
     """The leave-one-city-out folds as (train rows, validation rows, city).
 
@@ -711,7 +767,9 @@ class LocoFolds:
     GroupKFold itself yields (np.arange(n)[~test_mask]): the same values in the
     same order and dtype. A list of all thirty training index arrays held about
     29 x 8 = 232 bytes a row for the whole run, several gigabytes at the
-    harvest-inclusive candidate's size.
+    harvest-inclusive candidate's size. The validation rows are kept as int32
+    while the row count allows (to 2^31 rows); together they cover every row
+    once, 4 bytes a row instead of 8.
     """
 
     def __init__(self, n_rows):
@@ -719,16 +777,28 @@ class LocoFolds:
         self._held = []
 
     def append(self, va, city):
+        if self._n <= np.iinfo(np.int32).max:
+            va = np.asarray(va).astype(np.int32, copy=False)
         self._held.append((va, city))
 
     def __len__(self):
         return len(self._held)
 
-    def __getitem__(self, i):
-        va, city = self._held[i]
+    def held_out(self, i):
+        """Fold i's validation rows and city, without building its training rows."""
+        return self._held[i]
+
+    def training_mask(self, i):
+        """Fold i's training rows as a boolean mask over every row: 1 byte a row
+        where the index array np.flatnonzero makes of it is 8."""
+        va, _ = self._held[i]
         keep = np.ones(self._n, dtype=bool)
         keep[va] = False
-        return np.flatnonzero(keep), va, city
+        return keep
+
+    def __getitem__(self, i):
+        va, city = self._held[i]
+        return np.flatnonzero(self.training_mask(i)), va, city
 
     def __iter__(self):
         for i in range(len(self._held)):
@@ -744,12 +814,16 @@ def assert_group_disjoint(cv, X, y, groups) -> LocoFolds:
     predicted exactly once — an unpredicted row leaves NaN in the out-of-fold
     vector, which turns every metric NaN and writes the literal `NaN` into
     model_metadata.json, where it is not valid JSON and takes mlPredictor down.
+
+    The split is made on the integer city codes, and the city sets compared are
+    counted on them. GroupKFold groups through np.unique and the codes sort as the
+    names do, so it makes the same folds, in the same order, as from the names.
     """
+    names, codes = city_codes(groups)
     seen = np.zeros(len(y), dtype=np.int32)
-    groups_arr = np.asarray(groups)
     folds = LocoFolds(len(y))
-    for i, (tr, va) in enumerate(cv.split(X, y, groups=groups)):
-        g_tr, g_va = set(groups_arr[tr]), set(groups_arr[va])
+    for i, (tr, va) in enumerate(cv.split(X, y, groups=codes)):
+        g_tr, g_va = _cities_in(codes, tr, names), _cities_in(codes, va, names)
         overlap = g_tr & g_va
         if overlap:
             raise LeakageError(
@@ -772,6 +846,153 @@ def assert_group_disjoint(cv, X, y, groups) -> LocoFolds:
     logger.info('Split check OK: %d leave-one-city-out folds, no city on both sides, '
                 'every row predicted exactly once.', len(folds))
     return folds
+
+
+# ---------------------------------------------------------------------------
+# Row chunks: an X kept beside its pickle is never copied whole
+# ---------------------------------------------------------------------------
+# The November third candidate (~54 to 90 million training rows) does not fit
+# the training PC as one in-memory X plus the copies a fit makes of it: X[tr]
+# was a near-whole second copy in every fold. prepare_features.py may therefore
+# write X to a float32 .npy beside the pickle (features_io.py), main() memory-maps
+# it, and every fit and predict reads it a row chunk at a time: the fit is
+# XGBRegressor.fit(RowChunks(...), None), which builds XGBoost's quantile matrix
+# from the chunks, and predict_rows predicts chunk by chunk.
+#
+# Exact, not an approximation, and measured before it was used (2026-11-25,
+# XGBoost 3.2, the November registered features, 3,533,480 rows x 104): the same
+# cut points, booster bytes and predictions as fitting the whole in-memory
+# matrix, for 1, 4, 16 and 5 uneven chunks, for a leave-one-city-out fold with
+# its category refit, and for the early-stopping fit; and a 20-tree run of this
+# file wrote the same best_model.pkl booster and model_metadata.json with X in
+# the pickle and beside it. test_iter_train.py pins it on a fixture, at chunk
+# sizes that split cities. An X held in the pickle is fitted exactly as before.
+ITER_CHUNK_ROWS = 262_144
+
+
+def reads_in_chunks(X) -> bool:
+    """True for an X memory-mapped from beside its pickle (features_io)."""
+    return isinstance(X, np.memmap)
+
+
+def _check_rows(n_rows, rows):
+    """None (every row), a boolean mask over the rows, or sorted distinct indices."""
+    if rows is None:
+        return None
+    rows = np.asarray(rows)
+    if rows.dtype == bool:
+        if len(rows) != n_rows:
+            raise ValueError(f'a row mask of {len(rows)} entries for {n_rows} rows')
+        return rows
+    if rows.dtype.kind not in 'iu':
+        raise ValueError(f'row indices must be integers, not {rows.dtype}')
+    if len(rows) and (rows[0] < 0 or rows[-1] >= n_rows or np.any(rows[1:] <= rows[:-1])):
+        raise ValueError('row indices must be sorted, distinct and within the matrix: a chunk '
+                         'is handed to XGBoost in row order, and the labels must follow it')
+    return rows
+
+
+def _row_chunks(n_rows, rows, chunk_rows):
+    """(start, stop, picked) per chunk, in row order.
+
+    Chunks are cut on row POSITION, so each reads one contiguous slice of X.
+    `picked` is None when every row in [start, stop) is taken, else the indices
+    of the taken rows; a chunk that takes no row is skipped.
+    """
+    if rows is not None and rows.dtype != bool:
+        bounds = np.searchsorted(rows, np.arange(0, n_rows + chunk_rows, chunk_rows))
+    for k, start in enumerate(range(0, n_rows, chunk_rows)):
+        stop = min(start + chunk_rows, n_rows)
+        if rows is None:
+            yield start, stop, None
+            continue
+        if rows.dtype == bool:
+            mask = rows[start:stop]
+            if mask.all():
+                yield start, stop, None
+                continue
+            picked = start + np.flatnonzero(mask)
+        else:
+            picked = rows[bounds[k]:bounds[k + 1]]
+        if len(picked) == stop - start:
+            yield start, stop, None
+        elif len(picked):
+            yield int(picked[0]), int(picked[-1]) + 1, picked
+
+
+def _chunk_matrix(X, start, stop, picked, fold_cats=None, fold_cols=None):
+    """A C-ordered COPY of X's rows [start, stop), or of `picked` among them, with
+    the fold's category map written in as apply_to writes it into X[tr]. Always a
+    copy: X itself is never written."""
+    block = np.array(X[start:stop], order='C')
+    if picked is not None:
+        block = block[picked - start]
+    if fold_cols is not None:
+        fold_cats.apply_to(block, slice(start, stop) if picked is None else picked, fold_cols)
+    return block
+
+
+class RowChunks(xgboost.DataIter):
+    """Rows of X, in row order, handed to XGBoost a chunk at a time.
+
+    `rows`: None (every row), a boolean mask, or sorted row indices. `label` and
+    `weight` are full-length and cut to the same rows; `fold_cols` (from
+    FoldCategoryBaselines.columns_for_fold) is written into each chunk's copy.
+    XGBRegressor.fit(RowChunks(...), None) then fits what fit(X[rows],
+    label[rows], sample_weight=weight[rows]) fits, without that copy.
+    """
+
+    def __init__(self, X, rows, label, weight=None, fold_cats=None, fold_cols=None,
+                 chunk_rows=None):
+        self._X = X
+        self._rows = _check_rows(X.shape[0], rows)
+        self._label = np.asarray(label)
+        self._weight = None if weight is None else np.asarray(weight)
+        self._fold_cats, self._fold_cols = fold_cats, fold_cols
+        self._chunk_rows = int(chunk_rows or ITER_CHUNK_ROWS)
+        self._chunks = None
+        self.reset()
+        super().__init__(cache_prefix=None, release_data=True)
+
+    def reset(self):
+        self._chunks = _row_chunks(self._X.shape[0], self._rows, self._chunk_rows)
+
+    def next(self, input_data):
+        chunk = next(self._chunks, None)
+        if chunk is None:
+            return False
+        start, stop, picked = chunk
+        take = slice(start, stop) if picked is None else picked
+        batch = {'data': _chunk_matrix(self._X, start, stop, picked, self._fold_cats, self._fold_cols),
+                 'label': self._label[take]}
+        if self._weight is not None:
+            batch['weight'] = self._weight[take]
+        input_data(**batch)
+        return True
+
+
+def predict_rows(model, X, rows=None, fold_cats=None, fold_cols=None, chunk_rows=None,
+                 **predict_kwargs):
+    """model.predict over `rows` of X (every row when None), a chunk at a time,
+    in row order. A prediction depends on its own row only, so these are the
+    values of one call on the whole matrix (measured equal, not assumed)."""
+    rows = _check_rows(X.shape[0], rows)
+    parts = [model.predict(_chunk_matrix(X, start, stop, picked, fold_cats, fold_cols),
+                           **predict_kwargs)
+             for start, stop, picked in _row_chunks(X.shape[0], rows,
+                                                    int(chunk_rows or ITER_CHUNK_ROWS))]
+    return np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
+
+
+def _fold_parts(folds):
+    """(training rows, validation rows, city) per fold. A LocoFolds hands its
+    training rows as a boolean mask rather than an index array."""
+    if isinstance(folds, LocoFolds):
+        for i in range(len(folds)):
+            va, city = folds.held_out(i)
+            yield folds.training_mask(i), va, city
+    else:
+        yield from folds
 
 
 # ---------------------------------------------------------------------------
@@ -811,7 +1032,7 @@ def reconstruct(raw_delta, baseline, clamp) -> np.ndarray:
 
 
 def evaluate_city_cv(model, X, y, folds, baseline, y_actual, sample_weight, clamp,
-                     fold_cats=None) -> tuple:
+                     fold_cats=None, chunk_rows=None) -> tuple:
     """Leave-one-city-out out-of-fold predictions, on the ABSOLUTE scale.
 
     Each fold refits from scratch (clone drops the fitted state) WITH the sample
@@ -825,6 +1046,11 @@ def evaluate_city_cv(model, X, y, folds, baseline, y_actual, sample_weight, clam
     the per-fold COPIES `X[tr]` / `X[va]` already produce; `X` is never mutated,
     and the assertion at the end proves it, because the final model — the shipped
     artifact — is fitted on the whole-frame matrix on purpose.
+
+    An X memory-mapped from beside the pickle takes the first branch: each fold
+    is fitted from RowChunks and predicted by predict_rows, the map written into
+    each chunk's copy, so neither X[tr] nor X[va] is ever made whole. Same
+    boosters and out-of-fold predictions as the second branch.
     """
     oof = np.full(len(y), np.nan)
     per_city = {}
@@ -832,26 +1058,44 @@ def evaluate_city_cv(model, X, y, folds, baseline, y_actual, sample_weight, clam
     guard = None
     if fold_cats is not None and fold_cats.active:
         guard = {j: X[:, j].copy() for j in fold_cats.col_index.values()}
-    # One fold's copies at a time: the validation copy is made after the fit,
-    # and both are released before the next fold's are made, so the loop holds
-    # X and one training copy rather than X and two whole-matrix pairs.
-    for tr, va, city in folds:
-        fold_cols = None
-        if fold_cats is not None and fold_cats.active:
-            fold_cols = fold_cats.columns_for_fold(city)
-            shifts[str(city)] = fold_cats.fold_shift(X, fold_cols)
-        Xtr = X[tr]
-        if fold_cols is not None:
-            fold_cats.apply_to(Xtr, tr, fold_cols)
-        m = clone(model)
-        m.fit(Xtr, y[tr], sample_weight=sample_weight[tr])
-        del Xtr, tr
-        Xva = X[va]
-        if fold_cols is not None:
-            fold_cats.apply_to(Xva, va, fold_cols)
-        oof[va] = m.predict(Xva)
-        per_city[str(city)] = va
-        del Xva, m, fold_cols
+    if reads_in_chunks(X):
+        for i, (train_rows, va, city) in enumerate(_fold_parts(folds)):
+            fold_cols = None
+            if fold_cats is not None and fold_cats.active:
+                fold_cols = fold_cats.columns_for_fold(city)
+                shifts[str(city)] = fold_cats.fold_shift(X, fold_cols)
+            t0 = time.time()
+            m = clone(model)
+            m.fit(RowChunks(X, train_rows, y, sample_weight, fold_cats=fold_cats,
+                            fold_cols=fold_cols, chunk_rows=chunk_rows), None)
+            del train_rows
+            oof[va] = predict_rows(m, X, va, fold_cats=fold_cats, fold_cols=fold_cols,
+                                   chunk_rows=chunk_rows)
+            per_city[str(city)] = va
+            logger.info('  fold %d/%d: %s held out (%d rows), %.0fs',
+                        i + 1, len(folds), city, len(va), time.time() - t0)
+            del m, fold_cols
+    else:
+        # One fold's copies at a time: the validation copy is made after the fit,
+        # and both are released before the next fold's are made, so the loop holds
+        # X and one training copy rather than X and two whole-matrix pairs.
+        for tr, va, city in folds:
+            fold_cols = None
+            if fold_cats is not None and fold_cats.active:
+                fold_cols = fold_cats.columns_for_fold(city)
+                shifts[str(city)] = fold_cats.fold_shift(X, fold_cols)
+            Xtr = X[tr]
+            if fold_cols is not None:
+                fold_cats.apply_to(Xtr, tr, fold_cols)
+            m = clone(model)
+            m.fit(Xtr, y[tr], sample_weight=sample_weight[tr])
+            del Xtr, tr
+            Xva = X[va]
+            if fold_cols is not None:
+                fold_cats.apply_to(Xva, va, fold_cols)
+            oof[va] = m.predict(Xva)
+            per_city[str(city)] = va
+            del Xva, m, fold_cols
 
     if guard is not None:
         for j, col in guard.items():
@@ -1126,7 +1370,8 @@ def early_stopping_split(groups, rows_fraction=0.15) -> tuple:
 
 
 def fit_with_early_stopping(base_model, params, X, y, groups, sample_weight,
-                            baseline, y_actual, clamp, rounds, fold_cats=None) -> tuple:
+                            baseline, y_actual, clamp, rounds, fold_cats=None,
+                            chunk_rows=None) -> tuple:
     """Choose n_estimators on held-out CITIES, scored with the gate's own metric.
 
     The eval metric is MAE on the reconstructed absolute scale — the same
@@ -1146,16 +1391,26 @@ def fit_with_early_stopping(base_model, params, X, y, groups, sample_weight,
         return float(np.mean(np.abs(va_actual - reconstruct(np.asarray(y_pred, dtype=np.float64),
                                                             va_baseline, clamp))))
 
-    Xtr, Xva = X[tr], X[va]
-    if fold_cats is not None and fold_cats.active:
-        fold_cols = fold_cats.columns_for_fold(held)
-        fold_cats.apply_to(Xtr, tr, fold_cols)
-        fold_cats.apply_to(Xva, va, fold_cols)
-
     probe = clone(base_model).set_params(**params, early_stopping_rounds=rounds,
                                          eval_metric=gate_mae)
-    probe.fit(Xtr, y[tr], sample_weight=sample_weight[tr],
-              eval_set=[(Xva, y[va])], verbose=False)
+    if reads_in_chunks(X):
+        # X beside the pickle: both sides are fed a row chunk at a time, the map
+        # written into each chunk's copy. Same stopping round and booster as below.
+        fold_cols = None
+        if fold_cats is not None and fold_cats.active:
+            fold_cols = fold_cats.columns_for_fold(held)
+        probe.fit(RowChunks(X, tr, y, sample_weight, fold_cats=fold_cats, fold_cols=fold_cols,
+                            chunk_rows=chunk_rows), None,
+                  eval_set=[(RowChunks(X, va, y, fold_cats=fold_cats, fold_cols=fold_cols,
+                                       chunk_rows=chunk_rows), None)], verbose=False)
+    else:
+        Xtr, Xva = X[tr], X[va]
+        if fold_cats is not None and fold_cats.active:
+            fold_cols = fold_cats.columns_for_fold(held)
+            fold_cats.apply_to(Xtr, tr, fold_cols)
+            fold_cats.apply_to(Xva, va, fold_cols)
+        probe.fit(Xtr, y[tr], sample_weight=sample_weight[tr],
+                  eval_set=[(Xva, y[va])], verbose=False)
 
     # XGBoost keeps its default `rmse` alongside a custom metric and stops on the
     # LAST one in the list. Verify that the round it chose is the minimum of OUR
@@ -1197,7 +1452,7 @@ def fit_with_early_stopping(base_model, params, X, y, groups, sample_weight,
 
 
 def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, clamp,
-                  device, threads, fold_cats=None) -> tuple:
+                  device, threads, fold_cats=None, chunk_rows=None) -> tuple:
     logger.info('\n=== Training XGBoost ===')
     start = time.time()
 
@@ -1215,6 +1470,12 @@ def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, cl
             raise ValueError(
                 f'FLOCK_HYPERPARAM_SEARCH=true and a size switch ({sorted(sizes)}) are both '
                 'set: the search would choose the size the switch names. Unset one.')
+        if reads_in_chunks(X):
+            raise ValueError(
+                'FLOCK_HYPERPARAM_SEARCH=true, but X lives beside the pickle (features_io): '
+                'RandomizedSearchCV fits every candidate on whole in-memory copies of the '
+                'matrix, which is what keeping X outside the pickle avoids. Search on a frame '
+                'that keeps X in the pickle, or leave the search off.')
         logger.info('Running the grouped randomized search (%d candidates x %d folds)...',
                     SEARCH_ITERATIONS, cv.get_n_splits())
         params, hp_info = run_hyperparameter_search(base_model, X, y, cv, groups, sample_weight)
@@ -1242,7 +1503,7 @@ def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, cl
     if es_rounds > 0:
         best_iter, es_info = fit_with_early_stopping(
             base_model, params, X, y, groups, sample_weight, baseline, y_actual,
-            clamp, es_rounds, fold_cats=fold_cats)
+            clamp, es_rounds, fold_cats=fold_cats, chunk_rows=chunk_rows)
         params = {**params, 'n_estimators': best_iter}
 
     # Nothing may reach .fit() with early stopping configured but no eval set:
@@ -1260,12 +1521,15 @@ def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, cl
     # The SHIPPED fit, on the matrix prepare_features wrote — whole-frame category
     # maps included, because those are the maps mlPredictor.js is handed and
     # serves. Only the fold fits below swap in a fold-local map.
-    model.fit(X, y, sample_weight=sample_weight)
+    if reads_in_chunks(X):
+        model.fit(RowChunks(X, None, y, sample_weight, chunk_rows=chunk_rows), None)
+    else:
+        model.fit(X, y, sample_weight=sample_weight)
 
     logger.info('Computing leave-one-city-out metrics...')
     metrics, absolute, per_city, cat_shifts = evaluate_city_cv(
         model, X, y, folds, baseline, y_actual, sample_weight, clamp,
-        fold_cats=fold_cats)
+        fold_cats=fold_cats, chunk_rows=chunk_rows)
     elapsed = time.time() - start
 
     logger.info('City CV RMSE: %.4f, MAE: %.4f, R2: %.4f',
@@ -1277,6 +1541,13 @@ def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, cl
             cat_shifts)
 
 
+# What main() reads from features_train.pkl; realtime_flags falls back to X and
+# feature_cols for a pickle written before is_realtime was carried.
+TRAINER_KEYS = ('X', 'y', 'feature_cols', 'cities', 'baseline', 'y_actual', 'sample_weight',
+                'label_provenance', 'label_type', 'is_realtime', 'run_length_divisor',
+                'category_cell_stats')
+
+
 def main():
     logger.info('Loading prepared features...')
     features_path = SCRIPT_DIR / 'features_train.pkl'
@@ -1284,8 +1555,18 @@ def main():
         raise FileNotFoundError(
             f'{features_path} does not exist. Run `node export_training_data.js` then '
             '`python prepare_features.py` first — a retrain starts at the export.')
-    with open(features_path, 'rb') as f:
-        data = pickle.load(f)
+    # X in the pickle loads as pickle.load gave it; X beside it (features_io) is
+    # memory-mapped read-only after its SHA-256 is checked against the pickle, and
+    # is then fitted and predicted a row chunk at a time (RowChunks).
+    data = load_features(features_path, verify=True)
+    if reads_in_chunks(data['X']):
+        logger.info('X is memory-mapped from %s (%d x %d); it is read a row chunk at a time.',
+                    data.get('X_file'), *data['X'].shape)
+    # Only the keys this script reads stay in memory for the run. The others
+    # (hour, venue_category, label_source, observed_date, ...) are for
+    # evaluate_model.py and the diagnostics, and at the third candidate's size
+    # they are several GB the whole run would otherwise hold.
+    data = {k: v for k, v in data.items() if k in TRAINER_KEYS}
 
     X, y = data['X'], data['y']
     feature_cols = list(data['feature_cols'])
