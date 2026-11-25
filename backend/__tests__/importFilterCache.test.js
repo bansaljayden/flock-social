@@ -252,11 +252,14 @@ function writeSnapshotMeta(file, overrides = {}) {
 function writeFeedbackSnapshot(file, pairs, overrides = {}) {
   fs.writeFileSync(file, `${['venue_place_id,verified_reports', ...pairs.map(([p, n]) => `${p},${n}`)].join('\n')}\n`);
   const bytes = fs.readFileSync(file);
+  const reports = pairs.reduce((a, [, n]) => a + n, 0);
   const meta = {
+    table: 'venue_feedback',
     query: 'SELECT venue_place_id, COUNT(*)::int AS verified_reports FROM venue_feedback WHERE verified = true AND '
       + 'venue_place_id IS NOT NULL GROUP BY venue_place_id ORDER BY venue_place_id',
+    countQuery: 'SELECT COUNT(*) FROM venue_feedback WHERE verified = true',
     isolation: 'REPEATABLE READ READ ONLY, one transaction', snapshotAt: '2026-11-25T22:01:00.000Z',
-    tableVerifiedCount: pairs.reduce((a, [, n]) => a + n, 0), rowsWritten: pairs.length,
+    tableVerifiedCount: reports, tableAllRows: reports + 4, rowsWritten: pairs.length, verifiedReportsWritten: reports,
     csvSha256: crypto.createHash('sha256').update(bytes).digest('hex'), ...overrides,
   };
   fs.writeFileSync(I.snapshotMetaFile(file), JSON.stringify(meta, null, 2));
@@ -1240,6 +1243,11 @@ test('the feedback columns are proven 0: --write needs a whole feedback snapshot
   await refused(unverified, /its query is not FEEDBACK_QUERY/);
   const short = writeFeedbackSnapshot(path.join(dir, 'short.csv'), [['ChIJsomewhereElse000001', 2]], { tableVerifiedCount: 1 });
   await refused(short, /the table held 1 verified reports; the CSV counts 2/);
+  const allCounted = writeFeedbackSnapshot(path.join(dir, 'allcounted.csv'), [['ChIJsomewhereElse000001', 2]],
+    { countQuery: 'SELECT COUNT(*) FROM venue_feedback' });
+  await refused(allCounted, /its countQuery is not FEEDBACK_COUNT_QUERY/);
+  const written = writeFeedbackSnapshot(path.join(dir, 'written.csv'), [['ChIJsomewhereElse000001', 2]], { verifiedReportsWritten: 1 });
+  await refused(written, /the CSV counts 2 reports; 1 were written/);
   // A verified report for a venue that would be written (twintown's bar).
   const hit = writeFeedbackSnapshot(path.join(dir, 'hit.csv'), [[W.bar.placeId, 3], ['ChIJsomewhereElse000001', 2]]);
   const hitOut = await refused(hit, new RegExp(`1 kept venues have verified venue_feedback reports \\(first place ids ${W.bar.placeId}\\)`));

@@ -247,14 +247,17 @@
 // venue_feedback report in the 28 days before the row's hour (its LATERAL
 // join by google place id). The CSV is FEEDBACK_QUERY's answer, header
 // venue_place_id,verified_reports, and beside it <csv without .csv>.meta.json
-// from the same read-only REPEATABLE READ transaction, with query, isolation,
-// snapshotAt, tableVerifiedCount (SELECT COUNT(*) FROM venue_feedback WHERE
-// verified = true), rowsWritten and csvSha256. It is refused unless the query
-// is FEEDBACK_QUERY (spacing aside), the isolation REPEATABLE READ READ ONLY,
-// the CSV's SHA-256 its csvSha256, the place ids unique, their count
-// rowsWritten and the reports they sum to no more than tableVerifiedCount
-// (a report with no place id joins nothing). --write refuses while any kept
-// venue's place id is in it. The export of November had no verified report.
+// from the same read-only REPEATABLE READ transaction, with table, query,
+// countQuery (FEEDBACK_COUNT_QUERY), isolation, snapshotAt,
+// tableVerifiedCount (that count), rowsWritten, verifiedReportsWritten and
+// csvSha256. It is refused unless the table is venue_feedback, the queries
+// are FEEDBACK_QUERY and FEEDBACK_COUNT_QUERY (spacing aside), the isolation
+// REPEATABLE READ READ ONLY, the CSV's SHA-256 its csvSha256, the place ids
+// unique, their count rowsWritten, the reports they sum to
+// verifiedReportsWritten and no more than tableVerifiedCount (a report with
+// no place id joins nothing). --write refuses while any kept venue's place
+// id is in it. At the November export the table held no verified report
+// (taken 2026-11-25T22:02:43.886Z: 0 of its 6 rows).
 //
 // OUTPUTS (--write; each refused if it exists): cache_rows.csv (HEADER, then
 // the rows; append it to training_data.csv without its first line),
@@ -1058,6 +1061,8 @@ function snapshotRefusal(snapshot, required) {
 // ---------------------------------------------------------------------------
 const FEEDBACK_QUERY = 'SELECT venue_place_id, COUNT(*)::int AS verified_reports FROM venue_feedback WHERE verified = true '
   + 'AND venue_place_id IS NOT NULL GROUP BY venue_place_id ORDER BY venue_place_id';
+// The count taken in the same transaction (the meta's countQuery).
+const FEEDBACK_COUNT_QUERY = 'SELECT COUNT(*) FROM venue_feedback WHERE verified = true';
 const FEEDBACK_HEADER = Object.freeze(['venue_place_id', 'verified_reports']);
 
 // The verified reports by Google place id, and what its meta proves: the
@@ -1088,7 +1093,10 @@ function loadFeedbackSnapshot(file) {
     try { m = JSON.parse(fs.readFileSync(metaFile, 'utf8')); } catch { problems.push('its meta is not JSON'); }
     if (m && typeof m === 'object') {
       const need = (ok, why) => { if (!ok) problems.push(why); };
+      need(m.table === 'venue_feedback', `its table is ${JSON.stringify(m.table)}, not venue_feedback`);
       need(sameQuery(m.query, FEEDBACK_QUERY), 'its query is not FEEDBACK_QUERY, every verified report with a place id');
+      need(sameQuery(m.countQuery, FEEDBACK_COUNT_QUERY), 'its countQuery is not FEEDBACK_COUNT_QUERY, every verified report');
+      need(m.verifiedReportsWritten === total, `the CSV counts ${total} reports; ${m.verifiedReportsWritten} were written`);
       need(typeof m.isolation === 'string' && /REPEATABLE READ/i.test(m.isolation) && /READ ONLY/i.test(m.isolation),
         `its isolation ${JSON.stringify(m.isolation)} is not REPEATABLE READ READ ONLY`);
       need(typeof m.snapshotAt === 'string' && Number.isFinite(Date.parse(m.snapshotAt)), 'it has no snapshotAt');
