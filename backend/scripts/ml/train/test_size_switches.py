@@ -148,6 +148,10 @@ def test_the_experiments_that_keep_the_registered_size_refuse_a_switch():
     import subprocess
     env = {k: v for k, v in os.environ.items() if k not in SWITCHES}
     env['FLOCK_MAX_DEPTH'] = '10'
+    # Pinned so a script that checks the device at import (within_city_eval) reaches
+    # main() and its size check, whatever this shell's own device setting is.
+    env['FLOCK_TRAIN_DEVICE'] = 'cpu'
+    env['FLOCK_TRAIN_THREADS'] = '1'
     for script in ('train_two_head.py', 'within_city_eval.py', 'sports_ablation.py'):
         r = subprocess.run([sys.executable, script], cwd=Path(__file__).parent, env=env,
                            capture_output=True, text=True, timeout=300)
