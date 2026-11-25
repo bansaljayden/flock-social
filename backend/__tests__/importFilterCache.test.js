@@ -307,6 +307,7 @@ const C = {
   stringtown: { key: 'stringtown', lat: -26.0, lon: -30.0, radiusKm: 5 },
   shorttown: { key: 'shorttown', lat: -28.0, lon: -30.0, radiusKm: 5 },
   duptown: { key: 'duptown', lat: -34.0, lon: -30.0, radiusKm: 5 },
+  halfdaytown: { key: 'halfdaytown', lat: -36.0, lon: -32.0, radiusKm: 5 },
   // Refused (the cacher stopped it, no folder), 18.9 km north of testville.
   haltedtown: { key: 'haltedtown', lat: 10.17, lon: 10.0, radiusKm: 10 },
 };
@@ -483,6 +484,17 @@ async function buildFixture() {
     entry.data.venues.push({ ...entry.data.venues[0], day_raw_whole: entry.data.venues[0].day_raw_whole.slice(0, 23) });
   });
   dupFile = twice;
+  // halfdaytown: one venue's Monday record names no day, the other venue's
+  // does, so Monday is verified and checkMarketDays passes; the first venue
+  // would be written with six days.
+  const halfA = vn('ven_half_a', C.halfdaytown.lat, C.halfdaytown.lon, 'BAR', 'ChIJhalfdaytownA000001', weekFor(5));
+  const halfB = vn('ven_half_b', C.halfdaytown.lat + 0.001, C.halfdaytown.lon, 'BAR', 'ChIJhalfdaytownB000001', weekFor(7));
+  await fill(C.halfdaytown, [halfA, halfB], {
+    mutate: ({ day, v }, rec) => {
+      if (day === 0 && v.id === halfA.id) { delete rec.day_int; delete rec.day_info; }
+      return rec;
+    },
+  });
   // haltedtown: the cacher stopped it before it made a folder.
   progress.cities.haltedtown = progressRecord(C.haltedtown, 0, 'stopped');
   // A training city's key on a plan entry the plan forgot to mark config,
@@ -896,7 +908,12 @@ test('a dry run refuses every city that fails a rule, by that rule, and never op
   assert.deepEqual(reasons(c.wrongdaytown), ['dayCheck', 'inventoryMismatch']);
   assert.match(c.wrongdaytown.reasons.find((x) => x.reason === 'inventoryMismatch').detail,
     /records listed 8, progress\.json 7; distinct venue ids 2, progress\.json 1;.* records for another day 1, progress\.json 0/);
-  assert.deepEqual(reasons(c.nodaytown), ['dayCheck']);
+  assert.deepEqual(reasons(c.nodaytown), ['dayCheck', 'recordsWithoutDay']);
+  // One venue's Monday names no day while the other's does: checkMarketDays
+  // passes, and the record alone refuses the city (it would lose 24 rows).
+  assert.deepEqual(reasons(c.halfdaytown), ['recordsWithoutDay']);
+  assert.deepEqual([c.halfdaytown.unverifiable, c.halfdaytown.malformed, c.halfdaytown.venuesFound], [1, 0, 2]);
+  assert.match(c.halfdaytown.reasons[0].detail, /1 records named no day/);
   for (const key of ['wrongdaytown', 'nodaytown']) {
     assert.equal(c[key].filesRead, c[key].filesHeld, key);
     assert.equal(c[key].misses, c[key].notFound, key);
@@ -1214,6 +1231,12 @@ test('the snapshot must prove it is the whole table: no meta, a row short, a cha
   const where = copy('where.csv');
   writeSnapshotMeta(where, { query: I.SNAPSHOT_QUERY.replace('FROM ml_venues', 'FROM ml_venues WHERE is_active') });
   await refused(where, /its query is not SNAPSHOT_QUERY/);
+  // A meta that is no JSON object.
+  for (const [i, shape] of ['null', '"wrong"', '[]'].entries()) {
+    const odd = copy(`shape${i}.csv`);
+    fs.writeFileSync(I.snapshotMetaFile(odd), shape);
+    await refused(odd, /does not prove it is the whole of ml_venues: it is not a JSON object/);
+  }
 });
 
 test('the feedback columns are proven 0: --write needs a whole feedback snapshot, and refuses a kept venue with a verified report', async () => {
@@ -1243,6 +1266,16 @@ test('the feedback columns are proven 0: --write needs a whole feedback snapshot
   await refused(unverified, /its query is not FEEDBACK_QUERY/);
   const short = writeFeedbackSnapshot(path.join(dir, 'short.csv'), [['ChIJsomewhereElse000001', 2]], { tableVerifiedCount: 1 });
   await refused(short, /the table held 1 verified reports; the CSV counts 2/);
+  // The other way: the table held a report the CSV left out (it could be a
+  // kept venue's). Every report has a place id, so the counts must be equal.
+  const omitted = writeFeedbackSnapshot(path.join(dir, 'omitted.csv'), [], { tableVerifiedCount: 1 });
+  await refused(omitted, /the table held 1 verified reports; the CSV counts 0/);
+  // A meta that is no JSON object proves nothing.
+  for (const [i, shape] of ['null', 'false', '"wrong"', '[]', '7'].entries()) {
+    const file = writeFeedbackSnapshot(path.join(dir, `shape${i}.csv`), [['ChIJsomewhereElse000001', 2]]);
+    fs.writeFileSync(I.snapshotMetaFile(file), shape);
+    await refused(file, /its meta is not a JSON object/);
+  }
   const allCounted = writeFeedbackSnapshot(path.join(dir, 'allcounted.csv'), [['ChIJsomewhereElse000001', 2]],
     { countQuery: 'SELECT COUNT(*) FROM venue_feedback' });
   await refused(allCounted, /its countQuery is not FEEDBACK_COUNT_QUERY/);
@@ -1582,9 +1615,20 @@ test('--offline answers from the cache alone: no fetch, no key, misses counted a
   });
   rewriteAnswer(path.join(damagedDir, listing[0]), (entry) => { entry.data.venues[0].day_raw_whole[3] = null; });
   rewriteAnswer(path.join(damagedDir, listing[1]), (entry) => { entry.data.venues_n = entry.data.venues.length + 1; });
+  // And one record that names no day, beside others that name it.
+  rewriteAnswer(path.join(damagedDir, listing[2]), (entry) => { delete entry.data.venues[0].day_int; delete entry.data.venues[0].day_info; });
   const damaged = await harvestOffline(['--city=philly', '--new-only', '--offline', `--cache-dir=${damagedDir}`]);
   assert.equal(damaged.summary.aborted, true);
-  assert.match(damaged.summary.abortReason, /REFUSED: 0 records in --cache-dir had no 24-slot curve, 1 curve slots were no number from 0 to 100, and 1 boxes ended below/);
+  assert.match(damaged.summary.abortReason,
+    /REFUSED: 0 records in --cache-dir had no 24-slot curve, 1 named no day, 1 curve slots were no number from 0 to 100, and 1 boxes ended below/);
+  // The record naming no day alone refuses it too.
+  const dayOnlyDir = path.join(tmp('flock-import-philly-dayonly-'), 'philly-2026-11');
+  fs.cpSync(phillyDir, dayOnlyDir, { recursive: true });
+  rewriteAnswer(path.join(dayOnlyDir, listing[2]), (entry) => { delete entry.data.venues[0].day_int; delete entry.data.venues[0].day_info; });
+  const dayOnly = await harvestOffline(['--city=philly', '--new-only', '--offline', `--cache-dir=${dayOnlyDir}`]);
+  assert.equal(dayOnly.summary.aborted, true);
+  assert.match(dayOnly.summary.abortReason, /REFUSED: 0 records in --cache-dir had no 24-slot curve, 1 named no day, 0 curve slots/);
+  assert.equal(dayOnly.fetches, 0);
   assert.equal(damaged.fetches, 0);
   // Inside an offline run any fetch is refused before it leaves.
   await assert.rejects(H.withNoNetwork(() => fetch('https://besttime.app/api/v1/keys/x')), /REFUSED: an --offline run makes no request/);
@@ -1684,6 +1728,18 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
   const damaged = await parity(exported.trainPath, { dir: damagedDir });
   assert.equal(damaged.result.exitCode, 1);
   assert.match(damaged.out, /PARITY REFUSED: the folder's answers are damaged: curve slots no number 0 to 100 1\./);
+  // A record of NEW1 that names no day, beside the other venues' that do:
+  // NEW1 would be generated without that day, and the export holds it.
+  const nodayDir = path.join(tmp('flock-import-philly-noday-'), 'philly-2026-11');
+  fs.cpSync(phillyDir, nodayDir, { recursive: true });
+  rewriteAnswer(path.join(nodayDir, withOne), (entry) => {
+    const rec = entry.data.venues.find((v) => v.venue_id === NEW1.id);
+    delete rec.day_int;
+    delete rec.day_info;
+  });
+  const noday = await parity(exported.trainPath, { dir: nodayDir });
+  assert.equal(noday.result.exitCode, 1);
+  assert.match(noday.out, /PARITY REFUSED: the folder's answers are damaged: records naming no day 1\./);
   const wrongMisses = await parity(exported.trainPath, { misses: phillyNotFound + 1 });
   assert.equal(wrongMisses.result.exitCode, 1);
   assert.match(wrongMisses.out, new RegExp(`PARITY REFUSED: ${phillyNotFound} misses, ${phillyNotFound + 1} expected`));

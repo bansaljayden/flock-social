@@ -1317,12 +1317,14 @@ function buildFilterUrl(key, q, opts) {
 // without it. Also counted: the answer files in the directory that no
 // question read. A run over part of a directory's scope leaves some unread; a
 // city replayed whole must read every one (train/importFilterCache.js refuses
-// a city that does not). And three kinds of damage a live answer could carry
+// a city that does not). And four kinds of damage a live answer could carry
 // but a cache cannot be asked again about, each refusing the run before
 // planning: a record without a 24-slot curve and a slot that is no number
 // from 0 to 100, in any record of an answer, duplicates and other days'
-// included (checkOfflineCurves), and a box whose paging ended below the
-// venues_n any of its pages declared (fetchTile).
+// included (checkOfflineCurves), a record that names no day (set aside in
+// harvestDay; checkMarketDays passes it while another venue names the day),
+// and a box whose paging ended below the venues_n any of its pages declared
+// (fetchTile).
 // ---------------------------------------------------------------------------
 function cacheKeyUrl(url) {
   const u = new URL(url);
@@ -2427,6 +2429,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
         summary.offline = {
           misses: s.cacheMisses, expectedMisses: opts.expectMisses, filesHeld: heldNames.length, filesRead: readFiles.size, filesUnread: unread,
           invalidCurveShapes: s.invalidCurveShapes, invalidCurveValues: s.invalidCurveValues, shortOfTotal: s.shortOfTotal,
+          unverifiable: s.unverifiable,
         };
         console.log(`${TAG} OFFLINE: ${readFiles.size} of the ${heldNames.length} answers in --cache-dir answered a question `
           + `and ${unread} answered none (expected only when the directory holds more than this run asks); `
@@ -2436,11 +2439,14 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
             + `${opts.expectMisses} says ${opts.expectMisses} were 404s. A miss that was not a 404 is a box whose venues `
             + 'would be left out, or written with part of their week. Nothing is written.');
         }
-        if (s.invalidCurveShapes > 0 || s.invalidCurveValues > 0 || s.shortOfTotal > 0) {
+        // A record that names no day is set aside online too, and checkMarketDays
+        // passes it while another venue names the day; offline, its venue
+        // would lose that day unseen.
+        if (s.invalidCurveShapes > 0 || s.invalidCurveValues > 0 || s.shortOfTotal > 0 || s.unverifiable > 0) {
           throw abortError(`REFUSED: ${s.invalidCurveShapes} records in --cache-dir had no 24-slot curve, `
-            + `${s.invalidCurveValues} curve slots were no number from 0 to 100, and ${s.shortOfTotal} boxes ended below the `
-            + 'venues_n a page of theirs declared: a damaged answer, whose venue-hours would be left out unseen. '
-            + 'Nothing is written.');
+            + `${s.unverifiable} named no day, ${s.invalidCurveValues} curve slots were no number from 0 to 100, and `
+            + `${s.shortOfTotal} boxes ended below the venues_n a page of theirs declared: a damaged answer, whose `
+            + 'venue-hours would be left out unseen. Nothing is written.');
         }
       }
 

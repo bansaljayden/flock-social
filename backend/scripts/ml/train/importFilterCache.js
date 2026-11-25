@@ -104,6 +104,10 @@
 //     every count exactly (macau does not: 25 questions to its 9);
 //   * no record named a day other than the one asked, and no weekday's
 //     records all left the day out (checkMarketDays): refused as dayCheck;
+//     nor did any one record leave it out (neither day_int nor
+//     day_info.day_int): refused as recordsWithoutDay, since beside another
+//     venue's record that names the day it passes checkMarketDays and its
+//     venue loses that day's 24 rows. No accepted November city has one;
 //   * the replay ran to its end (an answer with no venue list stops it):
 //     refused as replayAbort, with the harvester's message;
 //   * no record was malformed (no venue id, or no 24-hour curve) and no box
@@ -228,8 +232,9 @@
 //   * --expect-misses (required) is the 404s the run that filled the folder
 //     met, and the replay must find exactly that many questions unanswered;
 //   * the replay's damage counts must all be 0: malformed records, records
-//     without a 24-slot curve, curve slots no number from 0 to 100, boxes
-//     ended below their venues_n, boxes cut at the cap, unread files;
+//     naming no day, records without a 24-slot curve, curve slots no number
+//     from 0 to 100, boxes ended below their venues_n, boxes cut at the cap,
+//     unread files;
 //   * THE WRITES THE SNAPSHOT SHOWS: every row of the run's cities stored
 //     'harvested' and created from the folder's first answer until the
 //     bound, taken from the snapshot alone, must be compared, or found by
@@ -252,11 +257,12 @@
 // tableVerifiedCount (that count), rowsWritten, verifiedReportsWritten and
 // csvSha256. It is refused unless the table is venue_feedback, the queries
 // are FEEDBACK_QUERY and FEEDBACK_COUNT_QUERY (spacing aside), the isolation
-// REPEATABLE READ READ ONLY, the CSV's SHA-256 its csvSha256, the place ids
-// unique, their count rowsWritten, the reports they sum to
-// verifiedReportsWritten and no more than tableVerifiedCount (a report with
-// no place id joins nothing). --write refuses while any kept venue's place
-// id is in it. At the November export the table held no verified report
+// REPEATABLE READ READ ONLY, the CSV's SHA-256 its csvSha256, the meta a
+// JSON object, the place ids unique, their count rowsWritten, and the
+// reports they sum to both verifiedReportsWritten and tableVerifiedCount
+// exactly (venue_place_id is NOT NULL, migration 001, so every verified report
+// is in a group; a count above the CSV's is a report left out). --write
+// refuses while any kept venue's place id is in it. At the November export the table held no verified report
 // (taken 2026-11-25T22:02:43.886Z: 0 of its 6 rows).
 //
 // OUTPUTS (--write; each refused if it exists): cache_rows.csv (HEADER, then
@@ -804,6 +810,13 @@ async function replayCity(city) {
     refuse(city, 'malformedRecords', `${r.malformed} records had no venue id or no 24-hour curve: what else the answer `
       + 'left out cannot be told from the file');
   }
+  // checkMarketDays refuses a weekday no record named; one venue's record
+  // that names none, beside another's that does, is a venue-day set aside
+  // with nothing written for it (24 rows gone, the rest of its week kept).
+  if (r.unverifiable > 0) {
+    refuse(city, 'recordsWithoutDay', `${r.unverifiable} records named no day (neither day_int nor day_info.day_int): each `
+      + 'was set aside, and its venue would be written without that day');
+  }
   if (r.truncatedTiles > 0) {
     refuse(city, 'truncatedTiles', `${r.truncatedTiles} boxes reached the ${CACHER.resultCap} cap at the smallest tile: `
       + 'venues there were never listed');
@@ -958,7 +971,7 @@ function checkSnapshotMeta(s) {
   } catch {
     return { file, present: true, problems: ['it is not JSON'] };
   }
-  if (!meta || typeof meta !== 'object') return { file, present: true, problems: ['it is not a JSON object'] };
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return { file, present: true, problems: ['it is not a JSON object'] };
   const problems = [];
   const need = (ok, why) => { if (!ok) problems.push(why); };
   need(meta.table === 'ml_venues', `its table is ${JSON.stringify(meta.table)}, not ml_venues`);
@@ -1089,9 +1102,17 @@ function loadFeedbackSnapshot(file) {
   const metaFile = snapshotMetaFile(file);
   const meta = { file: metaFile, present: fs.existsSync(metaFile), problems };
   if (meta.present) {
-    let m = null;
-    try { m = JSON.parse(fs.readFileSync(metaFile, 'utf8')); } catch { problems.push('its meta is not JSON'); }
-    if (m && typeof m === 'object') {
+    let m;
+    let parsed = false;
+    try {
+      m = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
+      parsed = true;
+    } catch {
+      problems.push('its meta is not JSON');
+    }
+    // null, false, a string, a number or a list proves nothing either.
+    if (parsed && (m === null || typeof m !== 'object' || Array.isArray(m))) problems.push('its meta is not a JSON object');
+    else if (parsed) {
       const need = (ok, why) => { if (!ok) problems.push(why); };
       need(m.table === 'venue_feedback', `its table is ${JSON.stringify(m.table)}, not venue_feedback`);
       need(sameQuery(m.query, FEEDBACK_QUERY), 'its query is not FEEDBACK_QUERY, every verified report with a place id');
@@ -1102,8 +1123,10 @@ function loadFeedbackSnapshot(file) {
       need(typeof m.snapshotAt === 'string' && Number.isFinite(Date.parse(m.snapshotAt)), 'it has no snapshotAt');
       need(m.csvSha256 === sha256, `its csvSha256 ${m.csvSha256} is not the CSV's ${sha256}`);
       need(m.rowsWritten === reports.size, `the CSV holds ${reports.size} place ids; ${m.rowsWritten} were written`);
-      // Reports without a place id are in the count and in no group.
-      need(Number.isInteger(m.tableVerifiedCount) && m.tableVerifiedCount >= total,
+      // Exactly: venue_place_id is NOT NULL (migration 001, never altered),
+      // so every verified report is in a group, and a count above the CSV's
+      // is a report the CSV left out.
+      need(Number.isInteger(m.tableVerifiedCount) && m.tableVerifiedCount === total,
         `the table held ${m.tableVerifiedCount} verified reports; the CSV counts ${total}`);
       Object.assign(meta, { snapshotAt: m.snapshotAt, tableVerifiedCount: m.tableVerifiedCount, csvSha256: m.csvSha256 });
     }
@@ -2106,7 +2129,8 @@ async function runParity(opts, { log }) {
   }
   // A folder with damaged answers proves nothing about the rows it wrote.
   const damage = {
-    malformed: r.malformed, 'records without a 24-slot curve': r.invalidCurveShapes, 'curve slots no number 0 to 100':
+    malformed: r.malformed, 'records naming no day': r.unverifiable, 'records without a 24-slot curve': r.invalidCurveShapes,
+    'curve slots no number 0 to 100':
       r.invalidCurveValues, 'boxes ended below their venues_n': r.shortOfTotal, 'boxes cut at the cap': r.truncatedTiles,
     'unread files': r.filesUnread.length,
   };
