@@ -1,0 +1,98 @@
+"""Where a feature pickle's matrix X lives: inside the pickle, or beside it.
+
+WHY THIS FILE EXISTS. A training frame of tens of millions of rows does not fit
+this project's training PC as one pickled float32 array plus the copies a fit
+makes of it (the November 2026 third candidate is about 94 million rows read).
+So prepare_features.py may write X to a .npy file next to its pickle (float32,
+Fortran order, the layout the in-pickle X already has) and record the file's
+name, shape and SHA-256 in the pickle instead of the array. Every reader opens
+a feature pickle through load_features, which returns the same dict either
+way, with X memory-mapped (read-only) when it is external. A pickle that holds
+X inline, which is every pickle written before this file and every export
+small enough to keep it inline, loads exactly as pickle.load always did.
+
+Run its checks: python test_features_io.py
+"""
+import hashlib
+import pickle
+from pathlib import Path
+
+import numpy as np
+
+X_FILE_KEY = 'X_file'
+X_SHAPE_KEY = 'X_shape'
+X_SHA_KEY = 'X_sha256'
+
+
+def x_file_for(pickle_path) -> Path:
+    """features_train.pkl -> features_train.X.npy, in the same folder."""
+    p = Path(pickle_path)
+    return p.with_name(p.stem + '.X.npy')
+
+
+def open_x_memmap(pickle_path, n_rows: int, n_features: int):
+    """A writable float32, Fortran-order .npy memory map for X beside the pickle.
+
+    Returns (path, array). Rows are written in their final order; call
+    finish_x when every row is written.
+    """
+    path = x_file_for(pickle_path)
+    arr = np.lib.format.open_memmap(path, mode='w+', dtype=np.float32,
+                                    shape=(int(n_rows), int(n_features)), fortran_order=True)
+    return path, arr
+
+
+def sha256_file(path, chunk: int = 1 << 24) -> str:
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        while True:
+            block = f.read(chunk)
+            if not block:
+                break
+            h.update(block)
+    return h.hexdigest()
+
+
+def finish_x(pickle_path, arr) -> dict:
+    """Flush the map and return the keys that stand in for X in the pickle."""
+    arr.flush()
+    path = x_file_for(pickle_path)
+    shape = [int(arr.shape[0]), int(arr.shape[1])]
+    del arr
+    return {X_FILE_KEY: path.name, X_SHAPE_KEY: shape, X_SHA_KEY: sha256_file(path)}
+
+
+def load_features(pickle_path, mmap: bool = True, verify: bool = False) -> dict:
+    """The pickle's dict, with data['X'] always present.
+
+    Inline X: returned exactly as pickle.load gives it. External X: the .npy
+    beside the pickle, memory-mapped read-only (mmap=True) or read into memory,
+    after checking its shape, dtype and layout against the pickle; verify=True
+    also checks the file's SHA-256 (reads the whole file once).
+    """
+    with open(pickle_path, 'rb') as f:
+        data = pickle.load(f)
+    if X_FILE_KEY not in data:
+        return data
+    if 'X' in data:
+        raise ValueError(f'{pickle_path} holds X inline AND names {data[X_FILE_KEY]}; one or the other.')
+    path = Path(pickle_path).with_name(data[X_FILE_KEY])
+    if not path.exists():
+        raise FileNotFoundError(f'{pickle_path} keeps X in {path.name}, which is not beside it.')
+    if verify:
+        got = sha256_file(path)
+        if got != data[X_SHA_KEY]:
+            raise ValueError(f'{path.name} SHA-256 {got} is not the {data[X_SHA_KEY]} the pickle records.')
+    X = np.load(path, mmap_mode='r' if mmap else None)
+    if list(X.shape) != list(data[X_SHAPE_KEY]):
+        raise ValueError(f'{path.name} has shape {list(X.shape)}, the pickle records {data[X_SHAPE_KEY]}.')
+    if X.dtype != np.float32 or not X.flags.f_contiguous:
+        raise ValueError(f'{path.name} must be float32 in Fortran order (got {X.dtype}, '
+                         f'f_contiguous={X.flags.f_contiguous}).')
+    out = dict(data)
+    out['X'] = X
+    return out
+
+
+def x_is_external(data: dict) -> bool:
+    return isinstance(data.get('X'), np.memmap) or X_FILE_KEY in data
