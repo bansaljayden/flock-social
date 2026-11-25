@@ -224,6 +224,10 @@ const SUITE_SLOTS = {
                                  // in holds, an unconfirmed account with
                                  // friends in it, `intent` and `created`, and
                                  // build 53's Confirm-it's-you re-send.
+  importFilterCache: 88,         // new in 2026-11-25; the filter cache replayed
+                                 // --offline through the harvest's real writer,
+                                 // exported, and compared row for row with the
+                                 // offline import's generator (--parity).
   addFriendsRealDb: 44,          // new in 2026-11-23; the Add Friends rebuild's
                                  // server half (code links and previews, the
                                  // cancel that only cancels, a yes to a

@@ -9,7 +9,10 @@
 // below); --radius-km (default 20) sets how far each reaches; --result-budget
 // (default 60000) caps the results one run may be billed for; --cache-dir=<dir>
 // keeps every answer the filter gives there and answers a repeated question
-// from it, unbilled (THE CACHE, above requestPage); --day-share-over-voters
+// from it, unbilled (THE CACHE, above requestPage); --offline (with
+// --cache-dir) answers every question from that directory and never reaches
+// BestTime at all, --expect-misses=<n> saying how many questions the directory
+// may lack (OFFLINE, beside THE CACHE); --day-share-over-voters
 // (with --new-only only) takes the gate's day share over the venues that could
 // vote, an option chosen for named cities (see AXIS_NEW_ONLY_MIN_VENUE_SHARE).
 //
@@ -275,6 +278,10 @@ const DEFAULT_RESULT_CAP = 500;
 const DEFAULT_PAGE_SIZE = 100;
 const DEFAULT_TILE_KM = 20;
 const DEFAULT_MAX_REQUESTS = 4000;
+// OFFLINE: the key that stands in for BESTTIME_API_KEY. It only ever reaches a
+// URL whose key is stripped before the cache lookup (cacheKeyUrl), so any value
+// finds the same file; this one names itself in case it is ever seen.
+const OFFLINE_KEY = 'offline-no-key';
 // Coordinates are sent with three decimals, the most the filter accepts, so
 // tiles live on a grid of thousandths of a degree and their edges are exact.
 const MIN_TILE_SPAN = 2; // thousandths of a degree, about 200 m
@@ -529,9 +536,9 @@ function parseCities(argv) {
 }
 
 function parseArgs(argv) {
-  const known = ['--commit', '--all-types', '--no-place-id', '--new-only', '--day-share-over-voters'];
+  const known = ['--commit', '--all-types', '--no-place-id', '--new-only', '--day-share-over-voters', '--offline'];
   const valued = ['--city=', '--days=', '--tile-km=', '--page-size=', '--result-cap=', '--max-requests=', '--radius-km=',
-    '--result-budget=', '--cache-dir='];
+    '--result-budget=', '--cache-dir=', '--expect-misses='];
   for (const a of argv.slice(2)) {
     if (!known.includes(a) && !valued.some((p) => a.startsWith(p))) {
       return { error: `Unknown argument "${a}".` };
@@ -571,8 +578,27 @@ function parseArgs(argv) {
   if (argv.includes('--day-share-over-voters') && !argv.includes('--new-only')) {
     return { error: '--day-share-over-voters changes the --new-only rule only; pass --new-only with it.' };
   }
+  // OFFLINE (beside THE CACHE).
+  const offline = argv.includes('--offline');
+  const expectMisses = intArg(argv, 'expect-misses', null, { min: 0 });
+  if (expectMisses.error) return { error: expectMisses.error };
+  if (offline && cacheArg === undefined) {
+    return { error: '--offline answers every question from --cache-dir; pass --cache-dir=<dir> with it.' };
+  }
+  if (expectMisses.value !== null && !offline) {
+    return { error: '--expect-misses counts the questions an --offline run finds no answer for; pass --offline with it.' };
+  }
+  if (offline && argv.includes('--commit') && expectMisses.value === null) {
+    return {
+      error: 'an --offline --commit needs --expect-misses=<n>: a question the cache lacks becomes an empty box, '
+        + 'which is only true of a 404, so the number of misses must be the number of 404s the run that filled '
+        + 'the cache recorded.',
+    };
+  }
   return {
     cacheDir: cacheArg ? path.resolve(cacheArg.slice('--cache-dir='.length).trim()) : null,
+    offline,
+    expectMisses: expectMisses.value,
     commit: argv.includes('--commit'),
     allTypes: argv.includes('--all-types'),
     askPlaceId: !argv.includes('--no-place-id'),
@@ -591,29 +617,34 @@ function parseArgs(argv) {
 
 // ---------------------------------------------------------------------------
 // Tiles. A tile is { s, w, n, e } in integer thousandths of a degree.
+//
+// `centroids` (every function below that reads a centroid takes it, last, and
+// defaults to CENTROIDS) is a per-run override: train/importFilterCache.js
+// replays cities config.js does not list, each around its own plan centroid,
+// without CENTROIDS ever being edited. A harvest run never passes it.
 // ---------------------------------------------------------------------------
 const kmPerDegLng = (lat) => KM_PER_DEG_LAT * Math.cos((lat * Math.PI) / 180);
 
 // The distance from a city's centroid to the nearest point of the box.
-function kmToTile(tile, key) {
-  const c = CENTROIDS[key];
+function kmToTile(tile, key, centroids = CENTROIDS) {
+  const c = centroids[key];
   const lat = Math.min(Math.max(c.lat, tile.s / 1000), tile.n / 1000);
   const lon = Math.min(Math.max(c.lon, tile.w / 1000), tile.e / 1000);
   return kmBetween(c.lat, c.lon, lat, lon);
 }
 
 // True when any point of the box is within radiusKm of a centroid of `cities`.
-function tileIntersects(tile, cities, radiusKm = DEFAULT_RADIUS_KM) {
-  return cities.some((key) => kmToTile(tile, key) <= radiusKm);
+function tileIntersects(tile, cities, radiusKm = DEFAULT_RADIUS_KM, centroids = CENTROIDS) {
+  return cities.some((key) => kmToTile(tile, key, centroids) <= radiusKm);
 }
 
 // One grid for each set of cities whose centroids lie within MAX_KM of one
 // another (see EVERY TRAINING CITY), in the order the cities were asked for.
-function gridGroups(cities) {
+function gridGroups(cities, centroids = CENTROIDS) {
   const groups = [];
   for (const key of cities) {
-    const c = CENTROIDS[key];
-    const near = groups.filter((g) => g.some((k) => kmBetween(c.lat, c.lon, CENTROIDS[k].lat, CENTROIDS[k].lon) <= MAX_KM));
+    const c = centroids[key];
+    const near = groups.filter((g) => g.some((k) => kmBetween(c.lat, c.lon, centroids[k].lat, centroids[k].lon) <= MAX_KM));
     const merged = [...near.flat(), key];
     for (const g of near) groups.splice(groups.indexOf(g), 1);
     groups.push(merged);
@@ -628,22 +659,22 @@ function gridGroups(cities) {
 // has) and `city` the nearest of them, which the box's requests and results
 // are counted against. Pure, so a run's size can be read off it without a
 // request; the run prints that sizing before its first one.
-function planTiles(cities, tileKm, radiusKm = DEFAULT_RADIUS_KM) {
+function planTiles(cities, tileKm, radiusKm = DEFAULT_RADIUS_KM, centroids = CENTROIDS) {
   const out = [];
-  for (const area of gridGroups(cities)) {
-    for (const tile of buildTiles(area, tileKm, radiusKm)) {
+  for (const area of gridGroups(cities, centroids)) {
+    for (const tile of buildTiles(area, tileKm, radiusKm, centroids)) {
       let city = area[0];
-      for (const key of area) if (kmToTile(tile, key) < kmToTile(tile, city)) city = key;
+      for (const key of area) if (kmToTile(tile, key, centroids) < kmToTile(tile, city, centroids)) city = key;
       out.push({ city, area, tile });
     }
   }
   return cities.flatMap((key) => out.filter((p) => p.city === key));
 }
 
-function buildTiles(cities, tileKm, radiusKm = DEFAULT_RADIUS_KM) {
+function buildTiles(cities, tileKm, radiusKm = DEFAULT_RADIUS_KM, centroids = CENTROIDS) {
   let s = Infinity; let n = -Infinity; let w = Infinity; let e = -Infinity;
   for (const key of cities) {
-    const c = CENTROIDS[key];
+    const c = centroids[key];
     const dLat = radiusKm / KM_PER_DEG_LAT;
     const dLng = radiusKm / kmPerDegLng(c.lat);
     s = Math.min(s, Math.floor((c.lat - dLat) * 1000));
@@ -658,7 +689,7 @@ function buildTiles(cities, tileKm, radiusKm = DEFAULT_RADIUS_KM) {
   for (let ts = s; ts < n; ts += latStep) {
     for (let tw = w; tw < e; tw += lngStep) {
       const tile = { s: ts, w: tw, n: Math.min(ts + latStep, n), e: Math.min(tw + lngStep, e) };
-      if (tileIntersects(tile, cities, radiusKm)) tiles.push(tile);
+      if (tileIntersects(tile, cities, radiusKm, centroids)) tiles.push(tile);
     }
   }
   return tiles;
@@ -1219,6 +1250,23 @@ function buildFilterUrl(key, q, opts) {
 // BestTime's stored forecasts change and are deleted after 31 days: a cache is
 // for re-running the same scope soon after, so give each new month's run a
 // fresh directory. Without --cache-dir nothing is read or written.
+//
+// OFFLINE (--offline, 2026-11-25). BestTime's subscription ended on
+// 2026-11-25, and a --cache-dir run still asked the key status endpoint first
+// (a dead key refuses every run there) and fetched whatever the directory
+// lacked. --offline needs --cache-dir and never reaches BestTime: no key is
+// required (OFFLINE_KEY stands in; the cache is keyed on the URL without it),
+// neither key status read is made, and every fetch made while the run lasts
+// is refused before it can leave (withNoNetwork), the admission guard's
+// allowed calls included. A question the directory has no answer for is an
+// empty box, as a 404 is, and is counted apart (cacheMisses): a cache never
+// holds a 404 (requestPage returns before writeCache, and the cacher did the
+// same), so that count must equal the 404s the run that filled it recorded,
+// which --expect-misses=<n> states and the run checks before planning; an
+// --offline --commit refuses to start without it. Also counted: the answer
+// files in the directory that no question read. A run over part of a
+// directory's scope leaves some unread; a city replayed whole must read every
+// one (train/importFilterCache.js refuses a city that does not).
 // ---------------------------------------------------------------------------
 function cacheKeyUrl(url) {
   const u = new URL(url);
@@ -1227,16 +1275,30 @@ function cacheKeyUrl(url) {
   return u.toString();
 }
 
-const cacheFile = (dir, keyless) => path.join(dir, `${crypto.createHash('sha256').update(keyless).digest('hex')}.json`);
+const cacheFileName = (keyless) => `${crypto.createHash('sha256').update(keyless).digest('hex')}.json`;
+const cacheFile = (dir, keyless) => path.join(dir, cacheFileName(keyless));
 
-function readCache(dir, keyless) {
+// The whole entry, { url, fetchedAt, data }, or null when the file is absent,
+// unreadable or answers another question.
+function readCacheEntry(dir, keyless) {
   let entry;
   try {
     entry = JSON.parse(fs.readFileSync(cacheFile(dir, keyless), 'utf8'));
   } catch {
     return null; // absent, or cut short by a crash mid-write: asked again
   }
-  return entry && entry.url === keyless && entry.data && typeof entry.data === 'object' ? entry.data : null;
+  return entry && entry.url === keyless && entry.data && typeof entry.data === 'object' ? entry : null;
+}
+
+// OFFLINE: every fetch made while fn runs is refused before it can leave.
+async function withNoNetwork(fn) {
+  const inner = globalThis.fetch;
+  globalThis.fetch = () => Promise.reject(refusal('REFUSED: an --offline run makes no request; every answer comes from --cache-dir.'));
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = inner;
+  }
 }
 
 function writeCache(ctx, keyless, data) {
@@ -1312,13 +1374,21 @@ async function requestPage(ctx, q) {
   assertAllowedRequest(url, 'GET');
   const keyless = ctx.opts.cacheDir ? cacheKeyUrl(url) : null;
   if (keyless) {
-    const cached = readCache(ctx.opts.cacheDir, keyless);
-    if (cached) {
-      const answer = readFilterAnswer(cached);
+    const entry = readCacheEntry(ctx.opts.cacheDir, keyless);
+    if (entry) {
+      const answer = readFilterAnswer(entry.data);
       ctx.stats.cachedPages++;
       if (ctx.city) ctx.city.cachedPages++;
+      if (ctx.onCacheHit) ctx.onCacheHit(keyless, entry);
       return { ...answer, cached: true };
     }
+  }
+  if (ctx.opts.offline) {
+    // OFFLINE (beside THE CACHE): an empty box, as a 404 is, counted apart,
+    // and never a request.
+    ctx.stats.cacheMisses++;
+    if (ctx.city) ctx.city.cacheMisses++;
+    return { venues: [], total: 0, credits: null, cached: true, miss: true };
   }
   for (let attempt = 0; ; attempt++) {
     // A page holds at most --page-size venues, so this is the last moment the
@@ -1487,16 +1557,19 @@ async function harvestDay(ctx, tiles, day, onLeaf = null) {
     if (res.saturated) {
       const kids = splitTile(tile);
       const area = ctx.area || ctx.opts.cities;
-      const inside = kids ? kids.filter((k) => tileIntersects(k, area, ctx.opts.radiusKm)) : null;
+      // ctx.centroids: the per-run override (see Tiles), CENTROIDS when unset.
+      const inside = kids ? kids.filter((k) => tileIntersects(k, area, ctx.opts.radiusKm, ctx.centroids || CENTROIDS)) : null;
       if (inside) {
         ctx.stats.splits++;
-        console.log(`  ${BT_DAY_NAMES[day]}  ${tileLabel(tile)}  reached the ${ctx.opts.resultCap} cap, split into ${inside.length}`);
+        if (!ctx.quiet) console.log(`  ${BT_DAY_NAMES[day]}  ${tileLabel(tile)}  reached the ${ctx.opts.resultCap} cap, split into ${inside.length}`);
         queue.unshift(...inside);
         continue;
       }
       ctx.stats.truncatedTiles++;
       console.warn(`  ${BT_DAY_NAMES[day]}  ${tileLabel(tile)}  reached the cap at the minimum tile size; some venues here are missing`);
-    } else {
+    } else if (!ctx.quiet) {
+      // ctx.quiet: a caller replaying hundreds of cities keeps the counts and
+      // drops the line per box.
       console.log(`  ${BT_DAY_NAMES[day]}  ${tileLabel(tile)}  ${res.venues.length} venues (${res.pages} page${res.pages === 1 ? '' : 's'})`);
     }
     leaves.push(tile);
@@ -1698,9 +1771,18 @@ function placeVenue(lat, lng, markets) {
 // `categoryOf` names a new venue's category, undefined to skip it as
 // unmappedType; by default its BestTime type through TYPE_TO_CATEGORY, the
 // only rule this script uses.
+// Three options a harvest run never passes, for train/importFilterCache.js,
+// which plans hundreds of cities config.js does not list in one pass:
+// `markets` replaces otherMarkets(cities) as the centroids placeVenue reads
+// (PA still first), `radiusKmOf(cityKey)` gives each city its own radius in
+// place of `radiusKm`, and `onSkip(venue, reason)` hears every skip as it is
+// counted, under the same name `skipped` counts it by.
 function planVenues(venues, identities, cities, {
   radiusKm = DEFAULT_RADIUS_KM,
   categoryOf = (v) => (v.type ? TYPE_TO_CATEGORY[v.type] : undefined),
+  markets = null,
+  radiusKmOf = null,
+  onSkip = null,
 } = {}) {
   const plan = [];
   const skipped = {
@@ -1708,20 +1790,25 @@ function planVenues(venues, identities, cities, {
     placeHeldByOtherBtId: 0, placeClaimedTwice: 0, nearDupHeldByOtherBtId: 0, nearDupClaimed: 0,
     nearDuplicateInRun: 0, unmappedType: 0, noName: 0, noSignal: 0, noCoordinates: 0,
   };
+  const skip = (v, reason) => {
+    skipped[reason]++;
+    if (onSkip) onSkip(v, reason);
+  };
   const claimedPlaces = new Map(); // place id -> BestTime id that took it this run
   const claimedRows = new Set();
   const nearRows = nearIndex(identities.nearby || []);
-  const markets = otherMarkets(cities);
+  const placeAmong = markets || otherMarkets(cities);
+  const radiusOf = radiusKmOf || (() => radiusKm);
   const placed = new Map();
   const rest = [];
   // Pass one: placement, and every venue this corpus already holds by its
   // BestTime id. Done first so the answer does not depend on the order
   // BestTime listed the venues in.
   for (const v of venues) {
-    if (!Number.isFinite(v.lat) || !Number.isFinite(v.lng)) { skipped.noCoordinates++; continue; }
-    const where = placeVenue(v.lat, v.lng, markets);
-    if (!where.cityKey) { skipped.outsideMarkets++; continue; }
-    if (!cities.includes(where.cityKey)) { skipped.otherMarket++; continue; }
+    if (!Number.isFinite(v.lat) || !Number.isFinite(v.lng)) { skip(v, 'noCoordinates'); continue; }
+    const where = placeVenue(v.lat, v.lng, placeAmong);
+    if (!where.cityKey) { skip(v, 'outsideMarkets'); continue; }
+    if (!cities.includes(where.cityKey)) { skip(v, 'otherMarket'); continue; }
     placed.set(where.cityKey, (placed.get(where.cityKey) || 0) + 1);
     const byBt = identities.byBtId.get(v.venueId);
     if (!byBt) { rest.push({ v, where }); continue; }
@@ -1745,15 +1832,15 @@ function planVenues(venues, identities, cities, {
   const unresolved = [];
   for (const { v, where } of rest) {
     if (!v.placeId) {
-      if (v.rawPlaceId) skipped.unusablePlaceId++; else skipped.noPlaceId++;
+      skip(v, v.rawPlaceId ? 'unusablePlaceId' : 'noPlaceId');
       continue;
     }
     const claimedBy = claimedPlaces.get(v.placeId);
-    if (claimedBy && claimedBy !== v.venueId) { skipped.placeClaimedTwice++; continue; }
+    if (claimedBy && claimedBy !== v.venueId) { skip(v, 'placeClaimedTwice'); continue; }
     const byPlace = identities.byPlaceId.get(v.placeId);
     if (byPlace) {
-      if (byPlace.besttime_venue_id && byPlace.besttime_venue_id !== v.venueId) { skipped.placeHeldByOtherBtId++; continue; }
-      if (claimedRows.has(byPlace.id)) { skipped.placeClaimedTwice++; continue; }
+      if (byPlace.besttime_venue_id && byPlace.besttime_venue_id !== v.venueId) { skip(v, 'placeHeldByOtherBtId'); continue; }
+      if (claimedRows.has(byPlace.id)) { skip(v, 'placeClaimedTwice'); continue; }
       claimedPlaces.set(v.placeId, v.venueId);
       claimedRows.add(byPlace.id);
       plan.push({ kind: 'known_place', venue: v, row: byPlace, city: where.cityKey });
@@ -1766,24 +1853,24 @@ function planVenues(venues, identities, cities, {
     // A second listing of the same place id, neither one known: the first
     // (lower BestTime id) holds it.
     const claimedBy = claimedPlaces.get(v.placeId);
-    if (claimedBy && claimedBy !== v.venueId) { skipped.placeClaimedTwice++; continue; }
+    if (claimedBy && claimedBy !== v.venueId) { skip(v, 'placeClaimedTwice'); continue; }
     // Rule 4: the nearest row close enough with a similar name.
     const near = nearRows(v.lat, v.lng).find((c) => namesSimilar(v.name, c.row.name, where.cityKey));
     if (near) {
       const row = near.row;
-      if (row.besttime_venue_id && row.besttime_venue_id !== v.venueId) { skipped.nearDupHeldByOtherBtId++; continue; }
-      if (claimedRows.has(row.id)) { skipped.nearDupClaimed++; continue; }
+      if (row.besttime_venue_id && row.besttime_venue_id !== v.venueId) { skip(v, 'nearDupHeldByOtherBtId'); continue; }
+      if (claimedRows.has(row.id)) { skip(v, 'nearDupClaimed'); continue; }
       claimedPlaces.set(v.placeId, v.venueId);
       claimedRows.add(row.id);
       plan.push({ kind: 'known_near', venue: v, row, city: where.cityKey, meters: near.meters });
       continue;
     }
-    if (where.km > radiusKm) { skipped.outsideRadius++; continue; }
+    if (where.km > radiusOf(where.cityKey)) { skip(v, 'outsideRadius'); continue; }
     const category = categoryOf(v);
-    if (!category) { skipped.unmappedType++; continue; }
-    if (!v.name) { skipped.noName++; continue; }
+    if (!category) { skip(v, 'unmappedType'); continue; }
+    if (!v.name) { skip(v, 'noName'); continue; }
     const hasSignal = [...v.days.values()].some((hours) => hours.some((x) => x != null && x > 0));
-    if (!hasSignal) { skipped.noSignal++; continue; }
+    if (!hasSignal) { skip(v, 'noSignal'); continue; }
     // Two new listings of one venue: the first (lower BestTime id) is kept.
     const gx = Math.floor(v.lat * 1000);
     const gy = Math.floor(v.lng * 1000);
@@ -1794,7 +1881,7 @@ function planVenues(venues, identities, cities, {
           kmBetween(v.lat, v.lng, o.lat, o.lng) * 1000 <= NEAR_DUP_METERS && namesSimilar(v.name, o.name, where.cityKey)));
       }
     }
-    if (twin) { skipped.nearDuplicateInRun++; continue; }
+    if (twin) { skip(v, 'nearDuplicateInRun'); continue; }
     if (!newGrid.has(`${gx}_${gy}`)) newGrid.set(`${gx}_${gy}`, []);
     newGrid.get(`${gx}_${gy}`).push(v);
     claimedPlaces.set(v.placeId, v.venueId);
@@ -1996,6 +2083,8 @@ function emptyStats() {
     otherDay: 0,
     // THE CACHE: pages answered from it and their results, and pages written.
     cachedPages: 0, cachedResults: 0, cacheWrites: 0, cacheWriteFailures: 0,
+    // OFFLINE: questions the cache had no answer for, each an empty box.
+    cacheMisses: 0,
     // Which field each venue-day's curve came from, and how the other compared.
     fromWhole: 0, fieldsIdentical: 0, fieldsDiffer: 0, fieldAltAbsent: 0,
   };
@@ -2006,7 +2095,7 @@ function emptyStats() {
 function emptyCityStats(tiles) {
   return {
     state: 'planned', tiles, leaves: 0, requests: 0, results: 0, credits: 0, venues: 0,
-    cachedPages: 0, cachedResults: 0,
+    cachedPages: 0, cachedResults: 0, cacheMisses: 0,
     newPlanned: 0, knownPlanned: 0, knownSkipped: 0, rowsPlanned: 0,
     newWritten: 0, knownWritten: 0, rowsWritten: 0,
   };
@@ -2034,6 +2123,12 @@ function formatCityTable(summary, opts) {
 
 // Cached against fetched, for a run with --cache-dir (THE CACHE).
 function logCache(opts, s) {
+  if (opts.offline) {
+    console.log(`${TAG} CACHE (--offline): answered ${s.cachedPages} filter pages from ${opts.cacheDir} `
+      + `(${s.cachedResults} results); ${s.cacheMisses} questions had no answer there and were taken as empty boxes, `
+      + `as a 404 is${opts.expectMisses === null ? '' : ` (--expect-misses=${opts.expectMisses})`}. No request was made.`);
+    return;
+  }
   console.log(`${TAG} CACHE: answered ${s.cachedPages} filter pages from the cache (${s.cachedResults} results, not billed `
     + `and not counted against the budget); fetched ${s.requests} (${s.venuesReturned} results) and wrote ${s.cacheWrites} `
     + `new answers to ${opts.cacheDir}${s.cacheWriteFailures ? ` (${s.cacheWriteFailures} could not be written)` : ''}. `
@@ -2049,6 +2144,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
     incompleteWeeks: 0, knownSkipped: 0, stats: emptyStats(), byCity: {},
     budget: { limit: null, used: 0, reserved: 0, stopped: false, cutShort: null, unfinished: [] },
     axis: null, axisAlt: null, axisVerdict: null, placeIds: null, nearDuplicates: null, peakHours: null,
+    offline: null,
   };
 
   const opts = parseArgs(argv);
@@ -2062,7 +2158,8 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
   summary.newOnly = opts.newOnly;
   summary.dayOverVoters = opts.dayOverVoters;
   summary.budget.limit = opts.resultBudget;
-  const key = besttime.configuredKey();
+  // OFFLINE needs no key: the cache is keyed on the URL without one.
+  const key = opts.offline ? OFFLINE_KEY : besttime.configuredKey();
   if (!key) {
     summary.aborted = true;
     summary.abortReason = 'BESTTIME_API_KEY is not set';
@@ -2075,22 +2172,34 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
     + `${opts.allTypes ? 'all venue types' : `${Object.keys(TYPE_TO_CATEGORY).length} mapped venue types`}, `
     + `within ${opts.radiusKm} km, cap ${opts.resultCap}, page ${opts.pageSize}, result budget ${opts.resultBudget}`
     + `${opts.newOnly ? ', NEW VENUES ONLY (nothing is written for a venue the corpus holds)' : ''}`
-    + `${opts.dayOverVoters ? ', DAY SHARE OVER THE VOTERS ALONE (--day-share-over-voters)' : ''}.`);
+    + `${opts.dayOverVoters ? ', DAY SHARE OVER THE VOTERS ALONE (--day-share-over-voters)' : ''}`
+    + `${opts.offline ? ', OFFLINE (every answer from --cache-dir; no request to BestTime)' : ''}.`);
+  let heldNames = [];
   if (opts.cacheDir) {
-    // Made, and its holdings counted, before any request (THE CACHE).
-    let held;
+    // Made, and its holdings counted, before any request (THE CACHE). An
+    // --offline run makes nothing: a directory that is not there is a mistake.
     try {
-      fs.mkdirSync(opts.cacheDir, { recursive: true });
-      held = fs.readdirSync(opts.cacheDir).filter((f) => /^[0-9a-f]{64}\.json$/.test(f)).length;
+      if (opts.offline) {
+        if (!fs.statSync(opts.cacheDir).isDirectory()) throw Object.assign(new Error('not a directory'), { code: 'ENOTDIR' });
+      } else {
+        fs.mkdirSync(opts.cacheDir, { recursive: true });
+      }
+      heldNames = fs.readdirSync(opts.cacheDir).filter((f) => /^[0-9a-f]{64}\.json$/.test(f));
     } catch (err) {
-      const reason = `--cache-dir could not be made or read (${besttime.errorCode(err)}).`;
+      // A file system code (ENOENT, ENOTDIR, EACCES) says which; anything else
+      // as besttime.errorCode reads it.
+      const code = err && typeof err.code === 'string' && /^E[A-Z]{2,15}$/.test(err.code) ? err.code : besttime.errorCode(err);
+      const reason = `--cache-dir could not be ${opts.offline ? 'read' : 'made or read'} (${code}).`;
       console.error(`${TAG} REFUSED: ${reason}`);
       summary.aborted = true;
       summary.abortReason = reason;
       return summary;
     }
-    console.log(`${TAG} CACHE: ${opts.cacheDir} holds ${held} filter answers; a question already there is answered `
-      + 'from it, with no request and nothing counted against the result budget, and every new answer is added.');
+    console.log(opts.offline
+      ? `${TAG} CACHE (--offline): ${opts.cacheDir} holds ${heldNames.length} filter answers; every question is answered `
+        + 'from it, and one it lacks is an empty box, counted.'
+      : `${TAG} CACHE: ${opts.cacheDir} holds ${heldNames.length} filter answers; a question already there is answered `
+        + 'from it, with no request and nothing counted against the result budget, and every new answer is added.');
   }
 
   // The size of the run, before any request: each first-pass box is asked once
@@ -2127,12 +2236,18 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
     await requireVenueIdIndex(pool);
     await requireSlotIndex(pool, WEEKLY_SLOT_INDEX);
 
-    return await withAdmissionGuard(async () => {
-      const before = await readAccount(key, 'before');
-      if (!before.ok || !before.status.healthy) {
-        throw abortError('the key status endpoint did not report a healthy key; not starting.');
+    // OFFLINE: no request at all, so no guard to pass either, and no key status
+    // read before or after.
+    return await (opts.offline ? withNoNetwork : withAdmissionGuard)(async () => {
+      if (!opts.offline) {
+        const before = await readAccount(key, 'before');
+        if (!before.ok || !before.status.healthy) {
+          throw abortError('the key status endpoint did not report a healthy key; not starting.');
+        }
       }
 
+      // OFFLINE: which answer files a question read.
+      const readFiles = new Set();
       const ctx = {
         key, opts, stats: summary.stats, sleep, pace: makePacer(sleep, START_INTERVAL_MS), city: null, area: null,
         dayTally: new Map(),
@@ -2140,6 +2255,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
         otherDays: new Map(),
         // Never written into the cache (THE CACHE).
         secrets: [key, process.env.BESTTIME_API_KEY_PUBLIC].filter((x) => typeof x === 'string' && x.length > 0),
+        onCacheHit: opts.offline ? (keyless) => readFiles.add(cacheFileName(keyless)) : null,
       };
       const s = ctx.stats;
 
@@ -2159,7 +2275,8 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
           ctx.city.state = 'done';
           console.log(`${TAG} ${city}: ${ctx.city.tiles} tiles (${ctx.city.leaves} leaves), ${ctx.city.requests} requests, `
             + `${ctx.city.results} results (~${ctx.city.credits} query credits)`
-            + `${opts.cacheDir ? `, and ${ctx.city.cachedPages} pages (${ctx.city.cachedResults} results) from the cache` : ''}. `
+            + `${opts.cacheDir ? `, and ${ctx.city.cachedPages} pages (${ctx.city.cachedResults} results) from the cache` : ''}`
+            + `${opts.offline ? `, ${ctx.city.cacheMisses} questions with no answer there` : ''}. `
             + `Run so far: ${budgetUsed(s)} of the ${opts.resultBudget}-result budget`
             + `${s.resultsReserved ? ` (${s.resultsReserved} of them reserved for requests that may have been billed without an answer)` : ''}.`);
         }
@@ -2185,6 +2302,23 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
       summary.budget.reserved = s.resultsReserved;
       summary.leaves = opts.cities.reduce((n, city) => n + summary.byCity[city].leaves, 0);
       summary.venuesFound = venues.size;
+
+      // OFFLINE: what the directory answered and what it lacked, judged before
+      // anything is planned (see OFFLINE, beside THE CACHE).
+      if (opts.offline) {
+        const unread = heldNames.filter((f) => !readFiles.has(f)).length;
+        summary.offline = {
+          misses: s.cacheMisses, expectedMisses: opts.expectMisses, filesHeld: heldNames.length, filesRead: readFiles.size, filesUnread: unread,
+        };
+        console.log(`${TAG} OFFLINE: ${readFiles.size} of the ${heldNames.length} answers in --cache-dir answered a question `
+          + `and ${unread} answered none (expected only when the directory holds more than this run asks); `
+          + `${s.cacheMisses} questions had no answer and were taken as empty boxes.`);
+        if (opts.expectMisses !== null && s.cacheMisses !== opts.expectMisses) {
+          throw abortError(`REFUSED: ${s.cacheMisses} questions had no answer in --cache-dir, and --expect-misses=`
+            + `${opts.expectMisses} says ${opts.expectMisses} were 404s. A miss that was not a 404 is a box whose venues `
+            + 'would be left out, or written with part of their week. Nothing is written.');
+        }
+      }
 
       const all = [...venues.values()].filter((v) => v.days.size > 0);
       const withPlaceId = all.filter((v) => v.placeId).length;
@@ -2345,9 +2479,13 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
         + 'results are the venues the filter returned, billed one query credit per ten; venues are the distinct ones placed '
         + `in the city${opts.newOnly ? '' : '; known are refreshed in place'}.`);
       for (const line of formatCityTable(summary, opts)) console.log(line);
-      await readAccount(key, 'after');
-      console.log(`${TAG} New-venue admissions this run: none attempted (only the venue filter and the key `
-        + 'status endpoint were called). The besttime.app dashboard shows the month\'s admission count.');
+      if (opts.offline) {
+        console.log(`${TAG} New-venue admissions this run: none (--offline made no request to BestTime at all).`);
+      } else {
+        await readAccount(key, 'after');
+        console.log(`${TAG} New-venue admissions this run: none attempted (only the venue filter and the key `
+          + 'status endpoint were called). The besttime.app dashboard shows the month\'s admission count.');
+      }
       if (summary.exitCode !== 0) {
         const why = opts.commit ? 'Nothing written, or a write failed'
           : summary.rowsPlanned === 0 ? 'Nothing to write' : 'The axis proof would refuse --commit';
@@ -2361,7 +2499,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
     summary.abortReason = err.message;
     console.error(`${TAG} ABORTED: ${describeError(err)}`);
     if (opts.cacheDir) logCache(opts, summary.stats);
-    if (err.abort) {
+    if (err.abort && !opts.offline) {
       // The run is over; the after-read still shows what was spent. Outside the
       // guard only because the guard is gone by now; it is the same allowed call.
       await withAdmissionGuard(() => readAccount(key, 'after')).catch(() => {});
@@ -2421,6 +2559,22 @@ module.exports = {
   // through these same readers, so both paths decide identity the same way.
   loadIdentities,
   loadNearbyRows,
+  // train/importFilterCache.js replays the cache through the harvest's own
+  // question order and merge (OFFLINE, beside THE CACHE), city by city.
+  fetchTile,
+  harvestDay,
+  harvestBox,
+  mergeDay,
+  checkMarketDays,
+  emptyStats,
+  emptyCityStats,
+  cacheKeyUrl,
+  cacheFileName,
+  readCacheEntry,
+  withNoNetwork,
+  kmToTile,
+  OFFLINE_KEY,
+  DEFAULT_TILE_KM,
   TYPE_TO_CATEGORY,
   FILTER_URL,
   HARVEST_STATUS,
