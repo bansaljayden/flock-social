@@ -40,6 +40,9 @@ Environment knobs (all recorded in metadata.training_environment):
   FLOCK_TRAIN_THREADS=<int>            default os.cpu_count()
   FLOCK_EARLY_STOPPING_ROUNDS=<int>    default 0 (off)
   FLOCK_HYPERPARAM_SEARCH=true         default off; runs the grouped search
+Model size (recorded in metadata.hyperparameters.size_switches, not above):
+  FLOCK_MAX_DEPTH=<int 1..16>          default FIXED_PARAMS max_depth (8)
+  FLOCK_N_ESTIMATORS=<int 1..20000>    default FIXED_PARAMS n_estimators (800)
 """
 
 import json
@@ -1018,6 +1021,36 @@ PARAM_DIST = {
 }
 SEARCH_ITERATIONS = 24
 
+# The model's size, changed only by an explicit switch. The November runbook
+# (2026-11-25) chooses depth and tree count with the capacity probe on training
+# cities, and the choice reaches every candidate and the final refit through
+# these two variables. Unset, FIXED_PARAMS stands. Only the size moves: the
+# learning rate and every other setting stay as registered.
+SIZE_SWITCHES = {
+    'FLOCK_MAX_DEPTH': ('max_depth', 1, 16),
+    'FLOCK_N_ESTIMATORS': ('n_estimators', 1, 20000),
+}
+
+
+def size_overrides() -> dict:
+    """{param: value} for each size switch that is set; {} when none is.
+
+    A value that is not a whole number in range is refused, never rounded or
+    clipped, so a typo cannot train a model of a size nobody chose.
+    """
+    out = {}
+    for var, (param, lo, hi) in SIZE_SWITCHES.items():
+        raw = os.environ.get(var, '').strip()
+        if not raw:
+            continue
+        if not raw.isdigit() or not raw.isascii():
+            raise ValueError(f'{var}={raw!r} must be a whole number from {lo} to {hi}.')
+        value = int(raw)
+        if not lo <= value <= hi:
+            raise ValueError(f'{var}={value} must be from {lo} to {hi}.')
+        out[param] = value
+    return out
+
 
 def run_hyperparameter_search(base_model, X, y, cv, groups, sample_weight) -> tuple:
     """Grouped randomized search, with the weights routed into each fold.
@@ -1174,12 +1207,17 @@ def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, cl
         verbosity=0,
     )
 
+    sizes = size_overrides()
     if os.environ.get('FLOCK_HYPERPARAM_SEARCH', '').strip().lower() == 'true':
+        if sizes:
+            raise ValueError(
+                f'FLOCK_HYPERPARAM_SEARCH=true and a size switch ({sorted(sizes)}) are both '
+                'set: the search would choose the size the switch names. Unset one.')
         logger.info('Running the grouped randomized search (%d candidates x %d folds)...',
                     SEARCH_ITERATIONS, cv.get_n_splits())
         params, hp_info = run_hyperparameter_search(base_model, X, y, cv, groups, sample_weight)
     else:
-        params = dict(FIXED_PARAMS)
+        params = {**FIXED_PARAMS, **sizes}
         hp_info = {
             'source': 'fixed_from_v2.3.0_search',
             'searched_this_run': False,
@@ -1190,6 +1228,9 @@ def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, cl
                      'RandomizedSearchCV object, never fitted it, and wrote this same '
                      'dict into metadata.best_params as if it were the search result.'),
         }
+    # Which switch set the size, by variable name; {} means FIXED_PARAMS' size.
+    hp_info['size_switches'] = {var: sizes[param] for var, (param, _, _) in SIZE_SWITCHES.items()
+                                if param in sizes}
 
     es_info = {'enabled': False,
                'note': 'n_estimators is fixed; no early stopping. If it is turned on '
@@ -1353,6 +1394,7 @@ def main():
 
     device, device_reason = resolve_device()
     threads = resolve_threads()
+    size_overrides()  # a malformed size switch stops the run here, before any fit
     env = environment_fingerprint(device, device_reason, threads)
     logger.info('Training device: %s (%s), threads: %d, reproducible: %s',
                 device, device_reason, threads, env['bit_reproducible'])
