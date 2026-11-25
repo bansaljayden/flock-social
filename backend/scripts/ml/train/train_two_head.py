@@ -638,6 +638,13 @@ def hold_out_live_dates(rows_deviation_mask, provenance, dates, days) -> tuple:
 
 
 def main():
+    # The trainer's size switches (FLOCK_MAX_DEPTH, FLOCK_N_ESTIMATORS) do not
+    # reach this experiment, which fits the registered size only; refuse them
+    # rather than report a number measured at a size nobody asked for.
+    for var in ('FLOCK_MAX_DEPTH', 'FLOCK_N_ESTIMATORS'):
+        if var in os.environ:
+            raise SystemExit(f'{var} is set, but {os.path.basename(__file__)} fits the '
+                             'registered size only (800 trees, depth 8). Unset it to run.')
     t_start = time.time()
     features_path = SCRIPT_DIR / 'features_train.pkl'
     if not features_path.exists():

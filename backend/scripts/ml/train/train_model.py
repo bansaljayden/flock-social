@@ -1036,13 +1036,15 @@ def size_overrides() -> dict:
     """{param: value} for each size switch that is set; {} when none is.
 
     A value that is not a whole number in range is refused, never rounded or
-    clipped, so a typo cannot train a model of a size nobody chose.
+    clipped, so a typo cannot train a model of a size nobody chose. A switch
+    that is present but blank (a failed shell substitution) is refused too,
+    rather than read as unset.
     """
     out = {}
     for var, (param, lo, hi) in SIZE_SWITCHES.items():
-        raw = os.environ.get(var, '').strip()
-        if not raw:
+        if var not in os.environ:
             continue
+        raw = os.environ[var].strip()
         if not raw.isdigit() or not raw.isascii():
             raise ValueError(f'{var}={raw!r} must be a whole number from {lo} to {hi}.')
         value = int(raw)

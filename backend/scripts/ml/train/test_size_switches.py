@@ -112,8 +112,9 @@ def test_one_switch_alone_moves_one_setting():
 def test_a_bad_value_is_refused_not_rounded():
     for bad in ('8.5', '-1', '0', '17', ' 1e3', 'ten', '８'):
         assert refused(FLOCK_MAX_DEPTH=bad), f'FLOCK_MAX_DEPTH={bad!r} was accepted'
-    for bad in ('0', '20001', '800.0'):
+    for bad in ('0', '20001', '800.0', '', '   '):
         assert refused(FLOCK_N_ESTIMATORS=bad), f'FLOCK_N_ESTIMATORS={bad!r} was accepted'
+    assert refused(FLOCK_MAX_DEPTH=''), 'a blank FLOCK_MAX_DEPTH was read as unset'
     assert not refused(FLOCK_MAX_DEPTH='16', FLOCK_N_ESTIMATORS='20000')
     assert not refused(FLOCK_MAX_DEPTH=' 12 ')
 
@@ -127,16 +128,31 @@ def test_a_switch_beside_the_search_is_refused():
     raise AssertionError('a size switch beside the search was accepted')
 
 
-def test_early_stopping_caps_at_the_switched_tree_count():
+def test_early_stopping_through_the_trainer_caps_at_the_switched_size():
     X, y, cities, baseline, y_actual, sw = fixture()
-    base = tm.XGBRegressor(random_state=tm.RANDOM_STATE, tree_method='hist', device='cpu',
-                           n_jobs=1, verbosity=0)
-    with switches(FLOCK_N_ESTIMATORS='6'):
-        params = {**tm.FIXED_PARAMS, **tm.size_overrides()}
-    best_iter, info = tm.fit_with_early_stopping(base, params, X, y, cities, sw, baseline,
-                                                 y_actual, tm.DEFAULT_DELTA_CLAMP, 50)
-    assert info['n_estimators_requested'] == 6, info
-    assert 1 <= best_iter <= 6, best_iter
+    cv = GroupKFold(n_splits=3)
+    folds = tm.assert_group_disjoint(cv, X, y, cities)
+    with switches(FLOCK_N_ESTIMATORS='6', FLOCK_MAX_DEPTH='2', FLOCK_EARLY_STOPPING_ROUNDS='50'):
+        out = tm.train_xgboost(X, y, cv, folds, cities, baseline, y_actual, sw,
+                               tm.DEFAULT_DELTA_CLAMP, 'cpu', 1)
+    model, params, hp_info, es_info = out[0], out[4], out[5], out[6]
+    # The probe was handed the switched size, and the shipped fit is the round it chose.
+    assert es_info['enabled'] and es_info['n_estimators_requested'] == 6, es_info
+    assert params['n_estimators'] == es_info['best_iteration'] <= 6, (params, es_info)
+    assert params['max_depth'] == 2 and model.get_params()['max_depth'] == 2
+    assert model.get_booster().num_boosted_rounds() == params['n_estimators']
+    assert hp_info['size_switches'] == {'FLOCK_MAX_DEPTH': 2, 'FLOCK_N_ESTIMATORS': 6}, hp_info
+
+
+def test_the_experiments_that_keep_the_registered_size_refuse_a_switch():
+    import subprocess
+    env = {k: v for k, v in os.environ.items() if k not in SWITCHES}
+    env['FLOCK_MAX_DEPTH'] = '10'
+    for script in ('train_two_head.py', 'within_city_eval.py', 'sports_ablation.py'):
+        r = subprocess.run([sys.executable, script], cwd=Path(__file__).parent, env=env,
+                           capture_output=True, text=True, timeout=300)
+        said = r.stdout + r.stderr
+        assert r.returncode != 0 and 'FLOCK_MAX_DEPTH is set' in said, f'{script}: {said[-800:]}'
 
 
 def main():
