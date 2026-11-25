@@ -112,6 +112,16 @@ const INVENTORY = [
     why: '192 bits of server randomness; a caller cannot choose a key, only miss on one.',
   },
   {
+    file: 'routes/auth.js', name: 'warnedEvictions', kind: 'counter',
+    key: "sha256('unconfirmed-warning:' + provider + ':' + verified subject + ':' + users.id)",
+    callerControls: 'nothing: the provider and subject come out of a signature-verified Google or Apple token, and the row id is the unconfirmed account the provider-vouched address already belongs to. An entry is only written after every gate of a sign-in has passed',
+    protects: 'an unconfirmed email-and-password account with friends, plans or messages in it from being evicted on one tap: the first tap is warned, the same identity tapping again within 10 minutes is let through',
+    denominator: 'distinct (identity, account) pairs warned in the last 10 minutes (presence + expiry, not a count)',
+    bound: '20k keys, expired-then-soonest-to-expire-first down to 18k, 10 min TTL; the entry is dropped once the eviction lands',
+    verdict: 'SAFE',
+    why: 'Writing an entry takes a real Google or Apple credential vouching for an address an unconfirmed account with activity holds, so a flood costs one such account per key. Losing an entry fails toward safety: the person is warned a second time instead of being evicted, and an entry can only ever let its own identity through for its own row.',
+  },
+  {
     file: 'routes/auth.js', name: 'underageAttempts', kind: 'counter',
     key: "'email:' or 'ip:' + HMAC(pepper, '<label>:' + identity). Three labels, two classes: 'underage:email:<canonicalEmail>' (a PROVED address) and 'underage:email+ip:<canonicalEmail>NUL<req.ip>' (an ASSERTED one) both sit in the 'email:' class; 'underage:ip:<req.ip>' is the 'ip:' class. The class is in plaintext ahead of the digest so eviction can segment on it; the identity is not",
     callerControls: 'the address on an ASSERTED entry, but that entry is scoped to their own source IP. A PROVED entry is address-only and needs a completed sign-in or a provider signature to write',

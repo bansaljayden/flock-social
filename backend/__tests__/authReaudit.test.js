@@ -467,6 +467,13 @@ async function handle(text, params = []) {
   }
   if (sql.startsWith('DELETE FROM banned_identities')) return { rows: [], rowCount: 0 };
 
+  // ---- what an unconfirmed row holds (2026-11-24) --------------------------
+  // The eviction asks first whether the row has friends, plans or messages
+  // (warnBeforeEvictingUsedAccount). This fake keeps none of those tables, so
+  // every squat in it holds nothing and is evicted on the first tap, which is
+  // what these tests were written against.
+  if (sql.startsWith('SELECT EXISTS (SELECT 1 FROM friendships')) return { rows: [{ holds: false }] };
+
   // ---- grace_spent_identities (migration 076) ------------------------------
   // An email change off a PROVED address records that address, in the same
   // transaction as the move (routes/users.js PUT /profile).

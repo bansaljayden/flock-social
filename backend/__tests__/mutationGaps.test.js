@@ -630,6 +630,9 @@ test('a squat that verifies itself mid-request is not evicted', async () => {
       squat.email_verified = true; // they clicked their link while this request was in flight
       return { rows: [snapshot] };
     }],
+    // A squat with nothing in it, so the eviction is not held for a warning
+    // (warnBeforeEvictingUsedAccount) and the race below is what decides.
+    [/^SELECT EXISTS \(SELECT 1 FROM friendships/, () => ({ rows: [{ holds: false }] })],
     [/^UPDATE users SET email = \$1/, (params, sql) => {
       const hit = whereMatches(sql, squat, params);
       return { rows: hit ? [{ id: squat.id }] : [], rowCount: hit ? 1 : 0 };

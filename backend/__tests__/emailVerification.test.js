@@ -207,6 +207,10 @@ pool.query = async (text, params = []) => {
     if (clause(sql, /token_version = token_version \+ 1/)) row.token_version += 1;
     return { rows: [row], rowCount: 1 };
   }
+  // The eviction first asks whether the row has friends, plans or messages
+  // (warnBeforeEvictingUsedAccount, 2026-11-24). This fake keeps none of those
+  // tables, so every squat here holds nothing and is evicted on the first tap.
+  if (sql.startsWith('SELECT EXISTS (SELECT 1 FROM friendships')) return { rows: [{ holds: false }] };
   if (sql.startsWith('UPDATE users SET email = $1, email_verified = FALSE')) {
     // The WHERE guard is the only thing protecting a row that verified itself
     // between the read and this write, so it is read out of the statement too.

@@ -73,7 +73,10 @@ function linkWaitlistConversion(email, userId) {
 // sets iat to now and carries auth_time over, so renewing a session can never
 // manufacture the proof.
 const { waitPhrase, refusalBody } = require('../utils/retryAfter');
-const { authenticate, authenticateAllowExpired, revokeUserSessions } = require('../middleware/auth');
+const {
+  authenticate, authenticateAllowExpired, revokeUserSessions,
+  TOKEN_ALGORITHMS, issuedTokenVersion, currentTokenVersion,
+} = require('../middleware/auth');
 const { issueSession, exchangeRefreshToken, revokeRefreshFamily } = require('../services/refreshTokens');
 const {
   sendVerificationEmail, verificationLink, baseWebUrl,
@@ -1205,6 +1208,235 @@ async function releaseSquattedAddress(existing, req) {
   revokeUserSessions(req.app.get('io'), existing.id);
   console.warn(`[auth] released squatted address from unverified account ${existing.id}`);
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// An unconfirmed account that somebody USES is warned about once (2026-11-24)
+// ---------------------------------------------------------------------------
+// 'evict' was written for a squat: a row somebody registered on another
+// person's address and never confirmed. It is also exactly what a real person
+// gets who signed up with an email and password, never tapped the confirmation
+// link, and later taps Continue with Google (or Apple) on the same address.
+// Their row has friends, plans and DMs in it, the eviction moves it to a
+// tombstone address, and the sign-in that follows opens a NEW, empty account.
+// The old one is still there and can no longer be reached: its address is gone,
+// so its password signs in to nothing. Nothing on screen said any of that, and
+// a real production account was one tap from it.
+//
+// So a row that HOLDS something is not evicted on the first tap. The caller is
+// told what is there and how to keep it, nothing is written, and the warning is
+// remembered for this provider identity against this row. The same identity
+// coming back for the same row within WARNED_EVICTION_TTL_MS has heard it and
+// chose a new account anyway, and is evicted exactly as before. The second tap
+// is the whole "start over" control because the shipped iPhone build can send
+// no new field; it can only send the same kind of request again, and the
+// release half of R4-A1 already hands the credential back on this 409, so it
+// can even be the same credential.
+//
+// What counts as holding something: a friendship either way that is accepted
+// or pending, any flock membership, a DM sent or received, a message sent in
+// a flock, or money: Flock Pro (is_premium), or a Stripe customer, which
+// services/proBilling.js writes the first time the account starts a web
+// checkout (migration 073) and which its subscriptions bill through. Money is
+// the one most of these rows can hold. UNVERIFIED_DENY in middleware/auth.js
+// keeps an unconfirmed account from requesting or accepting friends and from
+// making or joining flocks, but POST /api/pro/checkout has no such gate, so a
+// person who signed up, never tapped the link and bought Pro on the web had
+// nothing else in the row. The eviction leaves is_premium and
+// stripe_customer_id on the tombstoned row, so the subscription went on
+// billing an account nobody could sign in to, the new account started free,
+// and the Manage page that cancels it sat behind that dead sign-in. A row with
+// none of these is the squat the eviction exists for and is evicted on the
+// first tap, as it always was. Nothing here is a new door:
+// only a caller whose provider vouched for this very address reaches the
+// eviction at all, so the warning tells them nothing about an address they
+// have not proved they read.
+//
+// Keyed on a digest of provider, subject and row id, in memory and bounded the
+// way the other per-process maps in this file are: per process, reset on
+// deploy, which here costs at most one extra warning.
+const WARNED_EVICTION_TTL_MS = 10 * 60 * 1000;
+const WARNED_EVICTION_MAX_KEYS = 20000;
+const WARNED_EVICTION_LOW_WATER = Math.floor(WARNED_EVICTION_MAX_KEYS * 0.9);
+const warnedEvictions = new Map();
+
+function warnedEvictionKey(provider, sub, userId) {
+  return crypto.createHash('sha256')
+    .update(`unconfirmed-warning:${provider}:${String(sub)}:${userId}`)
+    .digest('hex');
+}
+
+function evictionWasWarned(key, now = Date.now()) {
+  const expiresAt = warnedEvictions.get(key);
+  if (!expiresAt) return false;
+  if (now >= expiresAt) { warnedEvictions.delete(key); return false; }
+  return true;
+}
+
+// Soonest-to-expire first down to a low water, the rule markOauthIdentityUsed
+// spells out: never a clear(), and never a sort on every write of a full map.
+function rememberEvictionWarning(key, now = Date.now()) {
+  if (warnedEvictions.size >= WARNED_EVICTION_MAX_KEYS) {
+    for (const [k, v] of warnedEvictions) if (now >= v) warnedEvictions.delete(k);
+    if (warnedEvictions.size >= WARNED_EVICTION_MAX_KEYS) {
+      const bySoonest = [...warnedEvictions.entries()].sort((a, b) => a[1] - b[1]);
+      for (const [k] of bySoonest) {
+        if (warnedEvictions.size <= WARNED_EVICTION_LOW_WATER) break;
+        warnedEvictions.delete(k);
+      }
+    }
+  }
+  warnedEvictions.set(key, now + WARNED_EVICTION_TTL_MS);
+}
+
+// EXISTS rather than counts: the answer is "anything or nothing", and a row
+// with ten thousand DMs should cost no more to ask about than a row with one.
+// `is_premium IS TRUE` because migration 001 added the column nullable, and a
+// NULL is not Pro (services/entitlements.js reads only a literal true).
+async function unconfirmedRowHoldsActivity(userId) {
+  const { rows } = await pool.query(
+    `SELECT EXISTS (SELECT 1 FROM friendships
+                     WHERE (requester_id = $1 OR addressee_id = $1)
+                       AND status IN ('accepted', 'pending'))
+         OR EXISTS (SELECT 1 FROM flock_members WHERE user_id = $1)
+         OR EXISTS (SELECT 1 FROM direct_messages WHERE sender_id = $1 OR receiver_id = $1)
+         OR EXISTS (SELECT 1 FROM messages WHERE sender_id = $1)
+         OR EXISTS (SELECT 1 FROM users
+                     WHERE id = $1 AND (is_premium IS TRUE OR stripe_customer_id IS NOT NULL)) AS holds`,
+    [userId]
+  );
+  return rows[0]?.holds === true;
+}
+
+const unconfirmedAccountMessage = (providerLabel) => 'This email already has a Flock account that was never confirmed. '
+  + 'To keep its friends and plans, sign in with its email and password. '
+  + `To start a new account with ${providerLabel} instead, tap Continue with ${providerLabel} again.`;
+
+// Runs where the eviction would, after every gate that can refuse the request.
+// Answers the request and returns true on a first warning; returns false when
+// the eviction may go ahead (an empty row, or a warning this identity has
+// already had for this row). The caller drops the warning once the eviction
+// has landed.
+async function warnBeforeEvictingUsedAccount(res, existing, provider, sub, providerLabel) {
+  if (!(await unconfirmedRowHoldsActivity(existing.id))) return false;
+  const key = warnedEvictionKey(provider, sub, existing.id);
+  if (evictionWasWarned(key)) {
+    console.warn(`[auth] ${providerLabel} sign-in evicting unconfirmed account ${existing.id} after a warning`);
+    return false;
+  }
+  rememberEvictionWarning(key);
+  console.warn(`[auth] ${providerLabel} sign-in warned before evicting unconfirmed account ${existing.id}, which holds activity`);
+  res.status(409).json({ error: unconfirmedAccountMessage(providerLabel), unconfirmedAccount: true });
+  return true;
+}
+
+function forgetEvictionWarning(provider, sub, userId) {
+  warnedEvictions.delete(warnedEvictionKey(provider, sub, userId));
+}
+
+// ---------------------------------------------------------------------------
+// Which way in an existing address uses, said only to its proved owner
+// ---------------------------------------------------------------------------
+// The two OAuth routes answered every address already held by the OTHER
+// provider with "Sign in the way you originally signed up", which never says
+// which way, and a person who made their account with Google and tapped
+// Continue with Apple was left to guess. Naming it is no new disclosure to the
+// caller it is named to: the 409 already says the address has an account, and
+// the name is only given when the provider vouched that the caller reads this
+// mailbox. An unvouched address, a provider value other than the two, the
+// 'refuse' decision and the 23505 race keep the old sentence. A reconfirm
+// never reaches it: the delete and export dialogs have no other button to
+// send anybody to (THE DELETE AND EXPORT DIALOGS on the Google route).
+const SIGNS_IN_WITH = {
+  google: 'This email already has a Flock account that signs in with Google. Tap Continue with Google.',
+  apple: 'This email already has a Flock account that signs in with Apple. Tap Continue with Apple.',
+};
+
+// ---------------------------------------------------------------------------
+// `intent` on the two OAuth routes (2026-11-24)
+// ---------------------------------------------------------------------------
+// Both routes find-or-create, so a person who meant to SIGN IN and picked the
+// wrong Google account, or an Apple ID hiding their address behind a relay
+// one, was handed a brand-new empty account with no word that it was new. A
+// client that knows which of the two the person asked for says so:
+//   'signin'  refuse rather than create (409 noAccount, canCreate), before
+//             anything is written and before any gate that could ask for more,
+//             so the same credential can come straight back as 'create';
+//   'create'  exactly today's behaviour.
+// Anything else, of any type, reads as absent, which is also today's behaviour.
+// It is not refused the way the neighbouring fields are, because the only cost
+// of a value this server does not know is the find-or-create it would have got
+// anyway, and refusing it would lock out a client that sent a newer word.
+function oauthIntent(reqBody) {
+  const value = reqBody ? reqBody.intent : undefined;
+  return value === 'signin' || value === 'create' ? value : null;
+}
+
+const NO_ACCOUNT_YET = {
+  google: 'No Flock account uses this Google account yet.',
+  apple: 'No Flock account uses this Apple ID yet.',
+};
+
+// ---------------------------------------------------------------------------
+// The shipped iPhone build's "Confirm it's you" with Google (2026-11-24)
+// ---------------------------------------------------------------------------
+// App Store build 53 confirms the person before a deletion or an export by
+// calling GoogleSignIn with no prompt. GIDSignIn restores the previous sign-in
+// silently and, while the ID token it cached at that sign-in is still fresh,
+// hands back THAT token. The sign-in already spent it, so for anything from
+// about five minutes to about an hour after a Google sign-in the single-use
+// claim answered every tap "Google sign-in expired", with nothing the person
+// could do but wait. Later builds force the prompt; build 53 cannot be changed.
+//
+// A re-sent credential is accepted, as a reconfirm and nothing else, when ALL
+// of these hold, and the route then goes on exactly as a reconfirm does:
+//   * the body says reconfirm: true;
+//   * the request carries a Flock access token that verifies as
+//     middleware/auth.js verifies one: signature, expiry and token_version.
+//     Build 53's request() attaches the stored token to every call, sign-in
+//     doors included, so its Confirm-it's-you sends the signed-in session;
+//   * that token's account signs in with Google, under the subject this ID
+//     token names;
+//   * the ID token itself verified on this request: Google's signature, this
+//     server's audience, and its expiry (verifyIdToken above).
+// A ban does not stop it, for the reason authenticateAllowBanned exists:
+// deletion is the one thing a banned account can still do, and this is the
+// confirmation in front of it.
+//
+// WHY THIS IS NO WEAKER THAN WHAT BUILD 53 ALREADY DOES. The single-use rule is
+// there so a captured credential cannot mint fresh sessions, and a fresh
+// session is the proof deletion and export ask for. On build 53 that proof was
+// never a person tapping through Google: once the cached token nears expiry,
+// GIDSignIn refreshes it and hands back a new, unused one with no UI at all,
+// and the server accepts that. The device's Google session and its Flock
+// session are the whole proof either way. What is accepted here is the same
+// pair, earlier: a token Google signed for this account's own Google identity,
+// still inside its lifetime, presented with a live session of this same
+// account. A captured credential without that session is refused exactly as
+// before, and so is one presented with another account's session, or outside a
+// reconfirm.
+async function reconfirmReplayOwner(req, payload) {
+  if (!req.body || req.body.reconfirm !== true) return null;
+  const header = req.headers.authorization;
+  if (typeof header !== 'string' || !header.startsWith('Bearer ')) return null;
+  if (!process.env.JWT_SECRET) return null;
+  let decoded;
+  try {
+    decoded = jwt.verify(header.split(' ')[1], process.env.JWT_SECRET, { algorithms: TOKEN_ALGORITHMS });
+  } catch {
+    return null;
+  }
+  if (!decoded || !Number.isInteger(decoded.userId)) return null;
+  const { rows } = await pool.query(
+    'SELECT id, oauth_provider, oauth_id, token_version FROM users WHERE id = $1',
+    [decoded.userId]
+  );
+  const row = rows[0];
+  if (!row) return null;
+  if (issuedTokenVersion(decoded) !== currentTokenVersion(row)) return null;
+  if (row.oauth_provider !== 'google' || row.oauth_id == null) return null;
+  if (String(row.oauth_id) !== String(payload.sub)) return null;
+  return row.id;
 }
 
 // ---------------------------------------------------------------------------
@@ -3544,10 +3776,21 @@ router.post('/google', [
         return res.status(401).json({ error: 'Google sign-in expired, please try again' });
       }
       if (!claimOauthIdentity(credentialIdentity, credentialExp)) {
-        console.warn(`[auth] rejected replayed Google credential from ${req.ip}`);
-        return res.status(401).json({ error: 'Google sign-in expired, please try again' });
+        // Build 53's Confirm-it's-you hands back the token its sign-in spent;
+        // reconfirmReplayOwner above says when that is accepted and why it is
+        // no weaker. Accepted WITHOUT a claim of its own: `claimedIdentity`
+        // stays null, so the `finally` can never release the entry the
+        // original sign-in committed, and the credential stays spent for
+        // everybody else.
+        const replayOwner = await reconfirmReplayOwner(req, gp);
+        if (replayOwner === null) {
+          console.warn(`[auth] rejected replayed Google credential from ${req.ip}`);
+          return res.status(401).json({ error: 'Google sign-in expired, please try again' });
+        }
+        console.warn(`[auth] accepted a re-sent Google credential to confirm signed-in account ${replayOwner} (${req.ip})`);
+      } else {
+        claimedIdentity = credentialIdentity;
       }
-      claimedIdentity = credentialIdentity;
 
       // NONCE BINDING (round 22, R2-3). google-auth-library verifies
       // signature, issuer, expiry and audience; it has no nonce parameter at
@@ -3713,10 +3956,35 @@ router.post('/google', [
     );
 
     let user;
+    // True only when this request INSERTed the users row, and then said on the
+    // response as `created: true`, so a client can tell a person who expected
+    // their account that they are in a new one. Clients that do not read it
+    // see the response they always did.
+    let createdAccount = false;
     if (result.rows.length > 0) {
       // Existing Google user — log in
       user = result.rows[0];
     } else {
+      // THE DELETE AND EXPORT DIALOGS NEVER CREATE AN ACCOUNT, OR TOUCH ONE.
+      // Their "confirm it's you" sheet (frontend OAuthReconfirm.js) sends
+      // reconfirm: true, and a Google account with no Flock account behind it
+      // is refused here, before anything is written. It used to be refused
+      // only because it carried no date of birth, which stopped being a
+      // refusal the day the iPhone app stopped asking for one.
+      //
+      // Refused HERE, ahead of the address lookup below, and not where a new
+      // account would be made, because everything that lookup leads to is
+      // wrong for a dialog proving who is signed in. An address an Apple
+      // account holds was answered with which button opens that account
+      // (SIGNS_IN_WITH): a button the dialog does not have, for an account
+      // nobody is confirming. An address a confirmed password account holds
+      // was CLAIMED, converted to Google with its password cleared, from
+      // inside a confirmation. Whatever the address holds, the Google account
+      // picked is not the one this Flock account signs in with, and noAccount
+      // is the answer the dialog words as exactly that.
+      if (req.body && req.body.reconfirm === true) {
+        return res.status(403).json({ error: 'No Flock account uses this Google account.', noAccount: true });
+      }
       // SECURITY (audit 2026-08-12, revised round 8): signup never verifies
       // email ownership, so blanket-blocking same-email sign-ins let an
       // attacker permanently SQUAT a victim's address (pre-register it with a
@@ -3734,6 +4002,11 @@ router.post('/google', [
       // this mailbox. See claimDecision above for the three outcomes.
       let claimTarget = null;
       if (existing) {
+        // An Apple account on an address Google vouches the caller reads:
+        // say which button opens it (SIGNS_IN_WITH above).
+        if (existing.oauth_provider === 'apple' && emailVerified) {
+          return res.status(409).json({ error: SIGNS_IN_WITH.apple, signInWith: 'apple' });
+        }
         if (existing.oauth_provider || !emailVerified) {
           return res.status(409).json({
             error: 'An account with this email already exists. Sign in the way you originally signed up.',
@@ -3833,16 +4106,17 @@ router.post('/google', [
         // because an unverified squat held it and is about to lose it.
         //
         // Every gate that can refuse this request runs BEFORE the eviction, so
-        // a request that ends in an error never displaces anybody.
+        // a request that ends in an error never displaces anybody. (A reconfirm
+        // never gets this far: see THE DELETE AND EXPORT DIALOGS above.)
         //
-        // THE DELETE AND EXPORT DIALOGS NEVER CREATE AN ACCOUNT. Their "confirm
-        // it's you" sheet (frontend OAuthReconfirm.js) sends reconfirm: true, and
-        // a Google account with no Flock account behind it is refused here,
-        // before anything is written. It used to be refused only because it
-        // carried no date of birth, which stopped being a refusal the day the
-        // iPhone app stopped asking for one.
-        if (req.body && req.body.reconfirm === true) {
-          return res.status(403).json({ error: 'No Flock account uses this Google account.', noAccount: true });
+        // A client that said the person meant to sign in gets a refusal here
+        // instead of a new account (`intent`, oauthIntent above), and it comes
+        // ahead of the year question, the under-13 checks and the eviction and
+        // its warning, so nothing has been asked, written or remembered and the
+        // same credential can come back as 'create'. The `finally` below hands
+        // it back, and a nonce is only spent on success.
+        if (oauthIntent(req.body) === 'signin') {
+          return res.status(409).json({ error: NO_ACCOUNT_YET.google, noAccount: true, canCreate: true });
         }
         //
         // DOB is REQUIRED for account creation from the website; a Google
@@ -3920,11 +4194,16 @@ router.post('/google', [
         if (await banTombstones().rejectIfBannedIdentity(res, {
           email, oauthProvider: 'google', oauthId: googleId,
         })) return;
+        // The last gate before the eviction: a row with friends, plans or
+        // messages in it is warned about once before it is displaced (see
+        // warnBeforeEvictingUsedAccount).
+        if (existing && (await warnBeforeEvictingUsedAccount(res, existing, 'google', googleId, 'Google'))) return;
         if (existing && !(await releaseSquattedAddress(existing, req))) {
           // It verified itself in the last few milliseconds. Nothing has been
           // changed; ask for a retry, which will now take the claim path.
           return res.status(409).json({ error: 'Something changed on this account. Try signing in again.' });
         }
+        if (existing) forgetEvictionWarning('google', googleId, existing.id);
         // Round 9: the provider name is UGC and was stored unscreened here.
         const googleName = safeOAuthDisplayName(name, email, 'Google');
         // email_verified TRUE: Google already proved this address and must not
@@ -3938,6 +4217,7 @@ router.post('/google', [
           [email, googleName, googleId, googleDob, email]
         );
         user = result.rows[0];
+        createdAccount = true;
         linkWaitlistConversion(user.email, user.id);
         // First week once per identity (migration 076), by address and by
         // Google subject.
@@ -3975,7 +4255,7 @@ router.post('/google', [
     // See the /login response: the field the profile form and the account
     // sheets read, present from the first session rather than the second.
     safeUser.sign_in_method = user.oauth_provider || 'password';
-    res.json({ ...session, user: safeUser });
+    res.json({ ...session, user: safeUser, ...(createdAccount ? { created: true } : {}) });
   } catch (err) {
     console.error('Google OAuth error:', err);
     // The canonical-email unique index (migration 062) raised: another
@@ -4203,6 +4483,15 @@ router.post('/apple', [
 
     let user = result.rows[0] || null;
 
+    // The delete and export dialogs never create an account, or touch one: an
+    // Apple ID with no Flock account behind it is refused here, ahead of the
+    // code check, the address lookup, the claim and the code exchange, for the
+    // reasons the same refusal gives on the Google route (THE DELETE AND
+    // EXPORT DIALOGS). Nothing is written and the single-use code is not spent.
+    if (!user && req.body && req.body.reconfirm === true) {
+      return res.status(403).json({ error: 'No Flock account uses this Apple ID.', noAccount: true });
+    }
+
     // Round 16: the authorizationCode requirement used to be enforced AFTER
     // the row was created or claimed. A brand-new Apple user who arrived
     // without a code therefore had their account INSERTed and then got a 400,
@@ -4236,6 +4525,11 @@ router.post('/apple', [
       // Canonical lookup (round 15) — same reason as the Google branch.
       existingByEmail = await findUserByEmail(email);
       if (existingByEmail) {
+        // The Google twin of the Apple sentence on the Google route: only for
+        // an address Apple vouches the caller reads (SIGNS_IN_WITH above).
+        if (existingByEmail.oauth_provider === 'google' && appleEmailVerified) {
+          return res.status(409).json({ error: SIGNS_IN_WITH.google, signInWith: 'google' });
+        }
         if (existingByEmail.oauth_provider || !appleEmailVerified) {
           return res.status(409).json({
             error: 'An account with this email already exists. Sign in the way you originally signed up.',
@@ -4330,10 +4624,16 @@ router.post('/apple', [
         'Apple'
       );
 
-      // The delete and export dialogs never create an account: see the same
-      // refusal on the Google route.
-      if (req.body && req.body.reconfirm === true) {
-        return res.status(403).json({ error: 'No Flock account uses this Apple ID.', noAccount: true });
+      // (A reconfirm never gets here: it is refused where the lookup by Apple
+      // subject came back empty, above.)
+      //
+      // `intent: 'signin'`, as on the Google route: refused before the year
+      // question, the under-13 checks, the eviction and its warning, and the
+      // authorization-code exchange, which is the one that matters most here
+      // because the code is single-use and a spent one could not come back
+      // with 'create'. The `finally` hands the identity token back.
+      if (oauthIntent(req.body) === 'signin') {
+        return res.status(409).json({ error: NO_ACCOUNT_YET.apple, noAccount: true, canCreate: true });
       }
       // A date of birth Apple never supplies. Judged, when one is sent, and
       // stored as 31 December of the year that arrived, the same as the other
@@ -4405,6 +4705,14 @@ router.post('/apple', [
       if (await banTombstones().rejectIfBannedIdentity(res, {
         email, oauthProvider: 'apple', oauthId: appleId,
       })) return;
+      // A row with friends, plans or messages in it is warned about once before
+      // it is displaced (warnBeforeEvictingUsedAccount). Every gate that writes
+      // nothing has run by now. It comes ahead of the code exchange, the one
+      // gate left that spends something: the code is single-use, and a warning
+      // answered after spending it would leave the credential unable to come
+      // back. The second tap runs the exchange as it always did, before the
+      // eviction.
+      if (existingByEmail && (await warnBeforeEvictingUsedAccount(res, existingByEmail, 'apple', appleId, 'Apple'))) return;
       // The code exchange is a gate, and it used to run AFTER the INSERT below.
       // Round 6 made it refuse a sign-in that yields no refresh token, because
       // without one account deletion can never revoke the Apple grant
@@ -4437,6 +4745,7 @@ router.post('/apple', [
       if (existingByEmail && !(await releaseSquattedAddress(existingByEmail, req))) {
         return res.status(409).json({ error: 'Something changed on this account. Try signing in again.' });
       }
+      if (existingByEmail) forgetEvictionWarning('apple', appleId, existingByEmail.id);
       // users.email is NOT NULL UNIQUE — a NULL here 500'd account creation
       // (round 8). When Apple omits the email, store a deterministic
       // non-routable placeholder (.invalid TLD can never receive mail);
@@ -4524,7 +4833,9 @@ router.post('/apple', [
     // See the /login response: the field the profile form and the account
     // sheets read, present from the first session rather than the second.
     safeUser.sign_in_method = user.oauth_provider || 'password';
-    res.json({ ...session, user: safeUser });
+    // `created: true` when this request INSERTed the row, as on the Google
+    // route; createdNow is set by that INSERT and by nothing else.
+    res.json({ ...session, user: safeUser, ...(createdNow ? { created: true } : {}) });
   } catch (err) {
     console.error('Apple Sign In error:', err);
     // The canonical-email unique index (migration 062) raised: another
@@ -4615,6 +4926,10 @@ module.exports.__testing = {
   // clearUnderageAttempts: the production code never clears this map (see
   // markOauthIdentityUsed for why a wholesale clear() was the bug there).
   clearOauthIdentityClaims: () => oauthTokensUsed.clear(),
+  // 2026-11-24: the once-only warning before an unconfirmed account that holds
+  // something is evicted. Test-only reset, the same shape as the one above.
+  clearEvictionWarnings: () => warnedEvictions.clear(),
+  WARNED_EVICTION_TTL_MS,
   googleAccessTokenKey,
   canonicalJwtSignature,
   OAUTH_REPLAY_MAX_TTL_MS,

@@ -219,6 +219,11 @@ const SUITE_SLOTS = {
   googleSignInRealDb: 83,        // new in 2026-11-23; an iPhone Google sign-in
                                  // through the real token check and the real
                                  // route, onto a migrated schema.
+  oauthAccountConflictsRealDb: 32, // new in 2026-11-24; Google and Apple
+                                 // sign-ins meeting an address another way
+                                 // in holds, an unconfirmed account with
+                                 // friends in it, `intent` and `created`, and
+                                 // build 53's Confirm-it's-you re-send.
   addFriendsRealDb: 44,          // new in 2026-11-23; the Add Friends rebuild's
                                  // server half (code links and previews, the
                                  // cancel that only cancels, a yes to a
