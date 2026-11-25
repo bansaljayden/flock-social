@@ -817,27 +817,50 @@ describe(s('the Google iOS client id step, run'), () => {
     expect(r.out.trim()).toBe(`Google sign-in: REACT_APP_GOOGLE_IOS_CLIENT_ID matches the URL scheme in Info.plist (${SCHEME}).`);
   });
 
-  shellTest('an unset id stops the build, because the button would hide itself', () => {
-    for (const id of [undefined, '']) {
-      const r = check(id === undefined ? {} : { REACT_APP_GOOGLE_IOS_CLIENT_ID: id });
-      expect({ id, code: r.code }).toEqual({ id, code: 1 });
-      expect(r.out).toContain('GOOGLE CHECK FAILED: REACT_APP_GOOGLE_IOS_CLIENT_ID is not set in the flock_web group.');
+  // isGoogleSignInAvailable (useGoogleAuth.js) shows the native button only
+  // when BOTH ids were set at build time, so each one missing is a hidden
+  // button, and each is checked with the other one good.
+  const BOTH = { REACT_APP_GOOGLE_IOS_CLIENT_ID: IOS_ID, REACT_APP_GOOGLE_CLIENT_ID: WEB_ID };
+  const withOne = (name, value) => {
+    const env = { ...BOTH };
+    if (value === undefined) delete env[name]; else env[name] = value;
+    return env;
+  };
+  const NAMES = ['REACT_APP_GOOGLE_IOS_CLIENT_ID', 'REACT_APP_GOOGLE_CLIENT_ID'];
+
+  shellTest('either id unset stops the build, because the button would hide itself', () => {
+    for (const name of NAMES) {
+      for (const value of [undefined, '']) {
+        const r = check(withOne(name, value));
+        expect({ name, value, code: r.code }).toEqual({ name, value, code: 1 });
+        expect(r.out).toContain(`GOOGLE CHECK FAILED: ${name} is not set in the flock_web group.`);
+        expect(r.out).not.toMatch(/^Google sign-in:/m);
+      }
     }
   });
 
+  shellTest('the FIX line names the right client for each', () => {
+    expect(check(withOne(NAMES[0], undefined)).out).toContain('FIX: set it to the iOS OAuth client id');
+    expect(check(withOne(NAMES[1], undefined)).out).toContain("FIX: set it to the web OAuth client id, the one the backend's GOOGLE_CLIENT_ID holds.");
+  });
+
   shellTest('a pasted id with a space or a line break around it stops it', () => {
-    for (const id of [`${IOS_ID}\n`, ` ${IOS_ID}`, `${IOS_ID} `]) {
-      const r = check({ REACT_APP_GOOGLE_IOS_CLIENT_ID: id });
-      expect({ id, code: r.code }).toEqual({ id, code: 1 });
-      expect(r.out).toContain('holds a space or a line break');
+    for (const name of NAMES) {
+      for (const value of [`${BOTH[name]}\n`, ` ${BOTH[name]}`, `${BOTH[name]} `]) {
+        const r = check(withOne(name, value));
+        expect({ name, value, code: r.code }).toEqual({ name, value, code: 1 });
+        expect(r.out).toContain(`GOOGLE CHECK FAILED: ${name} holds a space or a line break.`);
+      }
     }
   });
 
   shellTest('something that is not a Google client id stops it', () => {
-    for (const id of ['1012360079798-abc', '.apps.googleusercontent.com', 'appl_abc123']) {
-      const r = check({ REACT_APP_GOOGLE_IOS_CLIENT_ID: id });
-      expect({ id, code: r.code }).toEqual({ id, code: 1 });
-      expect(r.out).toContain('does not end in .apps.googleusercontent.com,');
+    for (const name of NAMES) {
+      for (const value of ['1012360079798-abc', '.apps.googleusercontent.com', 'appl_abc123']) {
+        const r = check(withOne(name, value));
+        expect({ name, value, code: r.code }).toEqual({ name, value, code: 1 });
+        expect(r.out).toContain(`GOOGLE CHECK FAILED: ${name} does not end in .apps.googleusercontent.com,`);
+      }
     }
   });
 
@@ -859,13 +882,13 @@ describe(s('the Google iOS client id step, run'), () => {
   shellTest('a plist with no URL scheme at all stops it, and says none were declared', () => {
     const bare = '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>'
       + '<key>CFBundleIdentifier</key><string>com.flockcorp.flock</string></dict></plist>\n';
-    const r = check({ REACT_APP_GOOGLE_IOS_CLIENT_ID: IOS_ID }, bare);
+    const r = check(BOTH, bare);
     expect(r.code).toBe(1);
     expect(r.out).toContain('Declared: none');
   });
 
   shellTest('a plist that cannot be read stops it rather than passing', () => {
-    const r = check({ REACT_APP_GOOGLE_IOS_CLIENT_ID: IOS_ID }, 'not a plist');
+    const r = check(BOTH, 'not a plist');
     expect(r.code).toBe(1);
     expect(r.out).toContain('GOOGLE CHECK FAILED: ios/App/App/Info.plist could not be read as a plist.');
   });

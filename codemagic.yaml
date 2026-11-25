@@ -26,7 +26,9 @@
 #                                      key under CARTO's terms
 #                                      (frontend/src/components/map/keylessBasemap.js)
 #      REACT_APP_GOOGLE_CLIENT_ID      Google sign-in cannot verify against the
-#                                      backend, which enforces the same id
+#                                      backend, which enforces the same id. The
+#                                      Google check step below stops the App
+#                                      Store build when it is unset
 #      REACT_APP_GOOGLE_IOS_CLIENT_ID  the native Google button HIDES ITSELF
 #                                      rather than shipping a button that cannot
 #                                      work (useGoogleAuth.js
@@ -124,42 +126,50 @@ workflows:
       - name: Check the Google iOS client id against the app's URL scheme
         script: |
           # CONTINUE WITH GOOGLE FAILS GREEN TWO WAYS, and both builds install
-          # and run. With REACT_APP_GOOGLE_IOS_CLIENT_ID unset, the button hides
-          # itself (useGoogleAuth.js isGoogleSignInAvailable) and the sign-in
-          # screen shows Apple and email with nothing missing. With it set to an
-          # id whose reversed form is not the URL scheme in Info.plist,
-          # GoogleSignIn looks for that scheme on the tap and raises "Your app
-          # is missing support for the following URL schemes", which closes the
-          # app. The web client id pasted in its place is the likeliest slip.
-          # Both answers are in two values already here, so this asks before the
-          # build, not on somebody's phone.
+          # and run. With REACT_APP_GOOGLE_IOS_CLIENT_ID or
+          # REACT_APP_GOOGLE_CLIENT_ID unset, the button hides itself
+          # (useGoogleAuth.js isGoogleSignInAvailable needs both) and the
+          # sign-in screen shows Apple and email with nothing missing. With the
+          # iOS id set to one whose reversed form is not the URL scheme in
+          # Info.plist, GoogleSignIn looks for that scheme on the tap and raises
+          # "Your app is missing support for the following URL schemes", which
+          # closes the app. The web client id pasted in its place is the
+          # likeliest slip. Every answer is in values already here, so this asks
+          # before the build, not on somebody's phone.
           set -eu
           SUFFIX=".apps.googleusercontent.com"
-          ID="${REACT_APP_GOOGLE_IOS_CLIENT_ID:-}"
-          if [ -z "$ID" ]; then
-            echo "GOOGLE CHECK FAILED: REACT_APP_GOOGLE_IOS_CLIENT_ID is not set in the flock_web group."
-            echo "Continue with Google would hide itself on every iPhone, and nothing on the sign-in"
-            echo "screen would say a way in had gone missing."
-            echo "FIX: set it to the iOS OAuth client id (Google Cloud, APIs and Services, Credentials),"
-            echo "     the one whose reversed form is the URL scheme in ios/App/App/Info.plist."
-            exit 1
-          fi
-          case "$ID" in
-            *[[:space:]]*)
-              echo "GOOGLE CHECK FAILED: REACT_APP_GOOGLE_IOS_CLIENT_ID holds a space or a line break."
-              echo "FIX: paste the id again with nothing around it."
+          for NAME in REACT_APP_GOOGLE_IOS_CLIENT_ID REACT_APP_GOOGLE_CLIENT_ID; do
+            eval "VALUE=\${$NAME:-}"
+            if [ -z "$VALUE" ]; then
+              echo "GOOGLE CHECK FAILED: $NAME is not set in the flock_web group."
+              echo "Continue with Google needs both client ids, so it would hide itself on every iPhone,"
+              echo "and nothing on the sign-in screen would say a way in had gone missing."
+              if [ "$NAME" = REACT_APP_GOOGLE_IOS_CLIENT_ID ]; then
+                echo "FIX: set it to the iOS OAuth client id (Google Cloud, APIs and Services, Credentials),"
+                echo "     the one whose reversed form is the URL scheme in ios/App/App/Info.plist."
+              else
+                echo "FIX: set it to the web OAuth client id, the one the backend's GOOGLE_CLIENT_ID holds."
+              fi
               exit 1
-              ;;
-          esac
-          case "$ID" in
-            ?*"$SUFFIX") ;;
-            *)
-              echo "GOOGLE CHECK FAILED: REACT_APP_GOOGLE_IOS_CLIENT_ID does not end in $SUFFIX,"
-              echo "so it is not a Google OAuth client id."
-              exit 1
-              ;;
-          esac
-          if [ "$ID" = "${REACT_APP_GOOGLE_CLIENT_ID:-}" ]; then
+            fi
+            case "$VALUE" in
+              *[[:space:]]*)
+                echo "GOOGLE CHECK FAILED: $NAME holds a space or a line break."
+                echo "FIX: paste the id again with nothing around it."
+                exit 1
+                ;;
+            esac
+            case "$VALUE" in
+              ?*"$SUFFIX") ;;
+              *)
+                echo "GOOGLE CHECK FAILED: $NAME does not end in $SUFFIX,"
+                echo "so it is not a Google OAuth client id."
+                exit 1
+                ;;
+            esac
+          done
+          ID="$REACT_APP_GOOGLE_IOS_CLIENT_ID"
+          if [ "$ID" = "$REACT_APP_GOOGLE_CLIENT_ID" ]; then
             echo "GOOGLE CHECK FAILED: REACT_APP_GOOGLE_IOS_CLIENT_ID is the same id as REACT_APP_GOOGLE_CLIENT_ID."
             echo "That one is the web client, which the server checks. The iPhone needs the iOS client"
             echo "from the same Google Cloud project."
