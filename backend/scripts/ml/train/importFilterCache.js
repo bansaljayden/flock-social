@@ -16,7 +16,7 @@
 //   node scripts/ml/train/importFilterCache.js --parity --cache-dir=<one harvest-cache run folder>
 //        --cities=<the run's --city keys> --radius-km=<its radius> --identity-snapshot=<csv>
 //        --export-csv=<the harvest-inclusive training_data.csv> --expect-misses=<n>
-//        --written-before=<ISO UTC instant>
+//        --written-before=<ISO UTC instant> --run-started=<ISO instant from the first run's log>
 //
 // NO KEY. No module this script loads reads a BestTime key variable or loads
 // backend/.env when it is loaded (harvestVenueFilter.js, collectWeekly.js,
@@ -203,10 +203,14 @@
 // of 22,975 venue-days in austin alone, so comparing a venue another pass
 // wrote would fail a correct generator. Which venues this folder wrote is
 // read from the snapshot's created_at: the replay is planned against the
-// corpus as it stood before the folder's first answer (rows created before
-// that fetchedAt, and rows with no created_at), and a venue is compared when
-// that plan calls it new, its row is 'harvested', and the row was created
-// after every answer of this folder that lists the venue. The rest are
+// corpus as it stood when the folder's FIRST run started (--run-started,
+// required, as that run's log recorded it: rows created before it, and rows
+// with no created_at), and a venue is compared when that plan calls it new,
+// its row is 'harvested', and the row was created after every answer of this
+// folder that lists the venue. The folder's earliest surviving answer is no
+// such bound: in a resumed folder, an earlier run's answers gone whole would
+// move it past the venues that run wrote. An answer fetched before
+// --run-started is refused (the start is wrong). The rest are
 // counted apart, by why, never as mismatches. A weekly cell of a compared
 // venue (venue, day, hour) that the export holds twice is a mismatch,
 // duplicateExportRow, and only its first row is compared. Exit 0 only when
@@ -226,7 +230,14 @@
 // 2026-11-20T08:42:48.996Z, the venue searches' first rows in those cities
 // (they wrote 427 nyc and 21 austin venues before each 40 km pass began). The
 // nyc folder's own resumed run (2026-11-20 15:00 to 17:59) falls after its
-// bound, so its 8,486 venues are counted apart, not compared.
+// bound, so its 8,486 venues are counted apart, not compared. The November
+// run starts, from bt_usage-1123/harvest_rest_summary.log (each run's
+// "== <city> start" line; the run's own log says the folder held 0 answers
+// when it began): nyc 2026-11-18T12:15:12.6890105-05:00 (line 9; its commit
+// gate refused it, so a later run that evening committed the answers it had
+// cached, and the run of 2026-11-20 resumed the folder), austin
+// 2026-11-18T16:42:00.4031711-05:00 (line 33), london
+// 2026-11-18T21:48:53.4427359-05:00 (line 65).
 //
 // And the proof is checked against more than the answers that survive:
 //   * --expect-misses (required) is the 404s the run that filled the folder
@@ -236,8 +247,8 @@
 //     from 0 to 100, boxes ended below their venues_n, boxes cut at the cap,
 //     unread files;
 //   * THE WRITES THE SNAPSHOT SHOWS: every row of the run's cities stored
-//     'harvested' and created from the folder's first answer until the
-//     bound, taken from the snapshot alone, must be compared, or found by
+//     'harvested' and created from --run-started until --written-before,
+//     taken from the snapshot alone, must be compared, or found by
 //     the replay and left out because its row predates an answer here that
 //     lists it (within the bound only this folder's runs wrote, so that is a
 //     venue an earlier run of the folder wrote and a later run listed again,
@@ -364,7 +375,7 @@ function parseImportArgs(argv) {
   const flags = ['--dry-run', '--write', '--parity'];
   const valued = ['--cache-root=', '--plan=', '--progress=', '--harvest-cache=', '--identity-snapshot=', '--report-json=',
     '--out-dir=', '--accept-peak-flags=', '--only=', '--cache-dir=', '--cities=', '--radius-km=', '--export-csv=',
-    '--expect-misses=', '--export-dir=', '--written-before=', '--feedback-snapshot='];
+    '--expect-misses=', '--export-dir=', '--written-before=', '--feedback-snapshot=', '--run-started='];
   for (const a of args) {
     if (!flags.includes(a) && !valued.some((p) => a.startsWith(p))) return { error: `Unknown argument "${a}".` };
   }
@@ -401,6 +412,7 @@ function parseImportArgs(argv) {
     expectMisses: null,
     exportDir: filePath('export-dir'),
     writtenBefore: null,
+    runStarted: null,
     feedbackSnapshot: filePath('feedback-snapshot'),
   };
   if (mode === 'parity') {
@@ -432,13 +444,14 @@ function parseImportArgs(argv) {
       opts.expectMisses = Number(m);
     }
     // An instant with its zone said (Z or an offset), never a local reading.
-    const wb = val('written-before');
-    if (wb !== null) {
-      const at = parseTimestamp(wb);
+    for (const [name, key] of [['written-before', 'writtenBefore'], ['run-started', 'runStarted']]) {
+      const text = val(name);
+      if (text === null) continue;
+      const at = parseTimestamp(text);
       if (!Number.isFinite(at)) {
-        return { error: '--written-before takes an ISO instant with its zone, e.g. 2026-11-20T00:00:00Z.' };
+        return { error: `--${name} takes an ISO instant with its zone, e.g. 2026-11-20T00:00:00Z.` };
       }
-      opts.writtenBefore = at;
+      opts[key] = at;
     }
     for (const name of ['cache-root', 'plan', 'progress', 'harvest-cache', 'out-dir', 'accept-peak-flags', 'only', 'export-dir',
       'feedback-snapshot']) {
@@ -451,12 +464,17 @@ function parseImportArgs(argv) {
     }
     if (opts.writtenBefore === null) {
       return { error: '--parity needs --written-before=<instant>, the start of the next writer for these cities (the next '
-        + 'pass\'s first answer or the first venue-search run there): every venue the snapshot shows created from this '
-        + 'folder\'s first answer until then must be reproduced.' };
+        + 'pass\'s first answer or the first venue-search run there): every venue the snapshot shows created from the '
+        + 'run\'s start until then must be reproduced.' };
     }
+    if (opts.runStarted === null) {
+      return { error: '--parity needs --run-started=<instant>, when the FIRST run that filled --cache-dir started, as its '
+        + 'log recorded it: the folder\'s own answers cannot show it, since an earlier run\'s answers may be the ones gone.' };
+    }
+    if (!(opts.runStarted < opts.writtenBefore)) return { error: '--run-started must come before --written-before.' };
     return opts;
   }
-  for (const name of ['cache-dir', 'cities', 'radius-km', 'export-csv', 'expect-misses', 'written-before']) {
+  for (const name of ['cache-dir', 'cities', 'radius-km', 'export-csv', 'expect-misses', 'written-before', 'run-started']) {
     if (val(name) !== null) return { error: `--${name} belongs to --parity.` };
   }
   if (!opts.cacheRoot || !opts.plan) return { error: `--${mode} needs --cache-root and --plan.` };
@@ -2032,16 +2050,18 @@ async function writeOutputs(opts, result, { log }) {
 // Which venues of a parity replay this folder's runs wrote (see the header):
 // `expected` by stored id, and every other venue the replay found, counted by
 // why it is left out.
-function parityVenues(r, snapshot, cities, radiusKm, writtenBefore = null) {
-  const t0 = Date.parse(r.fetchedAt.min);
-  // The corpus as the folder's first answer found it. A row with no
+function parityVenues(r, snapshot, cities, radiusKm, writtenBefore, runStarted) {
+  // The corpus as the folder's first run found it, at --run-started, which
+  // its log recorded: the earliest answer that survives is no bound, since a
+  // whole earlier run's answers can be the ones gone. A row with no
   // created_at is taken as older: it can only make a venue known, never new.
+  const t0 = runStarted;
   const before = snapshot.list.filter((row) => row.createdAtMs === null || row.createdAtMs < t0);
   const all = [...r.venues.values()].filter((v) => v.days.size > 0);
   const { plan } = H.planVenues(all, identitiesOf(before), cities, { radiusKm });
   const expected = new Map();
   const left = {
-    heldBeforeFirstAnswer: 0, // known by BestTime id, place id or a near duplicate before T0
+    heldBeforeTheRun: 0, // known by BestTime id, place id or a near duplicate before --run-started
     neverWritten: 0, // planned new, and no row carries its BestTime id
     storedUnderAnotherStatus: 0, // its row is not 'harvested'
     writtenBeforeItsAnswerHere: 0, // its row is older than an answer here that lists it: another pass wrote it
@@ -2056,7 +2076,7 @@ function parityVenues(r, snapshot, cities, radiusKm, writtenBefore = null) {
   for (const item of plan) {
     const id = item.venue.venueId;
     planned.add(id);
-    if (item.kind !== 'new') { leave(id, 'heldBeforeFirstAnswer'); continue; }
+    if (item.kind !== 'new') { leave(id, 'heldBeforeTheRun'); continue; }
     const stored = snapshot.identities.byBtId.get(id);
     if (!stored) { leave(id, 'neverWritten'); continue; }
     if (stored.besttime_status !== H.HARVEST_STATUS) { leave(id, 'storedUnderAnotherStatus'); continue; }
@@ -2083,7 +2103,7 @@ function parityVenues(r, snapshot, cities, radiusKm, writtenBefore = null) {
 
 // THE WRITES THE SNAPSHOT SHOWS (--parity in the header), from the snapshot
 // alone: every row of the run's cities stored 'harvested' and created from
-// the folder's first answer until --written-before. Each must be compared,
+// --run-started until --written-before. Each must be compared,
 // or found by the replay and left out because its row predates an answer
 // here that lists it (writtenBeforeItsAnswerHere: within the bound only this
 // folder's runs wrote, so an earlier run wrote it and a later run listed it
@@ -2123,6 +2143,13 @@ async function runParity(opts, { log }) {
     + `${r.fetchedAt.max}.`);
   if (r.abort) { log(`${TAG} PARITY REFUSED: ${r.abort}`); return { exitCode: 1, abort: r.abort }; }
   if (r.month === null) { log(`${TAG} PARITY REFUSED: the answers do not fix one month.`); return { exitCode: 1 }; }
+  const started = new Date(opts.runStarted).toISOString();
+  if (Date.parse(r.fetchedAt.min) < opts.runStarted) {
+    const why = `an answer here was fetched at ${r.fetchedAt.min}, before --run-started ${started}: the start is not the `
+      + 'first run\'s.';
+    log(`${TAG} PARITY REFUSED: ${why}`);
+    return { exitCode: 1, refused: why };
+  }
   if (opts.expectMisses !== null && r.misses !== opts.expectMisses) {
     log(`${TAG} PARITY REFUSED: ${r.misses} misses, ${opts.expectMisses} expected.`);
     return { exitCode: 1 };
@@ -2141,15 +2168,15 @@ async function runParity(opts, { log }) {
     return { exitCode: 1, refused: why, damage };
   }
   const { expected, left, harvestedElsewhere, t0, whyLeft } = parityVenues(r, snapshot, opts.cities, opts.radiusKm,
-    opts.writtenBefore);
-  const bound = opts.writtenBefore === null ? '' : ` and before ${new Date(opts.writtenBefore).toISOString()} (--written-before)`;
+    opts.writtenBefore, opts.runStarted);
+  const bound = ` and before ${new Date(opts.writtenBefore).toISOString()} (--written-before)`;
   log(`${TAG} PARITY: ${num(expected.size)} venues this folder's runs wrote to compare (planned new against the corpus `
-    + `before ${r.fetchedAt.min}, stored 'harvested', created after every answer here that lists them${bound}). Left out: `
-    + `${dropText(left) || 'none'}. Of those, ${num(harvestedElsewhere)} are stored 'harvested' from another pass's answers, `
-    + 'never compared.');
+    + `before ${started} (--run-started), stored 'harvested', created after every answer here that lists them${bound}). `
+    + `Left out: ${dropText(left) || 'none'}. Of those, ${num(harvestedElsewhere)} are stored 'harvested' from another `
+    + 'pass\'s answers, never compared.');
   const writes = unreproducedWrites(snapshot, opts.cities, t0, opts.writtenBefore, expected, whyLeft);
   log(`${TAG} PARITY: the snapshot shows ${num(writes.candidates)} venues of ${opts.cities.join(', ')} stored 'harvested' and `
-    + `created from ${r.fetchedAt.min} until ${new Date(opts.writtenBefore).toISOString()}: ${num(writes.compared)} compared, `
+    + `created from ${started} until ${new Date(opts.writtenBefore).toISOString()}: ${num(writes.compared)} compared, `
     + `${num(writes.justified)} found here but written before an answer here that lists them, ${num(writes.unreproduced.length)} `
     + `NOT REPRODUCED${writes.unreproduced.length ? ` (${writes.unreproduced.slice(0, 10).map((w) => `${w.id} ${w.btId} ${w.why}`)
       .join('; ')}${writes.unreproduced.length > 10 ? '; ...' : ''})` : ''}.`);

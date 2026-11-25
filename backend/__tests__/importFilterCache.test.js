@@ -727,22 +727,32 @@ test('the arguments refuse what would make an import unsafe', () => {
   assert.deepEqual(I.runFolderScope('denver,seattle,chicago,la-2026-11'), { cities: ['denver', 'seattle', 'chicago', 'la'], radiusKm: 20 });
   assert.deepEqual(I.runFolderScope('philly+lehigh-2026-11-r40'), { cities: ['philly', 'lehigh'], radiusKm: 40 });
   assert.equal(I.runFolderScope('notes'), null);
-  const bounded = ['--expect-misses=0', '--written-before=2026-11-20T00:00:00Z'];
+  const bounded = ['--expect-misses=0', '--written-before=2026-11-20T00:00:00Z', '--run-started=2026-11-18T12:15:12.6890105-05:00'];
   const inferred = p('--parity', '--cache-dir=x/nyc-2026-11-r40', '--identity-snapshot=s', '--export-csv=e', ...bounded);
   assert.deepEqual([inferred.cities, inferred.radiusKm], [['nyc'], 40]);
   assert.match(p('--parity', '--cache-dir=x/nyc-2026-11-r40', '--identity-snapshot=s', '--export-csv=e', '--radius-km=20').error,
     /would ask other questions/);
-  // --expect-misses and --written-before (an instant with its zone) are
-  // required by --parity and belong to nothing else.
+  // --expect-misses, --written-before and --run-started (instants with their
+  // zone; a log's -05:00 reads as written) are required by --parity and
+  // belong to nothing else.
   const parityArgs = ['--parity', '--cache-dir=x/nyc-2026-11', '--identity-snapshot=s', '--export-csv=e'];
-  assert.equal(p(...parityArgs, ...bounded).writtenBefore, Date.parse('2026-11-20T00:00:00Z'));
-  assert.match(p(...parityArgs, '--written-before=2026-11-20T00:00:00Z').error, /--parity needs --expect-misses/);
-  assert.match(p(...parityArgs, '--expect-misses=0').error, /--parity needs --written-before/);
-  for (const bad of ['2026-11-20', '2026-11-20T00:00:00', 'yesterday', '']) {
-    assert.match(p(...parityArgs, '--expect-misses=0', `--written-before=${bad}`).error,
-      /--written-before takes an ISO instant with its zone/, bad);
+  const ok = p(...parityArgs, ...bounded);
+  assert.deepEqual([ok.writtenBefore, ok.runStarted], [Date.parse('2026-11-20T00:00:00Z'), Date.parse('2026-11-18T17:15:12.689Z')]);
+  assert.match(p(...parityArgs, '--written-before=2026-11-20T00:00:00Z', '--run-started=2026-11-18T00:00:00Z').error,
+    /--parity needs --expect-misses/);
+  assert.match(p(...parityArgs, '--expect-misses=0', '--run-started=2026-11-18T00:00:00Z').error, /--parity needs --written-before/);
+  assert.match(p(...parityArgs, '--expect-misses=0', '--written-before=2026-11-20T00:00:00Z').error,
+    /--parity needs --run-started=<instant>, when the FIRST run that filled --cache-dir started/);
+  assert.match(p(...parityArgs, '--expect-misses=0', '--written-before=2026-11-20T00:00:00Z', '--run-started=2026-11-20T00:00:00Z').error,
+    /--run-started must come before --written-before/);
+  for (const name of ['written-before', 'run-started']) {
+    for (const bad of ['2026-11-20', '2026-11-20T00:00:00', 'yesterday', '']) {
+      const args = bounded.filter((a) => !a.startsWith(`--${name}=`));
+      assert.match(p(...parityArgs, ...args, `--${name}=${bad}`).error, new RegExp(`--${name} takes an ISO instant with its zone`), bad);
+    }
   }
   assert.match(p('--dry-run', '--cache-root=a', '--plan=b', '--written-before=2026-11-20T00:00:00Z').error, /belongs to --parity/);
+  assert.match(p('--dry-run', '--cache-root=a', '--plan=b', '--run-started=2026-11-20T00:00:00Z').error, /belongs to --parity/);
   assert.match(p(...parityArgs, ...bounded, '--feedback-snapshot=f').error, /not --parity/);
 });
 
@@ -1662,23 +1672,30 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
     client.release();
   }
   const csv = (v) => (v === null || v === undefined ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
-  const snapshot = (name, { createdAt = {}, columns = 'all', meta = true } = {}) => {
+  // `extra` adds rows after the table's, as if they were in it.
+  const snapshot = (name, { createdAt = {}, columns = 'all', meta = true, extra = [] } = {}) => {
     const file = path.join(outDir, name);
     const head = ['id', 'besttime_venue_id', 'google_place_id', 'name', 'latitude', 'longitude', 'city',
       ...(columns === 'all' ? ['besttime_status', 'created_at'] : [])];
-    fs.writeFileSync(file, `${[head.join(','), ...rows.map((r) => head.map((h) => {
+    fs.writeFileSync(file, `${[head.join(','), ...[...rows, ...extra].map((r) => head.map((h) => {
       if (h === 'created_at') return createdAt[r.besttime_venue_id] || r.created_at;
       return csv(r[h]);
     }).join(','))].join('\n')}\n`);
-    if (meta) writeSnapshotMeta(file, { tableCount: table.n, tableMinId: table.lo, tableMaxId: table.hi });
+    if (meta) {
+      writeSnapshotMeta(file, {
+        tableCount: table.n + extra.length, tableMinId: table.lo, tableMaxId: extra.length ? extra[extra.length - 1].id : table.hi,
+      });
+    }
     return file;
   };
   const snap = snapshot('snapshot.csv');
-  // Both required: the 404s the fill met, and the next writer's start (none
-  // came here; a day after the harvested rows).
-  const parity = (exportCsv, { dir = phillyDir, snapFile = snap, misses = phillyNotFound, bound = '2026-11-26T00:00:00Z' } = {}) => runImport([
-    '--parity', `--cache-dir=${dir}`, '--cities=philly', '--radius-km=20', `--identity-snapshot=${snapFile}`, `--export-csv=${exportCsv}`,
-    `--expect-misses=${misses}`, `--written-before=${bound}`]);
+  // All three required: the 404s the fill met, the next writer's start (none
+  // came here; a day after the harvested rows), and when the run that filled
+  // the folder started (an hour before its answers, fetched at 12:00).
+  const parity = (exportCsv, {
+    dir = phillyDir, snapFile = snap, misses = phillyNotFound, bound = '2026-11-26T00:00:00Z', started = '2026-11-24T11:00:00Z',
+  } = {}) => runImport(['--parity', `--cache-dir=${dir}`, '--cities=philly', '--radius-km=20', `--identity-snapshot=${snapFile}`,
+    `--export-csv=${exportCsv}`, `--expect-misses=${misses}`, `--written-before=${bound}`, `--run-started=${started}`]);
 
   const ok = await parity(exported.trainPath);
   assert.equal(ok.result.exitCode, 0, ok.out);
@@ -1689,8 +1706,8 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
   )).rows[0].n;
   assert.equal(ok.result.rowsCompared, harvestedRows);
   assert.equal(ok.result.rowsEqual, harvestedRows);
-  // The 24 corpus venues were held before the folder's first answer.
-  assert.equal(ok.result.left.heldBeforeFirstAnswer, 24);
+  // The 24 corpus venues were held before the run started.
+  assert.equal(ok.result.left.heldBeforeTheRun, 24);
   assert.equal(ok.result.harvestedElsewhere, 0);
   // The snapshot, read alone, shows the same two writes.
   assert.deepEqual([ok.result.writes.candidates, ok.result.writes.compared, ok.result.writes.unreproduced], [2, 2, []]);
@@ -1715,6 +1732,80 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
   assert.deepEqual(without.result.writes.unreproduced, [{ id: written2.id, btId: NEW2.id, why: 'inNoAnswerHere' }]);
   assert.match(without.out, new RegExp(`1 NOT REPRODUCED \\(${written2.id} ${NEW2.id} inNoAnswerHere\\)`));
   assert.match(without.out, /PARITY FAIL/);
+
+  // A resumed folder whose first run's answers are gone whole. Run 1
+  // (started 11:00, answers at 12:00) asked one philly tile holding over 500
+  // venues, so it saturated and split, one quarter empty and 404ing on all
+  // seven days, and wrote that crowd at 13:00. Run 2 (answers at 14:00) asked
+  // the rest and wrote NEW1 and NEW2 at 15:00. Every answer of run 1's tile
+  // and of every box below it is deleted: the replay asks the tile, finds
+  // nothing and asks nothing below it, so its seven misses stand in for the
+  // seven 404s below, and nothing is damaged or unread. A census started at
+  // the earliest surviving answer begins after the crowd was written and
+  // passes on NEW1 and NEW2; --run-started, run 1's start, keeps the crowd in
+  // it, and the proof fails.
+  const known = [...AXIS, NEW1, NEW2];
+  const holds = (k, v) => v.lat * 1000 >= k.s && v.lat * 1000 <= k.n && v.lng * 1000 >= k.w && v.lng * 1000 <= k.e;
+  const quartersOf = (k) => H.splitTile(k).filter((q) => H.tileIntersects(q, ['philly'], 20));
+  const top = H.planTiles(['philly'], 20, 20).map((p) => p.tile)
+    .find((k) => !known.some((v) => holds(k, v)) && quartersOf(k).length >= 3);
+  assert.ok(top, 'no philly tile to saturate');
+  const full = quartersOf(top).slice(0, -1);
+  const per = Math.ceil(510 / full.length);
+  const crowd = full.flatMap((q, n) => Array.from({ length: per }, (_, i) => vn(`ven_run1_${n}_${String(i).padStart(3, '0')}`,
+    (q.s + q.n) / 2000, (q.w + q.e) / 2000, 'RESTAURANT', `ChIJrunOne${n}${String(i).padStart(6, '0')}`, weekFor(i))));
+  const resumedDir = path.join(tmp('flock-import-philly-resumed-'), 'philly-2026-11');
+  const fill = await fillCache(resumedDir, {
+    cities: ['philly'], radiusKm: 20, venues: [...known, ...crowd],
+    notFoundWhen: ({ page, inBox }) => page === 0 && inBox.length === 0, fetchedAt: '2026-11-24T14:00:00.000Z',
+  });
+  assert.ok(fill.inventory.splits >= 1, 'the tile did not saturate');
+  let gone = 0;
+  for (const f of fs.readdirSync(resumedDir)) {
+    const p = new URL(JSON.parse(fs.readFileSync(path.join(resumedDir, f), 'utf8')).url).searchParams;
+    const [s, w, n, e] = ['lat_min', 'lng_min', 'lat_max', 'lng_max'].map((k) => Math.round(Number(p.get(k)) * 1000));
+    if (s >= top.s && n <= top.n && w >= top.w && e <= top.e) { fs.unlinkSync(path.join(resumedDir, f)); gone++; }
+  }
+  assert.ok(gone > 7, String(gone));
+  const crowdRows = crowd.map((v, i) => ({
+    id: table.hi + 1 + i, besttime_venue_id: v.id, google_place_id: v.placeId, name: v.name, latitude: v.lat, longitude: v.lng,
+    city: 'philly', besttime_status: H.HARVEST_STATUS, created_at: '2026-11-24T13:00:00.000000Z',
+  }));
+  const resumedSnap = snapshot('resumed.csv', {
+    extra: crowdRows, createdAt: { [NEW1.id]: '2026-11-24T15:00:00.000000Z', [NEW2.id]: '2026-11-24T15:00:00.000000Z' },
+  });
+  const resumed = await parity(exported.trainPath, { dir: resumedDir, snapFile: resumedSnap, misses: fill.notFound });
+  assert.equal(resumed.result.exitCode, 1, resumed.out);
+  assert.match(resumed.out, new RegExp(`files ${fs.readdirSync(resumedDir).length}/${fs.readdirSync(resumedDir).length} read, `
+    + `${fill.notFound} misses \\(expected ${fill.notFound}\\)`), 'every older rule passes it');
+  assert.equal(resumed.result.venues, 2);
+  assert.equal(resumed.result.rowsEqual, resumed.result.rowsCompared);
+  assert.equal(resumed.result.writes.unreproduced.length, crowd.length);
+  assert.ok(resumed.result.writes.unreproduced.every((w) => w.why === 'inNoAnswerHere'));
+  assert.match(resumed.out, /PARITY FAIL/);
+  // What the census used to start from, the earliest surviving answer: the
+  // same folder passes, which is the hole a recorded start closes.
+  const fromSurvivor = await parity(exported.trainPath, {
+    dir: resumedDir, snapFile: resumedSnap, misses: fill.notFound, started: '2026-11-24T14:00:00Z',
+  });
+  assert.equal(fromSurvivor.result.exitCode, 0, fromSurvivor.out);
+  assert.deepEqual([fromSurvivor.result.venues, fromSurvivor.result.writes.candidates], [2, 2]);
+  // A start after an answer here cannot be the first run's: refused.
+  const late = await parity(exported.trainPath, {
+    dir: resumedDir, snapFile: resumedSnap, misses: fill.notFound, started: '2026-11-24T14:30:00Z',
+  });
+  assert.equal(late.result.exitCode, 1);
+  assert.match(late.out, /PARITY REFUSED: an answer here was fetched at 2026-11-24T14:00:00\.000Z, before --run-started 2026-11-24T14:30:00\.000Z/);
+  // A row the run wrote after it started and before the answers here that
+  // list it (NEW2 at 11:30, its answers at 12:00): the corpus is taken at
+  // --run-started, so NEW2 is planned new and found written before its
+  // answer here; a corpus taken at the earliest answer would hold it already
+  // and leave the write unreproduced.
+  const between = await parity(exported.trainPath, {
+    snapFile: snapshot('between.csv', { createdAt: { [NEW2.id]: '2026-11-24T11:30:00.000000Z' } }),
+  });
+  assert.equal(between.result.exitCode, 0, between.out);
+  assert.deepEqual([between.result.venues, between.result.left.writtenBeforeItsAnswerHere, between.result.writes.justified], [1, 1, 1]);
 
   // A damaged record, or a miss count other than the fill's: refused.
   const damagedDir = path.join(tmp('flock-import-philly-damaged-'), 'philly-2026-11');
@@ -1809,7 +1900,7 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
   const early = await parity(otherPassCsv, { snapFile: snapshot('early.csv', { createdAt: { [NEW2.id]: '2026-11-20T00:00:00.000Z' } }) });
   assert.equal(early.result.exitCode, 0, early.out);
   assert.equal(early.result.venues, 1);
-  assert.deepEqual([early.result.left.heldBeforeFirstAnswer, early.result.harvestedElsewhere], [25, 1]);
+  assert.deepEqual([early.result.left.heldBeforeTheRun, early.result.harvestedElsewhere], [25, 1]);
 
   // Or a later writer (the next pass, a venue search) wrote NEW2 after
   // every answer here, as London's 40 km pass did: created_at alone takes it
