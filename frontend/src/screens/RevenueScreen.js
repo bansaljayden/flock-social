@@ -3769,6 +3769,9 @@ export default function RevenueScreen({
             const depCost = (e) => {
               if (e.fixedId && fixedById[e.fixedId]) {
                 const f = fixedById[e.fixedId];
+                // A cancelled subscription (endedOn) reads as cancelled, never
+                // as a $0 plan that is still running.
+                if (f.endedOn) return `Cancelled ${f.endedOn}`;
                 return Number.isFinite(f.usd) ? `${money(f.usd, 0)}${f.period}` : 'No figure';
               }
               if (e.reconciledId && reconciledById[e.reconciledId]) {

@@ -221,6 +221,8 @@ describe('a fixed cost is rendered with its provenance, not just its number', ()
     // invoice, and the Projections list marks it too (review 2026-11-25).
     expect(APP).toMatch(/e\.endedOn\s*\?\s*`Cancelled on \$\{e\.endedOn\}, so it bills nothing now/);
     expect(APP).toContain('row(e.endedOn ? `${e.label} (cancelled ${e.endedOn})` : e.verified');
+    // And the inventory's collapsed row says so, not a bare $0/mo.
+    expect(APP).toContain('if (f.endedOn) return `Cancelled ${f.endedOn}`;');
   });
 
   it('a watchlist entry keeps its severity and its unknown figure', () => {

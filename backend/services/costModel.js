@@ -2105,7 +2105,7 @@ function buildDependencies(ctx = {}) {
         id: 'fixed',
         label: 'Fixed bills',
         short: 'fixed',
-        note: 'These arrive whether anybody opens the app or not.',
+        note: 'These arrive whether anybody opens the app or not, except a subscription marked cancelled, which is kept as a record.',
         entries: inGroup('fixed'),
       },
       {
