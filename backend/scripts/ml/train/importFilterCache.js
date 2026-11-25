@@ -9,12 +9,14 @@
 //        [--identity-snapshot=<ml_venues.csv>]                identity rules and the 2 km rule
 //        [--export-dir=<the harvest-inclusive export's folder>] checked against the snapshot
 //        [--report-json=<file>] [--only=<key,...>]
+//        [--feedback-snapshot=<venue_feedback_verified.csv>]  the rows' feedback columns
 //   node scripts/ml/train/importFilterCache.js --write --out-dir=<dir> (the same inputs; the
-//        snapshot, --export-dir and --harvest-cache are required) [--accept-peak-flags=<key,...>]
+//        snapshot, --export-dir, --harvest-cache and --feedback-snapshot are required)
+//        [--accept-peak-flags=<key,...>]
 //   node scripts/ml/train/importFilterCache.js --parity --cache-dir=<one harvest-cache run folder>
 //        --cities=<the run's --city keys> --radius-km=<its radius> --identity-snapshot=<csv>
-//        --export-csv=<the harvest-inclusive training_data.csv> [--expect-misses=<n>]
-//        [--written-before=<ISO UTC instant>]
+//        --export-csv=<the harvest-inclusive training_data.csv> --expect-misses=<n>
+//        --written-before=<ISO UTC instant>
 //
 // NO KEY. No module this script loads reads a BestTime key variable or loads
 // backend/.env when it is loaded (harvestVenueFilter.js, collectWeekly.js,
@@ -87,6 +89,19 @@
 //   * the replay's misses equal progress.json's notFound (the cacher never
 //     kept a 404, so only that many questions may lack an answer: Macau, cut
 //     by the 402 with 17 questions unasked, is refused here);
+//   * THE CACHER'S INVENTORY: the replay reproduces the counts progress.json
+//     kept for the city, each counted by the cacher's own rules
+//     (tools/cacheEverything.cjs): the questions it asked (requests +
+//     cachedPages; its run retried nothing, throttled and networkErrors 0,
+//     so a request is a question), the records listed (results), distinct
+//     venue ids, tiles, splits, leaves, boxes cut at the cap, and records
+//     naming another day. A box whose answers are gone together with every
+//     question below it (a saturated box and its quarters) leaves no unread
+//     file and adds only its own misses, which can equal 404s the subtree
+//     held; only these counts show it. Refused as inventoryMismatch, naming
+//     each count; noInventory when a count is missing or retries make
+//     requests not questions. All 184 accepted November cities reproduce
+//     every count exactly (macau does not: 25 questions to its 9);
 //   * no record named a day other than the one asked, and no weekday's
 //     records all left the day out (checkMarketDays): refused as dayCheck;
 //   * the replay ran to its end (an answer with no venue list stops it):
@@ -195,26 +210,59 @@
 // weekly row the other lacks. The snapshot needs its meta here too. What
 // created_at alone cannot show: a row another writer (the other pass, a venue
 // search) created after this folder's last answer for the venue. So
-// --written-before=<instant> bounds it: a venue is compared only if its row
-// was also created before that instant, and one created at or after it is
-// counted apart (writtenByALaterWriter), never as a mismatch. Set it to the
-// start of the next writer for those cities: the next pass's first answer
-// (the earliest fetchedAt in its folder) or the first venue-search run there,
-// whichever came first. London's 20 km folder (answers 2026-11-19 02:48 to
-// 04:00, every venue committed by 06:59) needs 2026-11-20T00:00:00Z: without
-// it, 267 venues a venue search (2026-11-20) and the 40 km pass (2026-11-22)
-// wrote were compared as its own and failed. Within the bound, a row another
-// writer made between this folder's answers and its commit is still taken
-// for this folder's; the November passes ran one city at a time, 20 km then
-// 40 km, so prove parity on a folder no other writer overlapped.
+// --written-before=<instant> (required) bounds it: a venue is compared only
+// if its row was also created before that instant, and one created at or
+// after it is counted apart (writtenByALaterWriter), never as a mismatch. Set
+// it to the start of the next writer for those cities: the next pass's first
+// answer (the earliest fetchedAt in its folder) or the venue search's first
+// write there (the earliest created_at of a row a search run lists), whichever
+// came first. The November bounds: london-2026-11 2026-11-20T00:00:00Z (a
+// venue search wrote two of its venues on 11-20, the 40 km pass 265 on
+// 11-22); nyc-2026-11 2026-11-20T07:45:21.034Z and austin-2026-11
+// 2026-11-20T08:42:48.996Z, the venue searches' first rows in those cities
+// (they wrote 427 nyc and 21 austin venues before each 40 km pass began). The
+// nyc folder's own resumed run (2026-11-20 15:00 to 17:59) falls after its
+// bound, so its 8,486 venues are counted apart, not compared.
+//
+// And the proof is checked against more than the answers that survive:
+//   * --expect-misses (required) is the 404s the run that filled the folder
+//     met, and the replay must find exactly that many questions unanswered;
+//   * the replay's damage counts must all be 0: malformed records, records
+//     without a 24-slot curve, curve slots no number from 0 to 100, boxes
+//     ended below their venues_n, boxes cut at the cap, unread files;
+//   * THE WRITES THE SNAPSHOT SHOWS: every row of the run's cities stored
+//     'harvested' and created from the folder's first answer until the
+//     bound, taken from the snapshot alone, must be compared, or found by
+//     the replay and left out because its row predates an answer here that
+//     lists it (within the bound only this folder's runs wrote, so that is a
+//     venue an earlier run of the folder wrote and a later run listed again,
+//     whose answers cannot be told apart). Any other is NOT REPRODUCED and
+//     fails the proof: a venue whose every answer is gone is in no answer
+//     here (inNoAnswerHere), and one the replay plans otherwise than the
+//     harvest did is named with the replay's reason.
+//
+// THE FEEDBACK SNAPSHOT (--feedback-snapshot=<csv>, required by --write): the
+// rows say avg_user_crowd 0, user_feedback_count 0, avg_prediction_error 0,
+// which is what the exporter writes for a venue with no verified
+// venue_feedback report in the 28 days before the row's hour (its LATERAL
+// join by google place id). The CSV is FEEDBACK_QUERY's answer, header
+// venue_place_id,verified_reports, and beside it <csv without .csv>.meta.json
+// from the same read-only REPEATABLE READ transaction, with query, isolation,
+// snapshotAt, tableVerifiedCount (SELECT COUNT(*) FROM venue_feedback WHERE
+// verified = true), rowsWritten and csvSha256. It is refused unless the query
+// is FEEDBACK_QUERY (spacing aside), the isolation REPEATABLE READ READ ONLY,
+// the CSV's SHA-256 its csvSha256, the place ids unique, their count
+// rowsWritten and the reports they sum to no more than tableVerifiedCount
+// (a report with no place id joins nothing). --write refuses while any kept
+// venue's place id is in it. The export of November had no verified report.
 //
 // OUTPUTS (--write; each refused if it exists): cache_rows.csv (HEADER, then
 // the rows; append it to training_data.csv without its first line),
 // cache_venues.csv (synthetic id -> city key, BestTime and Google ids, name,
 // position, category, days, rows) and cache_manifest.json (inputs, the
-// export's files and the snapshot meta's snapshotAt, tableCount and
-// csvSha256 included, and outputs with SHA-256s, the git commit, every
-// count).
+// export's files, the snapshot meta's snapshotAt, tableCount and csvSha256
+// and the feedback snapshot's included, and outputs with SHA-256s, the git
+// commit, every count).
 // ---------------------------------------------------------------------------
 
 // NO KEY (see the header), by name only, before anything else is loaded.
@@ -307,7 +355,7 @@ function parseImportArgs(argv) {
   const flags = ['--dry-run', '--write', '--parity'];
   const valued = ['--cache-root=', '--plan=', '--progress=', '--harvest-cache=', '--identity-snapshot=', '--report-json=',
     '--out-dir=', '--accept-peak-flags=', '--only=', '--cache-dir=', '--cities=', '--radius-km=', '--export-csv=',
-    '--expect-misses=', '--export-dir=', '--written-before='];
+    '--expect-misses=', '--export-dir=', '--written-before=', '--feedback-snapshot='];
   for (const a of args) {
     if (!flags.includes(a) && !valued.some((p) => a.startsWith(p))) return { error: `Unknown argument "${a}".` };
   }
@@ -323,7 +371,7 @@ function parseImportArgs(argv) {
   const filePath = (name) => (val(name) ? path.resolve(val(name)) : null);
   const list = (name) => (val(name) ? [...new Set(val(name).split(',').map((s) => s.trim()).filter(Boolean))] : []);
   for (const name of ['cache-root', 'plan', 'progress', 'harvest-cache', 'identity-snapshot', 'report-json', 'out-dir',
-    'cache-dir', 'export-csv', 'export-dir']) {
+    'cache-dir', 'export-csv', 'export-dir', 'feedback-snapshot']) {
     if (val(name) === '') return { error: `--${name} takes a path.` };
   }
   const opts = {
@@ -344,6 +392,7 @@ function parseImportArgs(argv) {
     expectMisses: null,
     exportDir: filePath('export-dir'),
     writtenBefore: null,
+    feedbackSnapshot: filePath('feedback-snapshot'),
   };
   if (mode === 'parity') {
     for (const [name, v] of [['cache-dir', opts.cacheDir], ['identity-snapshot', opts.identitySnapshot],
@@ -382,8 +431,19 @@ function parseImportArgs(argv) {
       }
       opts.writtenBefore = at;
     }
-    for (const name of ['cache-root', 'plan', 'progress', 'harvest-cache', 'out-dir', 'accept-peak-flags', 'only', 'export-dir']) {
+    for (const name of ['cache-root', 'plan', 'progress', 'harvest-cache', 'out-dir', 'accept-peak-flags', 'only', 'export-dir',
+      'feedback-snapshot']) {
       if (val(name) !== null) return { error: `--${name} belongs to --dry-run and --write, not --parity.` };
+    }
+    // Both are what the proof is checked against (--parity in the header).
+    if (opts.expectMisses === null) {
+      return { error: '--parity needs --expect-misses=<n>, the 404s the run that filled --cache-dir recorded: a miss that was '
+        + 'not a 404 is a box whose answers are gone.' };
+    }
+    if (opts.writtenBefore === null) {
+      return { error: '--parity needs --written-before=<instant>, the start of the next writer for these cities (the next '
+        + 'pass\'s first answer or the first venue-search run there): every venue the snapshot shows created from this '
+        + 'folder\'s first answer until then must be reproduced.' };
     }
     return opts;
   }
@@ -404,6 +464,10 @@ function parseImportArgs(argv) {
       return { error: '--write needs --export-dir: the export these rows join is what proves the snapshot is whole and current.' };
     }
     if (!opts.harvestCache) return { error: '--write needs --harvest-cache: the peak-hour check stands in for the commit gate.' };
+    if (!opts.feedbackSnapshot) {
+      return { error: '--write needs --feedback-snapshot: the rows say no verified report exists for any kept venue, and only '
+        + 'the snapshot shows it.' };
+    }
     if (opts.only.length) return { error: '--only is for a look at a few cities; --write takes every city or none.' };
   } else {
     if (opts.outDir) return { error: '--out-dir belongs to --write.' };
@@ -476,11 +540,16 @@ const refuse = (city, reason, detail) => city.refused.push({ reason, detail });
 // markets in the global pass; `replay` those whose folder is read.
 function classifyCities(plan, progress, cacheRoot, { only = [] } = {}) {
   const folders = fs.readdirSync(cacheRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  // Whether the cacher's run ever retried a request (THE CACHER'S INVENTORY):
+  // only without a retry are its requests the questions it asked.
+  const t = progress.totals;
+  const retried = !t || !Number.isInteger(t.throttled) || !Number.isInteger(t.networkErrors) ? null
+    : t.throttled > 0 || t.networkErrors > 0;
   const all = [];
   for (const entry of plan) {
     const p = progress.cities[entry.key] || null;
     const city = {
-      ...entry, progress: p, dir: null, refused: [], replay: null, opened: false,
+      ...entry, progress: p, dir: null, refused: [], replay: null, opened: false, runRetried: retried,
       notFound: p && Number.isInteger(p.notFound) ? p.notFound : null,
     };
     all.push(city);
@@ -566,6 +635,11 @@ async function replayFolder({ dir, cities, radiusKm, centroids = null, venueAnsw
   const invalidCurves = [];
   const shortPages = [];
   let lastFile = null;
+  // THE CACHER'S INVENTORY (see the header), counted by its own rules: every
+  // record with a venue_id, and every record whose integer day_int is not the
+  // day its question asked.
+  const inventoryIds = new Set();
+  let inventoryOtherDay = 0;
   const ctx = {
     key: H.OFFLINE_KEY, opts, stats: H.emptyStats(), sleep: async () => {}, pace: async () => {},
     city: H.emptyCityStats(tilePlan.length), area: null, dayTally: new Map(), otherDays: new Map(), secrets: [],
@@ -587,6 +661,13 @@ async function replayFolder({ dir, cities, radiusKm, centroids = null, venueAnsw
     onCacheHit: (keyless, entry) => {
       lastFile = H.cacheFileName(keyless);
       read.add(lastFile);
+      if (Array.isArray(entry.data.venues)) {
+        const asked = Number(new URL(keyless).searchParams.get('day_int'));
+        for (const v of entry.data.venues) {
+          if (v && v.venue_id) inventoryIds.add(String(v.venue_id));
+          if (v && Number.isInteger(v.day_int) && v.day_int !== asked) inventoryOtherDay++;
+        }
+      }
       const at = Date.parse(entry.fetchedAt);
       if (!Number.isFinite(at)) { fetched.bad++; return; }
       fetched.min = Math.min(fetched.min, at);
@@ -645,6 +726,12 @@ async function replayFolder({ dir, cities, radiusKm, centroids = null, venueAnsw
     },
     month: Number.isFinite(fetched.min) && fetched.bad === 0 ? monthAcrossZones(fetched.min, fetched.max) : null,
     venueAnswered: answered,
+    // What the cacher's progress.json records, as this replay counts it.
+    inventory: {
+      questions: s.cachedPages + s.cacheMisses, notFound: s.cacheMisses, results: s.cachedResults,
+      distinctVenues: inventoryIds.size, tiles: tilePlan.length, splits: s.splits, leaves: ctx.city.leaves,
+      truncated: s.truncatedTiles, otherDay: inventoryOtherDay,
+    },
     abort,
     abortDayCheck,
   };
@@ -656,6 +743,39 @@ function slimVenue(v) {
   return {
     venueId: v.venueId, name: v.name, placeId: v.placeId, rawPlaceId: v.rawPlaceId, lat: v.lat, lng: v.lng, type: v.type,
     rating: v.rating, reviews: v.reviews, days: v.days,
+  };
+}
+
+// THE CACHER'S INVENTORY (see the header): why the replay's counts are not
+// progress.json's, as { reason, detail }, or null. notFound is its own rule
+// (missesNotNotFound).
+const INVENTORY_FIELDS = ['requests', 'cachedPages', 'results', 'distinctVenues', 'tiles', 'splits', 'leaves', 'truncated',
+  'otherDay', 'oddAnswers'];
+function inventoryRefusal(city, inv) {
+  const p = city.progress || {};
+  const absent = INVENTORY_FIELDS.filter((f) => !Number.isInteger(p[f]));
+  if (absent.length) {
+    return { reason: 'noInventory', detail: `progress.json records no ${absent.join(', ')} for it: nothing independent shows `
+      + 'the replay asked every question the cacher did' };
+  }
+  if (city.runRetried !== false || p.oddAnswers > 0) {
+    return { reason: 'noInventory', detail: `the cacher's run ${city.runRetried === null ? 'kept no throttled or networkErrors '
+      + 'totals' : 'retried requests'}${p.oddAnswers > 0 ? `, and ${p.oddAnswers} odd answers here were asked again` : ''}, `
+      + 'so its requests are not the questions it asked' };
+  }
+  const want = {
+    questions: p.requests + p.cachedPages, results: p.results, distinctVenues: p.distinctVenues, tiles: p.tiles,
+    splits: p.splits, leaves: p.leaves, truncated: p.truncated, otherDay: p.otherDay,
+  };
+  const off = Object.keys(want).filter((k) => inv[k] !== want[k]);
+  if (off.length === 0) return null;
+  const what = { questions: 'questions asked (requests + cachedPages)', results: 'records listed', distinctVenues: 'distinct venue ids',
+    tiles: 'tiles', splits: 'splits', leaves: 'leaves', truncated: 'boxes cut at the cap', otherDay: 'records for another day' };
+  return {
+    reason: 'inventoryMismatch',
+    detail: `the replay does not reproduce the cacher's own counts: ${off.map((k) => `${what[k]} ${num(inv[k])}, progress.json `
+      + `${num(want[k])}`).join('; ')}. A question whose answers (and every question below them) are gone asks nothing below it, `
+      + 'so only the cacher\'s count can show it',
   };
 }
 
@@ -675,6 +795,8 @@ async function replayCity(city) {
     refuse(city, 'missesNotNotFound', `${r.misses} questions have no answer file, and progress.json recorded `
       + `${city.notFound === null ? 'no' : city.notFound} 404s: a miss that was not a 404 is a box whose venues would be lost`);
   }
+  const inventory = inventoryRefusal(city, r.inventory);
+  if (inventory) refuse(city, inventory.reason, inventory.detail);
   if (r.malformed > 0) {
     refuse(city, 'malformedRecords', `${r.malformed} records had no venue id or no 24-hour curve: what else the answer `
       + 'left out cannot be told from the file');
@@ -927,6 +1049,70 @@ function snapshotRefusal(snapshot, required) {
   if (!m.present && required) {
     return `no ${path.basename(m.file)} beside the snapshot: nothing shows it is the whole of ml_venues (a corpus venue `
       + 'with no labelled rows is in neither export file). Take it with its meta (plan step C.4).';
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// THE FEEDBACK SNAPSHOT (--feedback-snapshot; see the header).
+// ---------------------------------------------------------------------------
+const FEEDBACK_QUERY = 'SELECT venue_place_id, COUNT(*)::int AS verified_reports FROM venue_feedback WHERE verified = true '
+  + 'AND venue_place_id IS NOT NULL GROUP BY venue_place_id ORDER BY venue_place_id';
+const FEEDBACK_HEADER = Object.freeze(['venue_place_id', 'verified_reports']);
+
+// The verified reports by Google place id, and what its meta proves: the
+// same shape as the ml_venues snapshot's (problems empty when the CSV is
+// FEEDBACK_QUERY's whole answer from one consistent transaction).
+function loadFeedbackSnapshot(file) {
+  const bytes = fs.readFileSync(file);
+  const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+  const records = parseCsv(bytes.toString('utf8')).filter((f) => !(f.length === 1 && f[0] === ''));
+  const problems = [];
+  const head = records.length ? records[0].map((h) => h.trim()) : [];
+  if (head.join(',') !== FEEDBACK_HEADER.join(',')) problems.push(`the CSV's header (${head.join(',')}) is not ${FEEDBACK_HEADER.join(',')}`);
+  const reports = new Map();
+  for (let k = 1; k < records.length; k++) {
+    const [placeId, n] = records[k];
+    if (records[k].length !== 2 || !placeId || !/^[1-9]\d*$/.test(n || '')) {
+      problems.push(`record ${k + 1} is not a place id and a positive count`);
+      break;
+    }
+    if (reports.has(placeId)) { problems.push(`place id ${placeId} twice`); break; }
+    reports.set(placeId, Number(n));
+  }
+  const total = [...reports.values()].reduce((a, b) => a + b, 0);
+  const metaFile = snapshotMetaFile(file);
+  const meta = { file: metaFile, present: fs.existsSync(metaFile), problems };
+  if (meta.present) {
+    let m = null;
+    try { m = JSON.parse(fs.readFileSync(metaFile, 'utf8')); } catch { problems.push('its meta is not JSON'); }
+    if (m && typeof m === 'object') {
+      const need = (ok, why) => { if (!ok) problems.push(why); };
+      need(sameQuery(m.query, FEEDBACK_QUERY), 'its query is not FEEDBACK_QUERY, every verified report with a place id');
+      need(typeof m.isolation === 'string' && /REPEATABLE READ/i.test(m.isolation) && /READ ONLY/i.test(m.isolation),
+        `its isolation ${JSON.stringify(m.isolation)} is not REPEATABLE READ READ ONLY`);
+      need(typeof m.snapshotAt === 'string' && Number.isFinite(Date.parse(m.snapshotAt)), 'it has no snapshotAt');
+      need(m.csvSha256 === sha256, `its csvSha256 ${m.csvSha256} is not the CSV's ${sha256}`);
+      need(m.rowsWritten === reports.size, `the CSV holds ${reports.size} place ids; ${m.rowsWritten} were written`);
+      // Reports without a place id are in the count and in no group.
+      need(Number.isInteger(m.tableVerifiedCount) && m.tableVerifiedCount >= total,
+        `the table held ${m.tableVerifiedCount} verified reports; the CSV counts ${total}`);
+      Object.assign(meta, { snapshotAt: m.snapshotAt, tableVerifiedCount: m.tableVerifiedCount, csvSha256: m.csvSha256 });
+    }
+  }
+  return { file, sha256, placeIds: reports.size, reports, verifiedReports: total, meta };
+}
+
+// Why the feedback snapshot cannot be used, or null; `required` for --write.
+function feedbackRefusal(fb, required) {
+  if (!fb) return required ? '--write needs the feedback snapshot.' : null;
+  const m = fb.meta;
+  if (m.problems.length) {
+    return `the feedback snapshot ${fb.file} does not prove it holds every verified venue_feedback report: `
+      + `${m.problems.join('; ')}. Take it again.`;
+  }
+  if (!m.present && required) {
+    return `no ${path.basename(m.file)} beside the feedback snapshot: nothing shows it holds every verified report.`;
   }
   return null;
 }
@@ -1488,6 +1674,22 @@ async function runImport(opts, { log }) {
     log(`${TAG} EXPORT: none given, so the snapshot is not checked against it and the ${CORPUS_KEEP_AWAY_KM} km rule reads `
       + 'the snapshot alone; --write refuses without it.');
   }
+  // THE FEEDBACK SNAPSHOT, before any folder is replayed too.
+  let feedback = null;
+  if (opts.feedbackSnapshot) {
+    feedback = loadFeedbackSnapshot(opts.feedbackSnapshot);
+    const why = feedbackRefusal(feedback, opts.mode === 'write');
+    if (why) {
+      log(`${TAG} REFUSED: ${why} Nothing was replayed${opts.mode === 'write' ? ' or written' : ''}.`);
+      return { exitCode: 1, refused: why };
+    }
+    log(`${TAG} FEEDBACK SNAPSHOT: ${opts.feedbackSnapshot}, ${num(feedback.verifiedReports)} verified reports for `
+      + `${num(feedback.placeIds)} place ids${feedback.meta.present ? `, taken ${feedback.meta.snapshotAt} in one REPEATABLE READ `
+        + `READ ONLY transaction with ${num(feedback.meta.tableVerifiedCount)} verified reports in the table` : ': NO META, so '
+        + 'whether it holds every verified report is UNPROVEN'}. A kept venue with any is reported below.`);
+  } else {
+    log(`${TAG} FEEDBACK SNAPSHOT: none given, so the rows' feedback columns (0, 0, 0) are UNPROVEN; --write refuses without it.`);
+  }
 
   for (const city of cities.replay) {
     await replayCity(city);
@@ -1578,6 +1780,9 @@ async function runImport(opts, { log }) {
   // Counted again from the kept venues themselves: the drop above makes it 0,
   // and --write refuses if it ever is not.
   const keptNearHoldout = pass.kept.filter((k) => nearHoldout(k.venue.lat, k.venue.lng)).length;
+  // A kept venue the exporter would find verified reports for (THE FEEDBACK
+  // SNAPSHOT): its rows' 0, 0, 0 would be wrong.
+  const keptWithReports = feedback ? pass.kept.filter((k) => k.venue.placeId && feedback.reports.has(k.venue.placeId)) : [];
   const recordTotals = {
     malformed: 0, unverifiable: 0, truncatedTiles: 0, strayFiles: 0, invalidCurveShapes: 0, invalidCurveValues: 0, shortOfTotal: 0,
   };
@@ -1592,6 +1797,11 @@ async function runImport(opts, { log }) {
     acceptedRecords: recordTotals,
     identityRules: snapshot ? 'applied' : 'pending snapshot',
     keepAwayRule: snapshot ? (exported ? 'applied (snapshot and export)' : 'applied (snapshot only)') : 'pending snapshot',
+    feedback: feedback ? {
+      snapshot: feedback.file, proven: feedback.meta.present, verifiedReports: feedback.verifiedReports,
+      placeIds: feedback.placeIds, keptWithReports: keptWithReports.length,
+      firstKeptWithReports: keptWithReports.slice(0, 10).map((k) => k.venue.placeId),
+    } : null,
     snapshotCompleteness: !snapshot ? null : snapshot.meta.present
       ? { proven: true, meta: snapshot.meta.file, snapshotAt: snapshot.meta.snapshotAt, tableCount: snapshot.meta.tableCount }
       : { proven: false, meta: null },
@@ -1611,6 +1821,11 @@ async function runImport(opts, { log }) {
     + `${CORPUS_KEEP_AWAY_KM} km rule: ${t.keepAwayRule}; peak check: ${t.peakCheck}. Accepted cities' records: `
     + `${recordText(recordTotals)}.`);
   log(`${TAG} DROPS: ${dropText(totalDrops) || 'none'}.`);
+  log(feedback
+    ? `${TAG} FEEDBACK: ${num(keptWithReports.length)} kept venues have a verified report in the feedback snapshot`
+      + `${keptWithReports.length ? ` (first ${t.feedback.firstKeptWithReports.join(', ')}); their rows' feedback columns `
+        + 'would not be 0, and --write refuses' : ''}.`
+    : `${TAG} FEEDBACK: not checked (no --feedback-snapshot).`);
   log(`${TAG} Placed in a training city, by city: ${dropText(pass.trainingPlaced) || 'none'}. `
     + `Kept venues within ${MAX_KM} km of a holdout or beijing centroid: ${keptNearHoldout}.`);
   if (reference) {
@@ -1628,7 +1843,7 @@ async function runImport(opts, { log }) {
         .join('; ') || 'none'}.`);
   }
 
-  const result = { exitCode: 0, report, kept: pass.kept, flagged, snapshot, exported, reference, started };
+  const result = { exitCode: 0, report, kept: pass.kept, flagged, snapshot, exported, reference, feedback, started };
   if (opts.reportJson) {
     fs.writeFileSync(opts.reportJson, JSON.stringify(report, null, 1));
     log(`${TAG} Report written to ${opts.reportJson}.`);
@@ -1659,6 +1874,14 @@ async function writeOutputs(opts, result, { log }) {
   if (!result.snapshot || !result.exported) return fail('--write needs the snapshot checked against the export.');
   const unproven = snapshotRefusal(result.snapshot, true);
   if (unproven) return fail(unproven);
+  const noFeedback = feedbackRefusal(result.feedback, true);
+  if (noFeedback) return fail(noFeedback);
+  const withReports = result.report.totals.feedback.keptWithReports;
+  if (withReports > 0) {
+    return fail(`${withReports} kept venues have verified venue_feedback reports (first place ids `
+      + `${result.report.totals.feedback.firstKeptWithReports.join(', ')}): the exporter would give their rows the reports' `
+      + 'averages, and these rows say 0, 0, 0.');
+  }
   if (!result.reference) return fail('--write needs the peak-hour check\'s training reference (--harvest-cache).');
   const unavailable = Object.entries(result.report.totals.peakUnavailable || {});
   if (unavailable.length) {
@@ -1747,6 +1970,14 @@ async function writeOutputs(opts, result, { log }) {
       harvestCache: {
         dir: result.reference.dir, files: result.reference.files, unreadable: result.reference.unreadable, venues: result.reference.venues,
       },
+      feedbackSnapshot: {
+        file: result.feedback.file, sha256: result.feedback.sha256, placeIds: result.feedback.placeIds,
+        verifiedReports: result.feedback.verifiedReports, keptWithReports: 0,
+        meta: {
+          file: result.feedback.meta.file, snapshotAt: result.feedback.meta.snapshotAt,
+          tableVerifiedCount: result.feedback.meta.tableVerifiedCount, csvSha256: result.feedback.meta.csvSha256,
+        },
+      },
     },
     outputs: {
       rows: { file: OUTPUT_FILES.rows, sha256: sha256File(rowsFile), bytes: fs.statSync(rowsFile).size, header: HEADER, dataRows: rows,
@@ -1788,16 +2019,20 @@ function parityVenues(r, snapshot, cities, radiusKm, writtenBefore = null) {
     notPlannedNew: 0, // skipped by the replay's own rules (radius, type, name, signal, twins, claims)
   };
   const planned = new Set();
+  // Why each venue the replay found is not compared, by BestTime id.
+  const whyLeft = new Map();
+  const leave = (venueId, why) => { left[why]++; whyLeft.set(venueId, why); };
   for (const item of plan) {
-    planned.add(item.venue.venueId);
-    if (item.kind !== 'new') { left.heldBeforeFirstAnswer++; continue; }
-    const stored = snapshot.identities.byBtId.get(item.venue.venueId);
-    if (!stored) { left.neverWritten++; continue; }
-    if (stored.besttime_status !== H.HARVEST_STATUS) { left.storedUnderAnotherStatus++; continue; }
-    if (stored.createdAtMs === null) { left.noCreatedAt++; continue; }
-    const lastAnswer = r.venueAnswered.get(item.venue.venueId);
-    if (!(stored.createdAtMs >= lastAnswer)) { left.writtenBeforeItsAnswerHere++; continue; }
-    if (writtenBefore !== null && !(stored.createdAtMs < writtenBefore)) { left.writtenByALaterWriter++; continue; }
+    const id = item.venue.venueId;
+    planned.add(id);
+    if (item.kind !== 'new') { leave(id, 'heldBeforeFirstAnswer'); continue; }
+    const stored = snapshot.identities.byBtId.get(id);
+    if (!stored) { leave(id, 'neverWritten'); continue; }
+    if (stored.besttime_status !== H.HARVEST_STATUS) { leave(id, 'storedUnderAnotherStatus'); continue; }
+    if (stored.createdAtMs === null) { leave(id, 'noCreatedAt'); continue; }
+    const lastAnswer = r.venueAnswered.get(id);
+    if (!(stored.createdAtMs >= lastAnswer)) { leave(id, 'writtenBeforeItsAnswerHere'); continue; }
+    if (writtenBefore !== null && !(stored.createdAtMs < writtenBefore)) { leave(id, 'writtenByALaterWriter'); continue; }
     expected.set(stored.id, {
       item: { venue: item.venue, category: item.category, month: r.month }, city: stored.city,
       cells: sortedCells(item.venue), seen: new Set(),
@@ -1808,11 +2043,33 @@ function parityVenues(r, snapshot, cities, radiusKm, writtenBefore = null) {
   // answers, so it is counted here and never compared.
   let harvestedElsewhere = 0;
   for (const v of all) {
-    if (!planned.has(v.venueId)) left.notPlannedNew++;
+    if (!planned.has(v.venueId)) leave(v.venueId, 'notPlannedNew');
     const stored = snapshot.identities.byBtId.get(v.venueId);
     if (stored && stored.besttime_status === H.HARVEST_STATUS && !expected.has(stored.id)) harvestedElsewhere++;
   }
-  return { expected, left, harvestedElsewhere, t0 };
+  return { expected, left, harvestedElsewhere, t0, whyLeft };
+}
+
+// THE WRITES THE SNAPSHOT SHOWS (--parity in the header), from the snapshot
+// alone: every row of the run's cities stored 'harvested' and created from
+// the folder's first answer until --written-before. Each must be compared,
+// or found by the replay and left out because its row predates an answer
+// here that lists it (writtenBeforeItsAnswerHere: within the bound only this
+// folder's runs wrote, so an earlier run wrote it and a later run listed it
+// again, and which answers wrote it cannot be told); anything else is a
+// write the replay does not reproduce.
+function unreproducedWrites(snapshot, cities, t0, writtenBefore, expected, whyLeft) {
+  const out = { candidates: 0, compared: 0, justified: 0, unreproduced: [] };
+  for (const row of snapshot.list) {
+    if (!cities.includes(row.city) || row.besttime_status !== H.HARVEST_STATUS || row.createdAtMs === null) continue;
+    if (!(row.createdAtMs >= t0 && row.createdAtMs < writtenBefore)) continue;
+    out.candidates++;
+    if (expected.has(row.id)) { out.compared++; continue; }
+    const why = row.besttime_venue_id ? whyLeft.get(row.besttime_venue_id) : null;
+    if (why === 'writtenBeforeItsAnswerHere') { out.justified++; continue; }
+    out.unreproduced.push({ id: row.id, btId: row.besttime_venue_id, why: why || 'inNoAnswerHere' });
+  }
+  return out;
 }
 
 async function runParity(opts, { log }) {
@@ -1839,12 +2096,31 @@ async function runParity(opts, { log }) {
     log(`${TAG} PARITY REFUSED: ${r.misses} misses, ${opts.expectMisses} expected.`);
     return { exitCode: 1 };
   }
-  const { expected, left, harvestedElsewhere } = parityVenues(r, snapshot, opts.cities, opts.radiusKm, opts.writtenBefore);
+  // A folder with damaged answers proves nothing about the rows it wrote.
+  const damage = {
+    malformed: r.malformed, 'records without a 24-slot curve': r.invalidCurveShapes, 'curve slots no number 0 to 100':
+      r.invalidCurveValues, 'boxes ended below their venues_n': r.shortOfTotal, 'boxes cut at the cap': r.truncatedTiles,
+    'unread files': r.filesUnread.length,
+  };
+  const damaged = Object.entries(damage).filter(([, n]) => n > 0);
+  if (damaged.length) {
+    const why = `the folder's answers are damaged: ${damaged.map(([k, n]) => `${k} ${num(n)}`).join(', ')}.`;
+    log(`${TAG} PARITY REFUSED: ${why}`);
+    return { exitCode: 1, refused: why, damage };
+  }
+  const { expected, left, harvestedElsewhere, t0, whyLeft } = parityVenues(r, snapshot, opts.cities, opts.radiusKm,
+    opts.writtenBefore);
   const bound = opts.writtenBefore === null ? '' : ` and before ${new Date(opts.writtenBefore).toISOString()} (--written-before)`;
   log(`${TAG} PARITY: ${num(expected.size)} venues this folder's runs wrote to compare (planned new against the corpus `
     + `before ${r.fetchedAt.min}, stored 'harvested', created after every answer here that lists them${bound}). Left out: `
     + `${dropText(left) || 'none'}. Of those, ${num(harvestedElsewhere)} are stored 'harvested' from another pass's answers, `
     + 'never compared.');
+  const writes = unreproducedWrites(snapshot, opts.cities, t0, opts.writtenBefore, expected, whyLeft);
+  log(`${TAG} PARITY: the snapshot shows ${num(writes.candidates)} venues of ${opts.cities.join(', ')} stored 'harvested' and `
+    + `created from ${r.fetchedAt.min} until ${new Date(opts.writtenBefore).toISOString()}: ${num(writes.compared)} compared, `
+    + `${num(writes.justified)} found here but written before an answer here that lists them, ${num(writes.unreproduced.length)} `
+    + `NOT REPRODUCED${writes.unreproduced.length ? ` (${writes.unreproduced.slice(0, 10).map((w) => `${w.id} ${w.btId} ${w.why}`)
+      .join('; ')}${writes.unreproduced.length > 10 ? '; ...' : ''})` : ''}.`);
   const header = HEADER_FIELDS;
   // A column's count of rows that differ, and duplicateExportRow: a compared
   // venue's weekly cell the export holds more than once.
@@ -1912,11 +2188,11 @@ async function runParity(opts, { log }) {
   log(`${TAG} PARITY mismatches by column: ${columns.map(([k, n]) => `${k} ${num(n)}`).join(', ') || 'none'}.`);
   for (const e of examples) log(`  ${e}`);
   const pass = expected.size > 0 && rowsCompared > 0 && rowsEqual === rowsCompared && missing === 0 && extra === 0
-    && mismatches.duplicateExportRow === 0;
+    && mismatches.duplicateExportRow === 0 && writes.unreproduced.length === 0;
   log(`${TAG} PARITY ${pass ? 'PASS' : 'FAIL'}.`);
   return {
     exitCode: pass ? 0 : 1, venues: expected.size, rowsCompared, rowsEqual, missing, extra, nonWeeklySkipped, mismatches,
-    examples, left, harvestedElsewhere,
+    examples, left, harvestedElsewhere, writes,
   };
 }
 
@@ -1950,6 +2226,9 @@ module.exports = {
   parseCsv,
   parseTimestamp,
   loadIdentitySnapshot,
+  loadFeedbackSnapshot,
+  parityVenues,
+  unreproducedWrites,
   snapshotMetaFile,
   readExportVenues,
   keepAwayIndex,

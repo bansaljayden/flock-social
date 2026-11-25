@@ -17,7 +17,9 @@
 //     page whose venues_n says more were there, a box still at the 500 cap at
 //     the smallest tile, whose month is not one, whose progress record
 //     disagrees with the plan, that the plan marks config:true or whose key is
-//     a holdout, beijing or a training city (those folders are never opened);
+//     a holdout, beijing or a training city (those folders are never opened),
+//     or whose replay does not reproduce the cacher's own inventory (a
+//     saturated box gone with every box below it passes every other rule);
 //   * the import never holds a BestTime key: a key variable set before it
 //     loads, or loaded by a module, refuses it before any answer is read, and
 //     a clean run reads none and never loads a .env from its working folder
@@ -53,7 +55,11 @@
 //     and --parity finds every exported weekly row of the venues this folder
 //     wrote equal to the generator's, leaving out live rows and the venues
 //     another pass wrote (by the snapshot's created_at), never as mismatches;
-//     a correct row held twice fails it.
+//     a correct row held twice fails it, so does a venue whose every answer is
+//     gone (the snapshot shows its write), and so does a verified report the
+//     exporter joins into the feedback columns; damaged answers or another
+//     miss count are refused; --write needs a whole feedback snapshot and
+//     refuses a kept venue that has a verified report.
 //
 // HOW TO RUN
 //   cd backend && node --test __tests__/importFilterCache.test.js
@@ -158,8 +164,11 @@ const answerFile = (url) => H.cacheFileName(H.cacheKeyUrl(url));
 
 // Fills `dir` the way the cacher did: the harvester's own questions, asked
 // online against the fake with --cache-dir, every answer kept. Returns the
-// 404 count, which is what progress.json records as notFound, and the files
-// of the first and last questions asked.
+// 404 count, which is what progress.json records as notFound, the files of
+// the first and last questions asked, and the inventory the cacher would have
+// recorded for the run (its requests, cachedPages, results, distinct venue
+// ids, tiles, splits, leaves, boxes cut, records for another day), counted
+// as the fill went, before any test damages a file.
 async function fillCache(dir, {
   cities, radiusKm, centroids = null, venues, notFoundWhen, omit, mutate, fetchedAt = FETCHED_AT,
 }) {
@@ -185,15 +194,27 @@ async function fillCache(dir, {
   } finally {
     globalThis.fetch = saved;
   }
+  const ids = new Set();
+  let otherDay = 0;
   for (const f of fs.readdirSync(dir)) {
     const file = path.join(dir, f);
     const entry = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const day = Number(new URL(entry.url).searchParams.get('day_int'));
+    for (const v of entry.data.venues || []) {
+      if (v && v.venue_id) ids.add(String(v.venue_id));
+      if (v && Number.isInteger(v.day_int) && v.day_int !== day) otherDay++;
+    }
     entry.fetchedAt = fetchedAt;
     fs.writeFileSync(file, JSON.stringify(entry));
   }
+  const s = ctx.stats;
   return {
-    notFound: ctx.stats.notFound, files: fs.readdirSync(dir).length,
+    notFound: s.notFound, files: fs.readdirSync(dir).length,
     firstFile: path.join(dir, answerFile(asked[0])), lastFile: path.join(dir, answerFile(asked[asked.length - 1])),
+    inventory: {
+      requests: s.requests, cachedPages: s.cachedPages, results: s.venuesReturned, distinctVenues: ids.size,
+      tiles: tilePlan.length, splits: s.splits, leaves: ctx.city.leaves, truncated: s.truncatedTiles, otherDay, oddAnswers: 0,
+    },
   };
 }
 
@@ -201,6 +222,8 @@ const progressRecord = (c, notFound, state = 'done') => ({
   name: c.key, lat: c.lat, lon: c.lon, radiusKm: c.radiusKm, config: false, note: '', dir: `${c.key}-2026-11-r${c.radiusKm}`,
   state, notFound, refusedQuestions: 0, oddAnswers: 0, otherDay: 0, truncated: 0,
 });
+// The cacher's run totals: no request retried.
+const RUN_TOTALS = { requests: 0, throttled: 0, networkErrors: 0 };
 
 const rewriteAnswer = (file, change) => {
   const entry = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -224,17 +247,35 @@ function writeSnapshotMeta(file, overrides = {}) {
   return meta;
 }
 
+// A feedback snapshot of verified reports by place id ([placeId, n] pairs),
+// and its meta as the read-only transaction writes it.
+function writeFeedbackSnapshot(file, pairs, overrides = {}) {
+  fs.writeFileSync(file, `${['venue_place_id,verified_reports', ...pairs.map(([p, n]) => `${p},${n}`)].join('\n')}\n`);
+  const bytes = fs.readFileSync(file);
+  const meta = {
+    query: 'SELECT venue_place_id, COUNT(*)::int AS verified_reports FROM venue_feedback WHERE verified = true AND '
+      + 'venue_place_id IS NOT NULL GROUP BY venue_place_id ORDER BY venue_place_id',
+    isolation: 'REPEATABLE READ READ ONLY, one transaction', snapshotAt: '2026-11-25T22:01:00.000Z',
+    tableVerifiedCount: pairs.reduce((a, [, n]) => a + n, 0), rowsWritten: pairs.length,
+    csvSha256: crypto.createHash('sha256').update(bytes).digest('hex'), ...overrides,
+  };
+  fs.writeFileSync(I.snapshotMetaFile(file), JSON.stringify(meta, null, 2));
+  return file;
+}
+
 // A cache root of one city, filled by the harvester's own questions, with
-// its plan and a progress record of the 404s it met.
-async function singleCityRoot(c, venues) {
+// its plan and the progress record the cacher would have kept.
+async function singleCityRoot(c, venues, { notFoundWhen } = {}) {
   const dir = tmp('flock-import-one-');
   const filled = await fillCache(path.join(dir, `${c.key}-2026-11-r${c.radiusKm}`), {
-    cities: [c.key], radiusKm: c.radiusKm, centroids: { [c.key]: { lat: c.lat, lon: c.lon } }, venues,
+    cities: [c.key], radiusKm: c.radiusKm, centroids: { [c.key]: { lat: c.lat, lon: c.lon } }, venues, notFoundWhen,
   });
-  fs.writeFileSync(path.join(dir, 'progress.json'), JSON.stringify({ cities: { [c.key]: progressRecord(c, filled.notFound) } }));
+  fs.writeFileSync(path.join(dir, 'progress.json'), JSON.stringify({
+    totals: RUN_TOTALS, cities: { [c.key]: { ...progressRecord(c, filled.notFound), ...filled.inventory } },
+  }));
   const planPath = path.join(dir, 'cities.json');
   fs.writeFileSync(planPath, JSON.stringify([{ key: c.key, name: c.key, lat: c.lat, lon: c.lon, radiusKm: c.radiusKm }]));
-  return { root: dir, plan: planPath, ...filled };
+  return { root: dir, plan: planPath, dir: path.join(dir, `${c.key}-2026-11-r${c.radiusKm}`), ...filled };
 }
 
 // ---------------------------------------------------------------------------
@@ -330,6 +371,7 @@ let refDir;
 let snapshotFile;
 let shortFile;
 let dupFile;
+let feedbackFile;
 let exportDir;
 let absentExportDir;
 let cacheExportDir;
@@ -355,7 +397,7 @@ function writeExportDir(train, holdout) {
 
 async function buildFixture() {
   root = tmp('flock-import-cache-');
-  const progress = { cities: {} };
+  const progress = { totals: RUN_TOTALS, cities: {} };
   const fill = async (c, venues, opts = {}) => {
     const dir = path.join(root, `${c.key}-2026-11-r${c.radiusKm}`);
     const centroids = { [c.key]: { lat: c.lat, lon: c.lon } };
@@ -363,7 +405,9 @@ async function buildFixture() {
       cities: [c.key], radiusKm: c.radiusKm, centroids, venues,
       notFoundWhen: opts.notFoundWhen, omit: opts.omit, mutate: opts.mutate, fetchedAt: opts.fetchedAt,
     });
-    progress.cities[c.key] = { ...progressRecord(c, opts.recordNotFound ?? r.notFound, opts.state), ...(opts.progress || {}) };
+    progress.cities[c.key] = {
+      ...progressRecord(c, opts.recordNotFound ?? r.notFound, opts.state), ...r.inventory, ...(opts.progress || {}),
+    };
     return { dir, ...r };
   };
   // testville 404s one empty question, so its misses are real and recorded.
@@ -381,9 +425,11 @@ async function buildFixture() {
   await fill(C.smallcity, [...Object.values(BC), SC.home]);
   // partialtown: stopped by the cacher, and one question it never answered.
   await fill(C.partialtown, [PT.venue], { state: 'stopped', recordNotFound: 0, notFoundWhen: ({ day, page }) => day === 5 && page === 0 });
-  // missytown: a cache file lost after the fact, so misses exceed notFound.
+  // missytown: an answer listing its venue lost after the fact, so misses
+  // exceed notFound and the records listed fall short of the cacher's count.
   const mt = await fill(C.missytown, [MT.venue]);
-  fs.unlinkSync(path.join(mt.dir, fs.readdirSync(mt.dir)[0]));
+  fs.unlinkSync(path.join(mt.dir, fs.readdirSync(mt.dir)
+    .find((f) => JSON.parse(fs.readFileSync(path.join(mt.dir, f), 'utf8')).data.venues.length === 1)));
   // extratown: one answer no question of the replay asks.
   const xt = await fill(C.extratown, [XT.venue]);
   const stray = 'https://besttime.app/api/v1/venues/filter?lat_min=1.000&page=99';
@@ -481,6 +527,8 @@ async function buildFixture() {
     '',
   ].join('\n'));
   writeSnapshotMeta(snapshotFile);
+  // Two verified reports, for a place no kept venue is.
+  feedbackFile = writeFeedbackSnapshot(path.join(root, 'venue_feedback_verified.csv'), [['ChIJsomewhereElse000001', 2]]);
   // The export the rows join: 104 sits 1.1 km from ven_w_d_exportnear there,
   // wherever the snapshot puts it.
   exportDir = writeExportDir([[101, 9.96, 10.0, 'philly'], [104, 10.03, 10.2, 'philly'], [103, 9.9735, 10.04, 'philly']],
@@ -647,8 +695,10 @@ test('the arguments refuse what would make an import unsafe', () => {
   assert.match(p(...write, '--harvest-cache=h', '--export-dir=e').error, /--identity-snapshot/);
   assert.match(p(...write, '--identity-snapshot=s', '--harvest-cache=h').error, /--export-dir/);
   assert.match(p(...write, '--identity-snapshot=s', '--export-dir=e').error, /--harvest-cache/);
-  assert.match(p(...write, '--identity-snapshot=s', '--export-dir=e', '--harvest-cache=h', '--only=x').error, /--only/);
-  assert.equal(p(...write, '--identity-snapshot=s', '--export-dir=e', '--harvest-cache=h').error, undefined);
+  assert.match(p(...write, '--identity-snapshot=s', '--export-dir=e', '--harvest-cache=h').error, /--feedback-snapshot/);
+  assert.match(p(...write, '--identity-snapshot=s', '--export-dir=e', '--harvest-cache=h', '--feedback-snapshot=f', '--only=x').error,
+    /--only/);
+  assert.equal(p(...write, '--identity-snapshot=s', '--export-dir=e', '--harvest-cache=h', '--feedback-snapshot=f').error, undefined);
   assert.match(p('--dry-run', '--cache-root=a', '--plan=b', '--export-dir=e').error, /checked against --identity-snapshot/);
   assert.match(p('--dry-run', '--cache-root=a', '--plan=b', '--accept-peak-flags=x').error, /--write/);
   assert.match(p('--parity', '--cache-dir=a', '--identity-snapshot=s', '--export-csv=e', '--cities=miami', '--radius-km=20').error, /training-city/);
@@ -662,18 +712,23 @@ test('the arguments refuse what would make an import unsafe', () => {
   assert.deepEqual(I.runFolderScope('denver,seattle,chicago,la-2026-11'), { cities: ['denver', 'seattle', 'chicago', 'la'], radiusKm: 20 });
   assert.deepEqual(I.runFolderScope('philly+lehigh-2026-11-r40'), { cities: ['philly', 'lehigh'], radiusKm: 40 });
   assert.equal(I.runFolderScope('notes'), null);
-  const inferred = p('--parity', '--cache-dir=x/nyc-2026-11-r40', '--identity-snapshot=s', '--export-csv=e');
+  const bounded = ['--expect-misses=0', '--written-before=2026-11-20T00:00:00Z'];
+  const inferred = p('--parity', '--cache-dir=x/nyc-2026-11-r40', '--identity-snapshot=s', '--export-csv=e', ...bounded);
   assert.deepEqual([inferred.cities, inferred.radiusKm], [['nyc'], 40]);
   assert.match(p('--parity', '--cache-dir=x/nyc-2026-11-r40', '--identity-snapshot=s', '--export-csv=e', '--radius-km=20').error,
     /would ask other questions/);
-  // --written-before: an instant with its zone, for --parity only.
+  // --expect-misses and --written-before (an instant with its zone) are
+  // required by --parity and belong to nothing else.
   const parityArgs = ['--parity', '--cache-dir=x/nyc-2026-11', '--identity-snapshot=s', '--export-csv=e'];
-  assert.equal(p(...parityArgs, '--written-before=2026-11-20T00:00:00Z').writtenBefore, Date.parse('2026-11-20T00:00:00Z'));
-  assert.equal(p(...parityArgs).writtenBefore, null);
+  assert.equal(p(...parityArgs, ...bounded).writtenBefore, Date.parse('2026-11-20T00:00:00Z'));
+  assert.match(p(...parityArgs, '--written-before=2026-11-20T00:00:00Z').error, /--parity needs --expect-misses/);
+  assert.match(p(...parityArgs, '--expect-misses=0').error, /--parity needs --written-before/);
   for (const bad of ['2026-11-20', '2026-11-20T00:00:00', 'yesterday', '']) {
-    assert.match(p(...parityArgs, `--written-before=${bad}`).error, /--written-before takes an ISO instant with its zone/, bad);
+    assert.match(p(...parityArgs, '--expect-misses=0', `--written-before=${bad}`).error,
+      /--written-before takes an ISO instant with its zone/, bad);
   }
   assert.match(p('--dry-run', '--cache-root=a', '--plan=b', '--written-before=2026-11-20T00:00:00Z').error, /belongs to --parity/);
+  assert.match(p(...parityArgs, ...bounded, '--feedback-snapshot=f').error, /not --parity/);
 });
 
 // ---------------------------------------------------------------------------
@@ -822,8 +877,9 @@ test('a dry run refuses every city that fails a rule, by that rule, and never op
   assert.equal(c.partialtown.misses, 1);
   assert.equal(c.partialtown.notFound, 0);
   // A lost file is a miss that was not a 404.
-  assert.deepEqual(reasons(c.missytown), ['missesNotNotFound']);
+  assert.deepEqual(reasons(c.missytown), ['inventoryMismatch', 'missesNotNotFound']);
   assert.equal(c.missytown.misses, c.missytown.notFound + 1);
+  assert.match(c.missytown.reasons.find((x) => x.reason === 'inventoryMismatch').detail, /records listed 6, progress\.json 7/);
   // An answer the replay never asks for.
   assert.deepEqual(reasons(c.extratown), ['unusedFiles']);
   assert.equal(c.extratown.filesRead, c.extratown.filesHeld - 1);
@@ -832,8 +888,13 @@ test('a dry run refuses every city that fails a rule, by that rule, and never op
   assert.equal(c.nocounttown.notFound, null);
   // A record for another day in the very last answer, and a weekday whose
   // records all left the day out: every file read, the day check alone.
+  // The record wrongdaytown's answer gained after it was cached is one the
+  // cacher never counted, so its inventory disagrees too.
+  assert.deepEqual(reasons(c.wrongdaytown), ['dayCheck', 'inventoryMismatch']);
+  assert.match(c.wrongdaytown.reasons.find((x) => x.reason === 'inventoryMismatch').detail,
+    /records listed 8, progress\.json 7; distinct venue ids 2, progress\.json 1;.* records for another day 1, progress\.json 0/);
+  assert.deepEqual(reasons(c.nodaytown), ['dayCheck']);
   for (const key of ['wrongdaytown', 'nodaytown']) {
-    assert.deepEqual(reasons(c[key]), ['dayCheck'], key);
     assert.equal(c[key].filesRead, c[key].filesHeld, key);
     assert.equal(c[key].misses, c[key].notFound, key);
   }
@@ -852,10 +913,12 @@ test('a dry run refuses every city that fails a rule, by that rule, and never op
   assert.deepEqual(reasons(c.stringtown), ['invalidCurveValues']);
   assert.deepEqual([c.stringtown.malformed, c.stringtown.invalidCurveValues, c.stringtown.filesRead], [0, 1, c.stringtown.filesHeld]);
   assert.match(c.stringtown.reasons[0].detail, /stringtown [0-9a-f]{64}\.json record 0 day_int 1 slot 7 \(a string of 2 characters\)/);
-  // A duplicate record with a 23-slot curve, which the merge never sees.
-  assert.deepEqual(reasons(c.duptown), ['invalidCurveShapes']);
+  // A duplicate record with a 23-slot curve, which the merge never sees (and
+  // the cacher never counted: it was added to the file afterwards).
+  assert.deepEqual(reasons(c.duptown), ['invalidCurveShapes', 'inventoryMismatch']);
   assert.deepEqual([c.duptown.malformed, c.duptown.invalidCurveShapes, c.duptown.invalidCurveValues], [0, 1, 0]);
-  assert.match(c.duptown.reasons[0].detail, new RegExp(`duptown ${dupFile.replace('.', '\\.')} record 1 day_int \\d \\(a list of 23\\)`));
+  assert.match(c.duptown.reasons.find((x) => x.reason === 'invalidCurveShapes').detail,
+    new RegExp(`duptown ${dupFile.replace('.', '\\.')} record 1 day_int \\d \\(a list of 23\\)`));
   // A short page whose venues_n says one more venue was there.
   assert.deepEqual(reasons(c.shorttown), ['shortPageBelowTotal']);
   assert.equal(c.shorttown.shortOfTotal, 1);
@@ -874,6 +937,14 @@ test('a dry run refuses every city that fails a rule, by that rule, and never op
     assert.equal(c[key].misses, c[key].notFound, key);
     assert.deepEqual([c[key].malformed, c[key].truncatedTiles, c[key].strayFiles, c[key].invalidCurveShapes,
       c[key].invalidCurveValues, c[key].shortOfTotal], [0, 0, 0, 0, 0, 0], key);
+  }
+  // Every replayed city reproduces the cacher's inventory unless its files
+  // were damaged after the fact (or brokentown's first answer, which stops
+  // the replay).
+  const damagedAfter = ['missytown', 'wrongdaytown', 'duptown', 'brokentown'];
+  for (const [key, city] of Object.entries(c)) {
+    if (city.filesHeld === undefined) continue;
+    assert.equal((city.reasons || []).some((x) => x.reason === 'inventoryMismatch'), damagedAfter.includes(key), key);
   }
   assert.equal(result.report.totals.accepted, accepted.length);
   assert.match(out, /malformed 0 {2}no day 0 {2}cut 0 {2}stray 0 {2}bad curves 0 {2}bad slots 0 {2}short of total 0/);
@@ -894,6 +965,64 @@ test('a box still at the 500 cap at the smallest tile refuses its city: venues t
   assert.deepEqual([r.filesRead, r.misses, r.notFound, r.malformed], [r.filesHeld, 0, 0, 0]);
   assert.match(r.reasons[0].detail, /7 boxes reached the 500 cap at the smallest tile/);
   assert.equal(result.report.totals.accepted, 0);
+});
+
+test('a saturated box whose answers are gone with every box below it is refused by the cacher\'s inventory', async () => {
+  // The first tile holds over 500 venues, so it saturates and splits; one
+  // quarter is empty and 404s on all seven days. Another tile holds a venue.
+  const c = { key: 'subtreetown', lat: -36.0, lon: -30.0, radiusKm: 12 };
+  const centroids = { [c.key]: { lat: c.lat, lon: c.lon } };
+  const tiles = H.planTiles([c.key], 20, c.radiusKm, centroids).map((p) => p.tile);
+  assert.ok(tiles.length >= 2, String(tiles.length));
+  const [top] = tiles;
+  const quarters = H.splitTile(top).filter((k) => H.tileIntersects(k, [c.key], c.radiusKm, centroids));
+  assert.ok(quarters.length >= 3, String(quarters.length));
+  const full = quarters.slice(0, -1);
+  const per = Math.ceil(510 / full.length);
+  const at = (k) => [(k.s + k.n) / 2000, (k.w + k.e) / 2000];
+  const crowd = full.flatMap((k, q) => Array.from({ length: per }, (_, i) => vn(`ven_sub_${q}_${String(i).padStart(3, '0')}`,
+    ...at(k), 'RESTAURANT', `ChIJsubtree${q}${String(i).padStart(6, '0')}`, weekFor(i))));
+  const [elseLat, elseLng] = at(tiles[1]);
+  const elsewhere = vn('ven_sub_else', elseLat, elseLng, 'BAR', 'ChIJsubtreeElsewhere01', weekFor(3));
+  const single = await singleCityRoot(c, [...crowd, elsewhere], { notFoundWhen: ({ inBox }) => inBox.length === 0 });
+  assert.ok(single.inventory.splits >= 1 && single.notFound >= 7);
+  const dry = () => runImport(['--dry-run', `--cache-root=${single.root}`, `--plan=${single.plan}`]);
+  const whole = (await dry()).result.report.cities.subtreetown;
+  assert.equal(whole.state, 'accepted', JSON.stringify(whole.reasons));
+  // Every answer of the top box and of every box below it, gone: the replay
+  // asks the top box, finds nothing, and so asks nothing below it. Its seven
+  // misses stand in for the seven 404s below, and no file is left unread.
+  const inside = (u) => {
+    const p = new URL(u).searchParams;
+    const [s, w, n, e] = ['lat_min', 'lng_min', 'lat_max', 'lng_max'].map((k) => Math.round(Number(p.get(k)) * 1000));
+    return s >= top.s && n <= top.n && w >= top.w && e <= top.e;
+  };
+  let gone = 0;
+  for (const f of fs.readdirSync(single.dir)) {
+    if (inside(JSON.parse(fs.readFileSync(path.join(single.dir, f), 'utf8')).url)) { fs.unlinkSync(path.join(single.dir, f)); gone++; }
+  }
+  assert.ok(gone > 7, String(gone));
+  const { result, out } = await dry();
+  const r = result.report.cities.subtreetown;
+  assert.deepEqual([r.misses, r.filesRead, r.malformed], [r.notFound, r.filesHeld, 0], 'every older rule passes it');
+  assert.deepEqual(reasons(r), ['inventoryMismatch'], out);
+  assert.match(r.reasons[0].detail, /questions asked \(requests \+ cachedPages\) [\d,]+, progress\.json [\d,]+; records listed 7, progress\.json [\d,]+; distinct venue ids 1, progress\.json [\d,]+;.* splits 0, progress\.json [1-9]/);
+  // No inventory to hold it to, or one whose requests include retries:
+  // refused, never taken as matching.
+  const progressFile = path.join(single.root, 'progress.json');
+  const kept = JSON.parse(fs.readFileSync(progressFile, 'utf8'));
+  for (const [change, pattern] of [
+    [(p) => { delete p.cities.subtreetown.distinctVenues; }, /progress\.json records no distinctVenues for it/],
+    [(p) => { p.totals.throttled = 1; }, /the cacher's run retried requests/],
+    [(p) => { delete p.totals; }, /kept no throttled or networkErrors totals/],
+  ]) {
+    const p = JSON.parse(JSON.stringify(kept));
+    change(p);
+    fs.writeFileSync(progressFile, JSON.stringify(p));
+    const again = (await dry()).result.report.cities.subtreetown;
+    assert.ok(reasons(again).includes('noInventory'), JSON.stringify(again.reasons));
+    assert.match(again.reasons.find((x) => x.reason === 'noInventory').detail, pattern);
+  }
 });
 
 test('one global placement: training-city, holdout and beijing venues are dropped, a venue in two circles counts once', async () => {
@@ -1040,8 +1169,9 @@ test('offline, a box whose paging ends below the venues_n any page declared is c
 });
 
 // --write's arguments with another snapshot and another reference.
-const writeArgsWith = (outDir, { snap = snapshotFile, ref = refDir } = {}) => ['--write', ...baseArgs(),
-  `--identity-snapshot=${snap}`, `--export-dir=${exportDir}`, `--harvest-cache=${ref}`, `--out-dir=${outDir}`];
+const writeArgsWith = (outDir, { snap = snapshotFile, ref = refDir, feedback = feedbackFile } = {}) => ['--write', ...baseArgs(),
+  `--identity-snapshot=${snap}`, `--export-dir=${exportDir}`, `--harvest-cache=${ref}`, `--out-dir=${outDir}`,
+  `--feedback-snapshot=${feedback}`];
 const nothingWritten = (outDir) => Object.values(I.OUTPUT_FILES).every((f) => !fs.existsSync(path.join(outDir, f)));
 
 test('the snapshot must prove it is the whole table: no meta, a row short, a changed byte or a WHERE refuses --write', async () => {
@@ -1081,6 +1211,46 @@ test('the snapshot must prove it is the whole table: no meta, a row short, a cha
   const where = copy('where.csv');
   writeSnapshotMeta(where, { query: I.SNAPSHOT_QUERY.replace('FROM ml_venues', 'FROM ml_venues WHERE is_active') });
   await refused(where, /its query is not SNAPSHOT_QUERY/);
+});
+
+test('the feedback columns are proven 0: --write needs a whole feedback snapshot, and refuses a kept venue with a verified report', async () => {
+  const dir = tmp('flock-import-feedback-');
+  const refused = async (feedback, pattern) => {
+    const outDir = tmp('flock-import-out-');
+    const { result, out } = await runImport(writeArgsWith(outDir, { feedback }));
+    assert.equal(result.exitCode, 1, out);
+    assert.match(out, pattern);
+    assert.ok(nothingWritten(outDir));
+    return out;
+  };
+  // Required by --write, and by nothing else.
+  const noArg = writeArgsWith('o').filter((a) => !a.startsWith('--feedback-snapshot='));
+  assert.match(I.parseImportArgs(['node', 'x', ...noArg]).error, /--write needs --feedback-snapshot/);
+  // No meta beside it: nothing shows it holds every verified report.
+  const bare = path.join(dir, 'bare.csv');
+  fs.writeFileSync(bare, 'venue_place_id,verified_reports\n');
+  await refused(bare, /no bare\.meta\.json beside the feedback snapshot/);
+  // A byte changed after the meta, another query, a count that does not add up.
+  const edited = writeFeedbackSnapshot(path.join(dir, 'edited.csv'), [['ChIJsomewhereElse000001', 2]]);
+  fs.appendFileSync(edited, 'ChIJsomewhereElse000002,1\n');
+  await refused(edited, /its csvSha256 [0-9a-f]{64} is not the CSV's/);
+  const unverified = writeFeedbackSnapshot(path.join(dir, 'unverified.csv'), [['ChIJsomewhereElse000001', 2]],
+    { query: 'SELECT venue_place_id, COUNT(*)::int AS verified_reports FROM venue_feedback WHERE venue_place_id IS NOT NULL '
+      + 'GROUP BY venue_place_id ORDER BY venue_place_id' });
+  await refused(unverified, /its query is not FEEDBACK_QUERY/);
+  const short = writeFeedbackSnapshot(path.join(dir, 'short.csv'), [['ChIJsomewhereElse000001', 2]], { tableVerifiedCount: 1 });
+  await refused(short, /the table held 1 verified reports; the CSV counts 2/);
+  // A verified report for a venue that would be written (twintown's bar).
+  const hit = writeFeedbackSnapshot(path.join(dir, 'hit.csv'), [[W.bar.placeId, 3], ['ChIJsomewhereElse000001', 2]]);
+  const hitOut = await refused(hit, new RegExp(`1 kept venues have verified venue_feedback reports \\(first place ids ${W.bar.placeId}\\)`));
+  assert.doesNotMatch(hitOut, /WROTE/);
+  // A dry run says so and goes on.
+  const dry = await runImport(['--dry-run', ...baseArgs(), `--feedback-snapshot=${hit}`]);
+  assert.equal(dry.result.exitCode, 0, dry.out);
+  assert.deepEqual([dry.result.report.totals.feedback.keptWithReports, dry.result.report.totals.feedback.firstKeptWithReports],
+    [1, [W.bar.placeId]]);
+  const none = await runImport(['--dry-run', ...baseArgs()]);
+  assert.match(none.out, /FEEDBACK SNAPSHOT: none given, so the rows' feedback columns \(0, 0, 0\) are UNPROVEN/);
 });
 
 test('the peak-hour check is never passed by a reference that cannot make it: empty, unreadable or missing a category', async () => {
@@ -1159,7 +1329,7 @@ test('the peak-hour check flags a bar or nightclub mode 3 hours or more off, eit
 // --write.
 // ---------------------------------------------------------------------------
 const writeArgs = (outDir) => ['--write', ...baseArgs(), `--identity-snapshot=${snapshotFile}`, `--export-dir=${exportDir}`,
-  `--harvest-cache=${refDir}`, `--out-dir=${outDir}`];
+  `--harvest-cache=${refDir}`, `--out-dir=${outDir}`, `--feedback-snapshot=${feedbackFile}`];
 const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
 
 test('--write writes the export\'s rows under world_cache, a sidecar and a manifest, leaving flagged cities out', async () => {
@@ -1259,6 +1429,10 @@ test('--write with a flag accepted: every row is the export\'s, ids from 1,000,0
   assert.equal(manifest.inputs.identitySnapshot.sha256, sha(snapshotFile));
   assert.deepEqual(manifest.inputs.identitySnapshot.meta, {
     file: I.snapshotMetaFile(snapshotFile), snapshotAt: '2026-11-25T19:31:05.168Z', tableCount: 6, csvSha256: sha(snapshotFile),
+  });
+  assert.deepEqual(manifest.inputs.feedbackSnapshot, {
+    file: feedbackFile, sha256: sha(feedbackFile), placeIds: 1, verifiedReports: 2, keptWithReports: 0,
+    meta: { file: I.snapshotMetaFile(feedbackFile), snapshotAt: '2026-11-25T22:01:00.000Z', tableVerifiedCount: 2, csvSha256: sha(feedbackFile) },
   });
   assert.equal(manifest.inputs.plan.sha256, sha(planFile));
   assert.equal(manifest.inputs.export.files[0].sha256, sha(path.join(exportDir, 'training_data.csv')));
@@ -1448,10 +1622,13 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
     return file;
   };
   const snap = snapshot('snapshot.csv');
-  const parity = (exportCsv, { dir = phillyDir, snapFile = snap, extra = [] } = {}) => runImport(['--parity', `--cache-dir=${dir}`,
-    '--cities=philly', '--radius-km=20', `--identity-snapshot=${snapFile}`, `--export-csv=${exportCsv}`, ...extra]);
+  // Both required: the 404s the fill met, and the next writer's start (none
+  // came here; a day after the harvested rows).
+  const parity = (exportCsv, { dir = phillyDir, snapFile = snap, misses = phillyNotFound, bound = '2026-11-26T00:00:00Z' } = {}) => runImport([
+    '--parity', `--cache-dir=${dir}`, '--cities=philly', '--radius-km=20', `--identity-snapshot=${snapFile}`, `--export-csv=${exportCsv}`,
+    `--expect-misses=${misses}`, `--written-before=${bound}`]);
 
-  const ok = await parity(exported.trainPath, { extra: [`--expect-misses=${phillyNotFound}`] });
+  const ok = await parity(exported.trainPath);
   assert.equal(ok.result.exitCode, 0, ok.out);
   assert.equal(ok.result.venues, 2);
   const harvestedRows = (await pool.query(
@@ -1463,6 +1640,45 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
   // The 24 corpus venues were held before the folder's first answer.
   assert.equal(ok.result.left.heldBeforeFirstAnswer, 24);
   assert.equal(ok.result.harvestedElsewhere, 0);
+  // The snapshot, read alone, shows the same two writes.
+  assert.deepEqual([ok.result.writes.candidates, ok.result.writes.compared, ok.result.writes.unreproduced], [2, 2, []]);
+
+  // A whole venue's answers gone (every record of NEW2 taken out of every
+  // answer, each answer's venues_n made to agree): nothing in what is left
+  // shows it, and its exported rows are no compared venue's extras. The
+  // snapshot shows the write, so the proof fails, naming it.
+  const { rows: [written2] } = await pool.query('SELECT id FROM ml_venues WHERE besttime_venue_id = $1', [NEW2.id]);
+  const withoutDir = path.join(tmp('flock-import-philly-without-'), 'philly-2026-11');
+  fs.cpSync(phillyDir, withoutDir, { recursive: true });
+  for (const name of fs.readdirSync(withoutDir)) {
+    rewriteAnswer(path.join(withoutDir, name), (entry) => {
+      entry.data.venues = entry.data.venues.filter((v) => v.venue_id !== NEW2.id);
+      entry.data.venues_n = entry.data.venues.length;
+    });
+  }
+  const without = await parity(exported.trainPath, { dir: withoutDir });
+  assert.equal(without.result.exitCode, 1, without.out);
+  assert.equal(without.result.venues, 1);
+  assert.equal(without.result.rowsEqual, without.result.rowsCompared);
+  assert.deepEqual(without.result.writes.unreproduced, [{ id: written2.id, btId: NEW2.id, why: 'inNoAnswerHere' }]);
+  assert.match(without.out, new RegExp(`1 NOT REPRODUCED \\(${written2.id} ${NEW2.id} inNoAnswerHere\\)`));
+  assert.match(without.out, /PARITY FAIL/);
+
+  // A damaged record, or a miss count other than the fill's: refused.
+  const damagedDir = path.join(tmp('flock-import-philly-damaged-'), 'philly-2026-11');
+  fs.cpSync(phillyDir, damagedDir, { recursive: true });
+  const withOne = fs.readdirSync(damagedDir).find((n) => JSON.parse(fs.readFileSync(path.join(damagedDir, n), 'utf8')).data.venues
+    .some((v) => v.venue_id === NEW1.id));
+  rewriteAnswer(path.join(damagedDir, withOne), (entry) => {
+    const rec = entry.data.venues.find((v) => v.venue_id === NEW1.id);
+    rec.day_raw_whole[5] = '40';
+  });
+  const damaged = await parity(exported.trainPath, { dir: damagedDir });
+  assert.equal(damaged.result.exitCode, 1);
+  assert.match(damaged.out, /PARITY REFUSED: the folder's answers are damaged: curve slots no number 0 to 100 1\./);
+  const wrongMisses = await parity(exported.trainPath, { misses: phillyNotFound + 1 });
+  assert.equal(wrongMisses.result.exitCode, 1);
+  assert.match(wrongMisses.out, new RegExp(`PARITY REFUSED: ${phillyNotFound} misses, ${phillyNotFound + 1} expected`));
 
   // A snapshot without besttime_status and created_at cannot tell which
   // venues this folder wrote: refused.
@@ -1536,16 +1752,16 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
   // for this folder's, and --written-before, the next writer's start, does
   // not. A row created at the bound itself is the later writer's.
   const laterSnap = snapshot('later.csv', { createdAt: { [NEW2.id]: '2026-11-25T00:00:00.000000Z' } });
-  assert.equal((await parity(otherPassCsv, { snapFile: laterSnap })).result.exitCode, 1, 'without the bound NEW2 is compared');
+  assert.equal((await parity(otherPassCsv, { snapFile: laterSnap })).result.exitCode, 1, 'with a bound after it NEW2 is compared');
   for (const bound of ['2026-11-24T18:00:00Z', '2026-11-25T00:00:00Z']) {
-    const later = await parity(otherPassCsv, { snapFile: laterSnap, extra: [`--written-before=${bound}`] });
+    const later = await parity(otherPassCsv, { snapFile: laterSnap, bound });
     assert.equal(later.result.exitCode, 0, later.out);
     assert.equal(later.result.venues, 1);
     assert.deepEqual([later.result.left.writtenByALaterWriter, later.result.harvestedElsewhere], [1, 1]);
     assert.match(later.out, /writtenByALaterWriter 1/);
   }
   // Before the folder's own writes, the bound leaves nothing to compare.
-  const tooEarly = await parity(exported.trainPath, { extra: ['--written-before=2026-11-24T12:30:00Z'] });
+  const tooEarly = await parity(exported.trainPath, { bound: '2026-11-24T12:30:00Z' });
   assert.equal(tooEarly.result.exitCode, 1);
   assert.equal(tooEarly.result.left.writtenByALaterWriter, 2);
 
@@ -1564,4 +1780,33 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
   assert.equal(mid.result.exitCode, 0, mid.out);
   assert.equal(mid.result.venues, 1);
   assert.deepEqual([mid.result.left.writtenBeforeItsAnswerHere, mid.result.harvestedElsewhere], [1, 1]);
+  // The snapshot shows NEW2's write in the window, and the replay found it,
+  // written before an answer here that lists it: left out, justified.
+  assert.deepEqual([mid.result.writes.candidates, mid.result.writes.compared, mid.result.writes.justified,
+    mid.result.writes.unreproduced.length], [2, 1, 1, 0]);
+
+  // A verified report for NEW1, a day before its rows were collected: the
+  // exporter joins it into the feedback columns of every row of NEW1, and the
+  // generator's 0, 0, 0 no longer match. (Which is why --write needs the
+  // feedback snapshot to show no kept venue has one.)
+  const { rows: [tz] } = await pool.query('SELECT timezone FROM ml_venues WHERE id = $1', [one.id]);
+  await pool.query(
+    `INSERT INTO venue_feedback (venue_place_id, venue_name, crowd_level, predicted_score, day_of_week, hour, verified, created_at)
+     SELECT $1, 'Offline One', 3, 40, EXTRACT(DOW FROM (x.at AT TIME ZONE $2))::int, EXTRACT(HOUR FROM (x.at AT TIME ZONE $2))::int,
+            true, x.at
+       FROM (SELECT (SELECT MIN(collected_at) FROM ml_training_data WHERE venue_id = $3) - INTERVAL '1 day' AS at) x`,
+    [NEW1.placeId, tz.timezone || 'UTC', one.id]
+  );
+  try {
+    const withReport = await exporter.runExport({ pool: roPool, outDir: tmp('flock-import-export-fb-'), includeHarvested: true, log: () => {} });
+    const fed = await parity(withReport.trainPath);
+    assert.equal(fed.result.exitCode, 1, fed.out);
+    // Every weekly row of NEW1 carries the report, and nothing else moved.
+    assert.equal(fed.result.mismatches.user_feedback_count, mine.length, JSON.stringify(fed.result.mismatches));
+    assert.equal(fed.result.mismatches.user_feedback_count, fed.result.mismatches.avg_user_crowd);
+    assert.equal(fed.result.mismatches.user_feedback_count, fed.result.mismatches.avg_prediction_error);
+    assert.match(fed.out, /user_feedback_count export "1", generated "0"/);
+  } finally {
+    await pool.query('DELETE FROM venue_feedback WHERE venue_place_id = $1', [NEW1.placeId]);
+  }
 });
