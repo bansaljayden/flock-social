@@ -15,7 +15,8 @@
  *     the nonce and a state, and the token goes to the server with the nonce;
  *   - a dismissed popup says nothing, a blocked one says how to fix it, and an
  *     answer whose state does not match is never posted;
- *   - a new account is asked for its year and finishes from the same popup;
+ *   - the sign-in screen asks before it makes a new account, the account is
+ *     then asked for its year, and it finishes from the same popup;
  *   - on the website the screens order the ways in Apple, Google, email, and
  *     the "use the iPhone app" stopgap is gone.
  *
@@ -112,6 +113,32 @@ const appleButton = (utils) => utils.queryByRole('button', { name: /continue wit
 const googleButton = (utils) => utils.queryByRole('button', { name: /continue with google/i });
 const before = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+// The sign-in screen's tap says intent 'signin', and the server answers an
+// Apple ID with no account behind it that there is none, ahead of any year
+// question and whatever year came with it (`intent` in backend/routes/auth.js).
+// Only Create account's 'create', the same credentials again, is asked for
+// the year. A test that answers the first tap with the year ask is pinning a
+// conversation the server never has. userFacing as api.js marks any refusal
+// the server wrote a sentence for.
+const noAccount = () => Object.assign(
+  httpError(409, 'No Flock account uses this Apple ID yet.', { noAccount: true, canCreate: true }),
+  { userFacing: true },
+);
+const createButton = (utils) => utils.queryByRole('button', { name: 'Create account' });
+const continueButton = (utils) => utils.queryByRole('button', { name: /^continue$/i });
+
+// From the sign-in screen's Apple button to its year step, the way the server
+// really leads there: no account, Create account, then the year.
+const toYearStep = async (utils) => {
+  appleSignIn.mockImplementation(popupAnswer());
+  api.appleLogin.mockRejectedValueOnce(noAccount());
+  fireEvent.click(appleButton(utils));
+  await waitFor(() => expect(createButton(utils)).not.toBeNull());
+  api.appleLogin.mockRejectedValueOnce(yearAsk());
+  fireEvent.click(createButton(utils));
+  await waitFor(() => expect(continueButton(utils)).not.toBeNull());
+};
 
 beforeEach(() => {
   __resetAppleWebForTests();
@@ -285,26 +312,77 @@ describe('a tap', () => {
 });
 
 describe('a new account from the website', () => {
-  it('is asked for its year where the button was, and Continue finishes it from the same popup', async () => {
+  it('is asked whether to make one, then for its year where the button was, and Continue finishes it from the same popup', async () => {
     const onLoginSuccess = jest.fn();
     const utils = render(React.createElement(LoginScreen, {
       onLoginSuccess, onSwitchToSignup: jest.fn(), onSwitchToVenueLogin: jest.fn(),
     }));
-    appleSignIn.mockImplementation(popupAnswer());
-    api.appleLogin.mockRejectedValueOnce(yearAsk());
-    fireEvent.click(appleButton(utils));
-    await waitFor(() => expect(utils.queryByRole('button', { name: /^continue$/i })).not.toBeNull());
+    await toYearStep(utils);
+    expect(utils.getByLabelText('Year of birth').id).toBe('login-apple-year');
+    expect(createButton(utils)).toBeNull();
 
     fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2000' } });
-    api.appleLogin.mockResolvedValueOnce({ user: { id: 9 } });
-    fireEvent.click(utils.getByRole('button', { name: /^continue$/i }));
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 9 }, created: true });
+    fireEvent.click(continueButton(utils));
     await waitFor(() => expect(onLoginSuccess).toHaveBeenCalledWith({ id: 9 }));
 
     expect(appleSignIn).toHaveBeenCalledTimes(1);
-    const [first, second] = api.appleLogin.mock.calls;
-    expect(second.slice(0, 3)).toEqual(first.slice(0, 3));
-    expect(second[3]).toBe('2000-12-31');
-    expect(second[4]).toEqual({ dobGranularity: 'year', nonce: 'n-1' });
+    expect(api.appleLogin).toHaveBeenCalledTimes(3);
+    const [tap, create, withYear] = api.appleLogin.mock.calls;
+    // One popup's credentials, three times.
+    expect(create.slice(0, 3)).toEqual(tap.slice(0, 3));
+    expect(withYear.slice(0, 3)).toEqual(tap.slice(0, 3));
+    expect(tap[3]).toBeUndefined();
+    expect(tap[4]).toEqual({ intent: 'signin', nonce: 'n-1' });
+    expect(create[3]).toBeUndefined();
+    expect(create[4]).toEqual({ intent: 'create', nonce: 'n-1' });
+    // The year goes with 'create'. With 'signin' the server would answer
+    // that there is no account again, year or not.
+    expect(withYear[3]).toBe('2000-12-31');
+    expect(withYear[4]).toEqual({ dobGranularity: 'year', intent: 'create', nonce: 'n-1' });
+  });
+
+  // Create account's year step leaves the Apple button finishing the account
+  // once the step has lost its hold. A tap of it with the year emptied is a
+  // 'create' with no year, which the website asks for the year again, so the
+  // step that opens is the button's own. A warning answered to its Continue
+  // says to tap Continue with Apple again, and that tap has to start the new
+  // account: it used to send 'signin', because the button's tap had spent the
+  // 'create' and the step kept nothing of it.
+  it('a year step the Apple button itself opened keeps its next tap starting over after the warning', async () => {
+    const UNCONFIRMED = 'This email already has a Flock account that was never confirmed. To keep its friends and plans, sign in with its email and password. To start a new account with Apple instead, tap Continue with Apple again.';
+    const onLoginSuccess = jest.fn();
+    const utils = render(React.createElement(LoginScreen, {
+      onLoginSuccess, onSwitchToSignup: jest.fn(), onSwitchToVenueLogin: jest.fn(),
+    }));
+    await toYearStep(utils);
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2000' } });
+    api.appleLogin.mockRejectedValueOnce(httpError(401, 'Apple sign-in expired, please try again', {}));
+    fireEvent.click(continueButton(utils));
+    await waitFor(() => expect(appleButton(utils)).not.toBeNull());
+
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '' } });
+    api.appleLogin.mockRejectedValueOnce(yearAsk());
+    fireEvent.click(appleButton(utils));
+    await waitFor(() => expect(continueButton(utils)).not.toBeNull());
+    const tapped = api.appleLogin.mock.calls[3];
+    expect(tapped[3]).toBeUndefined();
+    expect(tapped[4]).toEqual({ dobGranularity: 'year', intent: 'create', nonce: 'n-1' });
+
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2000' } });
+    api.appleLogin.mockRejectedValueOnce(Object.assign(
+      httpError(409, UNCONFIRMED, { error: UNCONFIRMED, unconfirmedAccount: true }), { userFacing: true },
+    ));
+    fireEvent.click(continueButton(utils));
+    await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(UNCONFIRMED));
+
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 10 }, created: true });
+    fireEvent.click(appleButton(utils));
+    await waitFor(() => expect(api.appleLogin).toHaveBeenCalledTimes(6));
+    expect(api.appleLogin.mock.calls[5][3]).toBe('2000-12-31');
+    expect(api.appleLogin.mock.calls[5][4]).toEqual({ dobGranularity: 'year', intent: 'create', nonce: 'n-1' });
+    await waitFor(() => expect(onLoginSuccess).toHaveBeenCalledWith({ id: 10 }));
+    expect(createButton(utils)).toBeNull();
   });
 });
 
@@ -348,10 +426,7 @@ describe('the order of the ways in', () => {
     const utils = render(React.createElement(LoginScreen, {
       onLoginSuccess: jest.fn(), onSwitchToSignup: jest.fn(), onSwitchToVenueLogin: jest.fn(),
     }));
-    appleSignIn.mockImplementation(popupAnswer());
-    api.appleLogin.mockRejectedValueOnce(yearAsk());
-    fireEvent.click(appleButton(utils));
-    await waitFor(() => expect(utils.queryByRole('button', { name: /^continue$/i })).not.toBeNull());
+    await toYearStep(utils);
     expect(emailField(utils)).toBeNull();
     expect(utils.queryByText('Signed up with Google or Apple? Use that button.')).toBeNull();
     fireEvent.click(utils.getByRole('button', { name: 'Sign in with email instead' }));

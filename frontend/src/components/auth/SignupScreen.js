@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { signup, resendVerificationEmail, trackAuthScreen, getCurrentUser } from '../../services/api';
-import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
+import useGoogleAuth, { GOOGLE_BLOCKED_HINT, isGoogleSignInAvailable } from './useGoogleAuth';
 import AppleSignInButton, { isAppleSignInAvailable } from './AppleSignInButton';
 import AppleYearStep, { AppleStepContinue, useAppleYearStep } from './AppleYearStep';
 import AuthShell, { AUTH, AuthError, AuthRule, GoogleG, PasswordEye } from './AuthShell';
@@ -59,7 +59,12 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   // instead (the form-first return below): a message is never written into a
   // box that is not on screen.
   const [providerError, setProviderError] = useState('');
-  const clearErrors = () => { setError(''); setProviderError(''); };
+  // The quiet line under the buttons when Google's sheet in the app closed
+  // after long enough that Google may have refused the account
+  // (GOOGLE_SLOW_DISMISS_MS in useGoogleAuth.js). A new tap clears it with
+  // the errors.
+  const [googleHint, setGoogleHint] = useState(false);
+  const clearErrors = () => { setError(''); setProviderError(''); setGoogleHint(false); };
   const showProviderError = (message) => {
     if (providersFirst) { setProviderError(message); setError(''); } else setError(message);
   };
@@ -174,7 +179,12 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   // the server decides on it, the same as the form does.
   // The hook routes native iOS through Google's own SDK and everything else
   // through the GIS browser flow; both post to the same /api/auth/google.
+  // intent 'create': this is the screen that makes accounts, so a Google
+  // account with none behind it gets one, as it always has here. The sign-in
+  // screen sends 'signin' and asks first (opts.intent in services/api.js).
   const startGoogle = useGoogleAuth({
+    intent: 'create',
+    onSlowDismiss: () => setGoogleHint(true),
     onSuccess: (user) => { google.leave(); onSignupSuccess(user); },
     onError: (msg, err, resume) => {
       if (err?.data?.needsDob && err.data.dobGranularity === 'year') {
@@ -670,6 +680,8 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
         }}
         dob={askAge ? dob : undefined}
         dobGranularity={askAge ? 'year' : undefined}
+        /* 'create', as Google's above. */
+        intent="create"
         beforeAuthorize={() => {
           clearErrors();
           apple.setError('');
@@ -701,6 +713,14 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
       )}
       {apple.step !== 'resume' && appleButton}
     </>
+  );
+
+  // Quiet, not red, under the buttons: nothing is known to have failed. The
+  // sign-in screen draws the same line; LoginScreen.js has why.
+  const googleHintLine = googleHint && (
+    <p className="auth-hint" role="status" style={{ textAlign: 'center', marginTop: '12px' }}>
+      {GOOGLE_BLOCKED_HINT}
+    </p>
   );
 
   const foot = (
@@ -754,6 +774,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
             .auth-provider rule needs the two buttons to be siblings, and the
             Apple step puts its field between them. */}
         {googleBlock && <div style={{ marginTop: '10px' }}>{googleBlock}</div>}
+        {googleHintLine}
         {stepOpen ? emailInstead : (
           <>
             <AuthRule label="or sign up with email" />
@@ -785,6 +806,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
 
       {googleBlock}
       {appleBlock}
+      {googleHintLine}
 
       {stepOpen && consent}
       {stepOpen && emailInstead}

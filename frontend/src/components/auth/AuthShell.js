@@ -247,6 +247,12 @@ export const AuthLabelRow = ({ children }) => (
    their own typo. Neither button is the recommended one, because the screen has
    no business having an opinion about which is true.
 
+   .auth-check-primary: the sign-in screen's "No Flock account yet" panel
+   (LoginScreen.js) uses the same box, and there the screen does have an
+   opinion: Create account is what the tap that found no account was for, so
+   it is filled, and Not now beside it is outlined. Nothing about a date of
+   birth is ever asked in that panel, so the rule above is not bent by it.
+
    .auth-label-row: baseline alignment so the 13px label and the 13px link sit
    on one line, and the link keeps its 44px finger target through .hit44 without
    pushing the field down (the pseudo-element does not affect layout).
@@ -464,6 +470,11 @@ const AUTH_CSS = `
 }
 .auth-check-actions button:hover { background: rgba(244,239,227,0.10); }
 .auth-check-actions button:active { transform: scale(0.985); }
+.auth-check-actions .auth-check-primary {
+  background: ${AUTH.cream}; color: ${AUTH.navy}; border-color: ${AUTH.cream};
+}
+.auth-check-actions .auth-check-primary:hover { background: ${AUTH.cream}; filter: brightness(1.03); }
+.auth-check-actions button:disabled { opacity: 0.6; cursor: progress; }
 
 .auth-label-row {
   display: flex; align-items: baseline; justify-content: space-between; gap: 12px;

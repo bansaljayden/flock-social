@@ -10,6 +10,11 @@
  * sign-in half dropped it, showed a red "tap Continue with Google again", and
  * a brand-new account went through Google's sheet twice.
  *
+ * The sign-in screen reaches the step the way the server leads there: its tap
+ * says intent 'signin', which is answered that there is no account, and the
+ * year is asked of Create account's 'create' (NO FLOCK ACCOUNT YET in
+ * LoginScreen.js). The venue portal names no intent and is asked at once.
+ *
  * What is pinned here, on both screens:
  *   - the step in the Google button's place, focused, no red error, one year
  *     field, the consent line on screen;
@@ -95,6 +100,12 @@ const SCREENS = [
   {
     label: 'the sign-in screen',
     fieldId: 'login-google-year',
+    // The step comes after Create account here (toYearStep below), so the
+    // year goes with Create account's intent, after two posts. The venue
+    // portal names no intent and is asked after one.
+    viaCreateAccount: true,
+    sends: { intent: 'create' },
+    posts: 2,
     open: () => {
       const onLoginSuccess = jest.fn();
       const utils = render(React.createElement(LoginScreen, {
@@ -106,6 +117,9 @@ const SCREENS = [
   {
     label: 'the venue portal\'s sign-in half',
     fieldId: 'venue-google-year',
+    viaCreateAccount: false,
+    sends: {},
+    posts: 1,
     open: () => {
       const onLoginSuccess = jest.fn();
       const utils = render(React.createElement(VenueLoginScreen, { onLoginSuccess, onSwitchToUserLogin: jest.fn() }));
@@ -117,14 +131,40 @@ const SCREENS = [
 const googleButton = (utils) => utils.queryByRole('button', { name: /continue with google/i });
 const appleButton = (utils) => utils.queryByRole('button', { name: /continue with apple/i });
 const continueButton = (utils) => utils.queryByRole('button', { name: /^continue$/i });
+const createButton = (utils) => utils.queryByRole('button', { name: 'Create account' });
 const yearFields = (utils) => utils.container.querySelectorAll('input[autocomplete="bday-year"]');
 
-// Google's sheet completes and the server asks for a year.
-const firstTap = async (utils) => {
-  sheetGives();
-  api.googleLogin.mockRejectedValueOnce(yearAsk());
-  fireEvent.click(googleButton(utils));
+// The sign-in screen's answer to a 'signin' with no account behind it,
+// written by the server for people, as api.js marks it.
+const noAccount = (provider = 'Google') => Object.assign(
+  httpError(409, provider === 'Apple' ? 'No Flock account uses this Apple ID yet.' : 'No Flock account uses this Google account yet.',
+    { noAccount: true, canCreate: true }),
+  { userFacing: true },
+);
+
+// From a provider's button to its year step, the way the server leads there.
+// The sign-in screen's 'signin' is answered that there is no account, ahead
+// of any year question (`intent` in backend/routes/auth.js), so there the
+// year is asked of Create account's 'create'. A test that answers the first
+// tap with the year ask pins a conversation the server never has with it.
+const toYearStep = async (utils, screen, { button = googleButton, login = api.googleLogin, provider = 'Google' } = {}) => {
+  if (screen.viaCreateAccount) {
+    login.mockRejectedValueOnce(noAccount(provider));
+    fireEvent.click(button(utils));
+    await waitFor(() => expect(createButton(utils)).not.toBeNull());
+    login.mockRejectedValueOnce(yearAsk(provider));
+    fireEvent.click(createButton(utils));
+  } else {
+    login.mockRejectedValueOnce(yearAsk(provider));
+    fireEvent.click(button(utils));
+  }
   await waitFor(() => expect(continueButton(utils)).not.toBeNull());
+};
+
+// Google's sheet completes, once, and the server asks for a year.
+const firstTap = async (utils, screen) => {
+  sheetGives();
+  await toYearStep(utils, screen);
 };
 
 beforeEach(() => {
@@ -146,7 +186,7 @@ SCREENS.forEach((screen) => {
   describe(`${screen.label}, a brand-new Google account`, () => {
     it('asks the year in the Google button\'s place, focused, with no red error and one year field', async () => {
       const utils = screen.open();
-      await firstTap(utils);
+      await firstTap(utils, screen);
 
       const field = utils.getByLabelText('Year of birth');
       expect(field.id).toBe(screen.fieldId);
@@ -164,21 +204,21 @@ SCREENS.forEach((screen) => {
 
     it('Continue posts the SAME token plus the year and never opens a second Google sheet', async () => {
       const utils = screen.open();
-      await firstTap(utils);
+      await firstTap(utils, screen);
       fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2000' } });
       api.googleLogin.mockResolvedValueOnce({ user: { id: 91 } });
       fireEvent.click(continueButton(utils));
 
       await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 91 }));
       expect(mockSocialLogin.login).toHaveBeenCalledTimes(1);
-      expect(api.googleLogin).toHaveBeenCalledTimes(2);
-      expect(api.googleLogin.mock.calls[1]).toEqual(['google-id-token-1', '2000-12-31', { dobGranularity: 'year' }]);
+      expect(api.googleLogin).toHaveBeenCalledTimes(screen.posts + 1);
+      expect(api.googleLogin.mock.calls[screen.posts]).toEqual(['google-id-token-1', '2000-12-31', { dobGranularity: 'year', ...screen.sends }]);
     });
 
     it('an under-13 refusal is shown in the server\'s words, in the step, and nothing is tried again', async () => {
       const UNDERAGE = 'Flock could not create an account.';
       const utils = screen.open();
-      await firstTap(utils);
+      await firstTap(utils, screen);
       fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2019' } });
       api.googleLogin.mockRejectedValueOnce(httpError(403, UNDERAGE, { error: UNDERAGE }));
       fireEvent.click(continueButton(utils));
@@ -186,7 +226,7 @@ SCREENS.forEach((screen) => {
       expect(continueButton(utils)).toBeNull();
       expect(googleButton(utils)).not.toBeNull();
       expect(utils.onLoginSuccess).not.toHaveBeenCalled();
-      expect(api.googleLogin.mock.calls[1][1]).toBe('2019-12-31');
+      expect(api.googleLogin.mock.calls[screen.posts][1]).toBe('2019-12-31');
     });
 
     it('the full-date backfill ask still goes up to the form\'s date field, as before', async () => {
@@ -204,7 +244,7 @@ SCREENS.forEach((screen) => {
       const utils = screen.open();
       const t0 = Date.now();
       const clock = jest.spyOn(Date, 'now').mockReturnValue(t0);
-      await firstTap(utils);
+      await firstTap(utils, screen);
       fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '1995' } });
 
       clock.mockReturnValue(t0 + 10 * 60 * 1000);
@@ -214,18 +254,20 @@ SCREENS.forEach((screen) => {
 
       await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 93 }));
       expect(mockSocialLogin.login).toHaveBeenCalledTimes(2);
-      expect(api.googleLogin.mock.calls[1]).toEqual(['google-id-token-2', '1995-12-31', { dobGranularity: 'year' }]);
+      expect(api.googleLogin.mock.calls[screen.posts]).toEqual(['google-id-token-2', '1995-12-31', { dobGranularity: 'year', ...screen.sends }]);
       expect(utils.queryByRole('alert')).toBeNull();
     });
 
     it('Apple\'s step opening closes Google\'s, so there is still one year field and one Continue', async () => {
       const utils = screen.open();
-      await firstTap(utils);
+      await firstTap(utils, screen);
       mockAppleAuthorize.mockResolvedValueOnce({
         response: { identityToken: 'apple-token', authorizationCode: 'apple-code', user: 'apple-user' },
       });
-      api.appleLogin.mockRejectedValueOnce(yearAsk('Apple'));
-      fireEvent.click(appleButton(utils));
+      // On the sign-in screen Apple's tap is answered no account first, and
+      // that panel is what closes Google's step; its Create account then gets
+      // Apple's year ask.
+      await toYearStep(utils, screen, { button: appleButton, login: api.appleLogin, provider: 'Apple' });
       await waitFor(() => expect(utils.getByLabelText('Year of birth').id).not.toBe(screen.fieldId));
       expect(yearFields(utils).length).toBe(1);
       expect(utils.getAllByRole('button', { name: /^continue$/i }).length).toBe(1);
@@ -238,16 +280,17 @@ describe('the sign-in screen on the web', () => {
   it('holds the GIS access token the same way, so a new account needs one popup', async () => {
     delete window.Capacitor;
     const utils = SCREENS[0].open();
-    api.googleLoginWithToken.mockRejectedValueOnce(yearAsk());
-    fireEvent.click(googleButton(utils));
-    await waitFor(() => expect(continueButton(utils)).not.toBeNull());
+    await toYearStep(utils, SCREENS[0], { login: api.googleLoginWithToken });
 
     fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '1999' } });
     api.googleLoginWithToken.mockResolvedValueOnce({ user: { id: 92 } });
     fireEvent.click(continueButton(utils));
     await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 92 }));
     expect(mockWebStart).toHaveBeenCalledTimes(1);
-    expect(api.googleLoginWithToken.mock.calls[1]).toEqual(['web-access-token', '1999-12-31', { dobGranularity: 'year' }]);
+    expect(api.googleLoginWithToken.mock.calls.map((c) => c[2])).toEqual([
+      { intent: 'signin' }, { intent: 'create' }, { dobGranularity: 'year', intent: 'create' },
+    ]);
+    expect(api.googleLoginWithToken.mock.calls[2]).toEqual(['web-access-token', '1999-12-31', { dobGranularity: 'year', intent: 'create' }]);
   });
 
   it('past the held token\'s minutes, Continue does not start a popup it would have to wait on; the Google button comes back', async () => {
@@ -258,9 +301,7 @@ describe('the sign-in screen on the web', () => {
     const utils = SCREENS[0].open();
     const t0 = Date.now();
     const clock = jest.spyOn(Date, 'now').mockReturnValue(t0);
-    api.googleLoginWithToken.mockRejectedValueOnce(yearAsk());
-    fireEvent.click(googleButton(utils));
-    await waitFor(() => expect(continueButton(utils)).not.toBeNull());
+    await toYearStep(utils, SCREENS[0], { login: api.googleLoginWithToken });
     fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '1999' } });
 
     clock.mockReturnValue(t0 + 10 * 60 * 1000);
@@ -268,12 +309,15 @@ describe('the sign-in screen on the web', () => {
     await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(
       'Google sign-in did not finish in time. Tap Continue with Google to try again. Your year is still filled in.'));
     expect(mockWebStart).toHaveBeenCalledTimes(1);
-    expect(api.googleLoginWithToken).toHaveBeenCalledTimes(1);
+    expect(api.googleLoginWithToken).toHaveBeenCalledTimes(2);
 
+    // The button the line names finishes the account Create account asked
+    // for, with the year: 'create', not a 'signin' the server would answer
+    // with no account again.
     api.googleLoginWithToken.mockResolvedValueOnce({ user: { id: 94 } });
     fireEvent.click(googleButton(utils));
     await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 94 }));
-    expect(api.googleLoginWithToken.mock.calls[1]).toEqual(['web-access-token', '1999-12-31', { dobGranularity: 'year' }]);
+    expect(api.googleLoginWithToken.mock.calls[2]).toEqual(['web-access-token', '1999-12-31', { dobGranularity: 'year', intent: 'create' }]);
   });
 });
 
@@ -296,7 +340,7 @@ describe('the venue portal\'s sign-up half, in the iOS app', () => {
 
   it('a new Google account with the year empty is asked it after the sheet, and Continue creates the account', async () => {
     const utils = openSignupHalf();
-    await firstTap(utils);
+    await firstTap(utils, SCREENS[1]);
     const field = utils.getByLabelText('Year of birth');
     expect(field.id).toBe('venue-google-year');
     expect(yearFields(utils).length).toBe(1);

@@ -204,9 +204,26 @@ const didNotFinish = (reconfirm) => (reconfirm
 // costs one more tap but can never hang.
 export const GOOGLE_RESUME_LIFETIME_MS = 5 * 60 * 1000;
 
-const makeResume = (first, reopen) => {
+// THE SAME HOLD, FOR "CREATE ACCOUNT". The sign-in screen sends intent
+// 'signin', and a Google account with no Flock account behind it is then
+// answered 409 {noAccount, canCreate} with nothing written and the claim
+// handed back, exactly as the year ask is (services/api.js, opts.intent). So
+// that answer gets a handle too, bound to intent 'create', and the sign-in
+// screen's Create account posts the same proof with it (LoginScreen.js, NO
+// FLOCK ACCOUNT YET). Every rule above holds unchanged: one use, memory only,
+// past five minutes a new sheet in the app and the Google button back on the
+// web.
+//
+// A handle carries its intent to every post it makes, so a create that the
+// website then answers with the year ask comes back with a handle of its own
+// on the error (`err.resume`), bound to 'create' as well and counting from the
+// same sheet: the year step finishes the account the person asked for, and
+// the five minutes are the proof's, not the handle's.
+const isYearAsk = (err) => Boolean(err?.data?.needsDob && err.data.dobGranularity === 'year');
+
+const makeResume = (first, reopen, intent, since = Date.now()) => {
   let post = first;
-  let heldAt = Date.now();
+  let heldAt = since;
   let used = false;
   return async (dob, dobGranularity) => {
     if (used) throw Object.assign(new Error('Google sign-in timed out'), { expired: true });
@@ -227,16 +244,33 @@ const makeResume = (first, reopen) => {
     }
     used = true;
     try {
-      return await post(dob, dobGranularity);
+      return await post(dob, dobGranularity, intent);
     } catch (err) {
       // Kept only when the request provably never reached Flock: offline,
       // which api.js refuses before sending, or a captive portal answering in
       // Flock's place. Anything else may have landed.
       if (err?.isOffline || err?.isCaptivePortal) used = false;
+      else if (isYearAsk(err)) err.resume = makeResume(post, reopen, intent, heldAt);
       throw err;
     }
   };
 };
+
+// The one answer that gets the Create account handle: the sign-in screen's
+// own tap, refused for having no account, with the server saying one may be
+// made.
+const isCreatableNoAccount = (err, intent) => intent === 'signin'
+  && Boolean(err?.data?.noAccount && err.data.canCreate);
+
+// A dismissed native sheet that had been open this long may not have been
+// dismissed by the person at all. When Google blocks an account (a school or
+// Workspace "Access blocked" page), the person closes that page and
+// GoogleSignIn reports it as a cancel, the same as a tap on Cancel, so Flock
+// said nothing and the button looked broken. A real change of mind is quick;
+// reading a refusal and closing it is not. So past this a screen may show a
+// quiet hint (opts.onSlowDismiss), and a quick dismissal still shows nothing.
+export const GOOGLE_SLOW_DISMISS_MS = 3000;
+export const GOOGLE_BLOCKED_HINT = "Google didn't let you in? School accounts are often blocked. Use Apple, email, or a personal Google account.";
 
 // The optional third argument of both api calls, spelled once.
 const granularityArg = (dobGranularity) => (dobGranularity ? [{ dobGranularity }] : []);
@@ -249,20 +283,29 @@ const granularityArg = (dobGranularity) => (dobGranularity ? [{ dobGranularity }
  *   server answers 403 {needsDob:true} when a brand-new OAuth account arrives
  *   without a date of birth, and a screen that only sees the message string
  *   cannot offer the retry field. `resume` comes only with the creation 403
- *   that asks for a year; see makeResume above. Identical on both paths.
+ *   that asks for a year, and with the sign-in screen's noAccount answer (THE
+ *   SAME HOLD, FOR "CREATE ACCOUNT" above). Identical on both paths.
  * @param {function} [opts.setBusy]  toggled around the whole exchange
  * @param {boolean}  [opts.reconfirm] the signed-in person proving it again
  *   (the delete and export dialogs), not a sign-in: the token is stored as
  *   usual and the login analytics are skipped (opts.reconfirm in
  *   services/api.js)
+ * @param {string}   [opts.intent] 'signin' or 'create', sent with every post
+ *   (opts.intent in services/api.js). A tap can name its own: `start({ intent })`.
+ * @param {function} [opts.onSlowDismiss] native iOS only: Google's sheet was
+ *   dismissed after GOOGLE_SLOW_DISMISS_MS, which may have been Google
+ *   refusing the account (see that constant)
  * @returns {function} start — call it as `start()` or `start({ dob })`
  */
-export default function useGoogleAuth({ onSuccess, onError, setBusy, reconfirm }) {
+export default function useGoogleAuth({ onSuccess, onError, setBusy, reconfirm, intent, onSlowDismiss }) {
   // Handlers are inline arrows in the screens, so they change identity every
   // render; a ref refreshed here is what keeps the async paths below calling
   // the CURRENT ones instead of the ones captured when the flow started.
   const handlers = useRef({});
-  handlers.current = { onSuccess, onError, setBusy, reconfirm };
+  handlers.current = { onSuccess, onError, setBusy, reconfirm, onSlowDismiss };
+  // The intent of the tap in flight, set at the tap like the date below: the
+  // web popup answers long after the render that started it.
+  const intentRef = useRef(undefined);
 
   // The date of birth is supplied at the tap, not at hook-call time, and the
   // native round trip outlives the render that started it.
@@ -275,29 +318,34 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy, reconfirm }
   // The trailing options argument for the api call, sent only when it holds
   // something, so a plain sign-in calls it exactly as it always has: the
   // year-only birth date when that is what was given, and reconfirm when the
-  // signed-in person is proving it again inside a dialog.
-  const loginOpts = (dobGranularity) => {
+  // signed-in person is proving it again inside a dialog, and the screen's
+  // intent when it has one.
+  const loginOpts = (dobGranularity, postIntent) => {
     const opts = {
       ...granularityArg(dobGranularity)[0],
       ...(handlers.current.reconfirm ? { reconfirm: true } : {}),
+      ...(postIntent ? { intent: postIntent } : {}),
     };
     return Object.keys(opts).length ? [opts] : [];
   };
 
   // Posts whichever proof we ended up with and reports the result. `post` is
-  // (dob, dobGranularity) => the api call, so the two paths share every line
-  // after the token exists, and a creation 403 can hand the same call back
-  // as `resume` to be made again with a year. `reopen`, native only, is how
-  // that resume gets a new token once the held one is past its minutes.
+  // (dob, dobGranularity, intent) => the api call, so the two paths share
+  // every line after the token exists, and a creation 403 or the sign-in
+  // screen's noAccount can hand the same call back as `resume` to be made
+  // again. `reopen`, native only, is how that resume gets a new token once
+  // the held one is past its minutes.
   const exchange = async (post, reopen) => {
     const { onSuccess: ok, onError: fail, setBusy: busy } = handlers.current;
+    const tapIntent = intentRef.current;
     busy?.(true);
     try {
-      const data = await post(dobRef.current, dobGranularityRef.current);
+      const data = await post(dobRef.current, dobGranularityRef.current, tapIntent);
       ok?.(data.user);
     } catch (err) {
       const message = userMessage(err, didNotFinish(handlers.current.reconfirm));
-      if (err?.data?.needsDob && err.data.dobGranularity === 'year') fail?.(message, err, makeResume(post, reopen));
+      if (isYearAsk(err)) fail?.(message, err, makeResume(post, reopen, tapIntent));
+      else if (isCreatableNoAccount(err, tapIntent)) fail?.(message, err, makeResume(post, reopen, 'create'));
       else fail?.(message, err);
     } finally {
       busy?.(false);
@@ -306,8 +354,8 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy, reconfirm }
 
   // The native post for a given ID token, spelled once for the tap and for a
   // held sign-in's new sheet.
-  const nativePost = (idToken) => (dob, dobGranularity) => googleLogin(idToken, dob,
-    ...loginOpts(dobGranularity));
+  const nativePost = (idToken) => (dob, dobGranularity, postIntent) => googleLogin(idToken, dob,
+    ...loginOpts(dobGranularity, postIntent));
 
   // Google's sheet again, for a held sign-in past its minutes. Behind the same
   // guard as a tap: two GIDSignIn presentations at once hang on device, and a
@@ -326,8 +374,8 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy, reconfirm }
   // these screens already shipped — GIS popup, access token, same api call.
   const startWebGoogle = useWebGoogleLogin({
     onSuccess: (tokenResponse) =>
-      exchange((dob, dobGranularity) => googleLoginWithToken(tokenResponse.access_token, dob,
-        ...loginOpts(dobGranularity))),
+      exchange((dob, dobGranularity, postIntent) => googleLoginWithToken(tokenResponse.access_token, dob,
+        ...loginOpts(dobGranularity, postIntent))),
     // GIS answers with an OAuth error code (access_denied and the like): a
     // detail for the console, not a sentence for the screen.
     onError: (response) => {
@@ -340,6 +388,7 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy, reconfirm }
   return (options) => {
     dobRef.current = options?.dob || undefined;
     dobGranularityRef.current = options?.dobGranularity || undefined;
+    intentRef.current = options?.intent || intent || undefined;
 
     if (!isNativeIos()) {
       startWeb();
@@ -356,13 +405,19 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy, reconfirm }
       try {
         let idToken;
         busy?.(true);
+        const openedAt = Date.now();
         try {
           idToken = await nativeGoogleIdToken();
         } catch (err) {
           // A dismissed sheet is not a failure to report, same rule as
           // AppleSignInButton. Anything else is the SDK's own words, which are
-          // logged rather than shown (didNotFinish above).
-          if (!isCancellation(err)) fail?.(userMessage(err, didNotFinish(handlers.current.reconfirm)), err);
+          // logged rather than shown (didNotFinish above). One that stayed
+          // open a while may have been Google's refusal (GOOGLE_SLOW_DISMISS_MS).
+          if (isCancellation(err)) {
+            if (Date.now() - openedAt > GOOGLE_SLOW_DISMISS_MS) handlers.current.onSlowDismiss?.();
+          } else {
+            fail?.(userMessage(err, didNotFinish(handlers.current.reconfirm)), err);
+          }
           return;
         } finally {
           busy?.(false);

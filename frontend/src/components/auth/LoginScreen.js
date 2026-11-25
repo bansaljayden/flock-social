@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { login, trackAuthScreen, RESET_DONE_KEY } from '../../services/api';
-import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
+import React, { useState, useEffect, useRef } from 'react';
+import { login, trackAuthScreen, userMessage, RESET_DONE_KEY } from '../../services/api';
+import useGoogleAuth, { GOOGLE_BLOCKED_HINT, isGoogleSignInAvailable } from './useGoogleAuth';
 import AppleSignInButton, { isAppleSignInAvailable } from './AppleSignInButton';
 import AppleYearStep, { AppleStepContinue, useAppleYearStep } from './AppleYearStep';
 import AuthShell, {
@@ -17,7 +17,52 @@ const TERMS_URL = 'https://www.flockcorp.com/terms';
 const PRIVACY_URL = 'https://www.flockcorp.com/privacy';
 const GUIDELINES_URL = 'https://www.flockcorp.com/guidelines';
 
-const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin }) => {
+const PROVIDER_LABEL = { apple: 'Apple', google: 'Google' };
+const NO_ACCOUNT_TEXT = {
+  apple: 'No account uses this Apple ID. Make a new one, or sign in the way you made your account.',
+  google: 'No account uses this Google account. Make a new one, or sign in the way you made your account.',
+};
+
+// The panel that NO FLOCK ACCOUNT YET (below) draws in the error line's
+// place. role="group" and not "alert", for the reason the date read-back
+// gives: nothing has failed, the server has asked a question. Focus moves to
+// it when it opens, which is what announces it and what scrolls it into view
+// on a short screen; the heading names it and the sentence describes it.
+// Create account is the filled one because it is what the person was trying
+// to do with a tap that found no account, and Not now is the way back to the
+// buttons they may have meant.
+const NoAccountPanel = ({ provider, busy, error, onCreate, onNotNow }) => {
+  const ref = useRef(null);
+  useEffect(() => {
+    const panel = ref.current;
+    if (!panel) return;
+    panel.focus();
+    if (typeof panel.scrollIntoView === 'function') panel.scrollIntoView({ block: 'center' });
+  }, [provider]);
+  return (
+    <div
+      className="auth-check"
+      role="group"
+      aria-labelledby="login-no-account-title"
+      aria-describedby="login-no-account-text"
+      id="login-no-account"
+      tabIndex={-1}
+      ref={ref}
+    >
+      <h2 id="login-no-account-title">No Flock account yet</h2>
+      <p id="login-no-account-text">{NO_ACCOUNT_TEXT[provider]}</p>
+      <AuthError>{error}</AuthError>
+      <div className="auth-check-actions">
+        <button type="button" className="auth-check-primary" disabled={busy} onClick={onCreate}>
+          {busy ? 'Creating account…' : 'Create account'}
+        </button>
+        <button type="button" disabled={busy} onClick={onNotNow}>Not now</button>
+      </div>
+    </div>
+  );
+};
+
+const LoginScreen = ({onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin }) => {
   // The password-reset screens hang off this one rather than off App.js: the
   // emailed link lands on /reset-password, index.js sends every unknown path to
   // the app, and the app renders this screen for anyone without a session. So
@@ -123,6 +168,104 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   const stepOpen = Boolean(appleStep || google.step);
   const leaveSteps = () => { apple.leave(); google.leave(); };
 
+  // NO FLOCK ACCOUNT YET. This screen's Apple and Google taps send intent
+  // 'signin' (services/api.js, opts.intent), and the server answers a
+  // credential with no account behind it 409 {noAccount, canCreate} instead
+  // of making one. It used to make one. Somebody whose account was made with
+  // Google tapped Continue with Apple with Hide My Email, got a second, empty
+  // account, and the app opened it as if it were theirs, with no word that it
+  // was new: no friends, no plans, and no way to tell why.
+  //
+  // So that answer is a question now, asked in the error line's place: make a
+  // new account, or go back and use the way the account was made. The sheet's
+  // proof comes with it as a one-use handle (THE SAME HOLD, FOR "CREATE
+  // ACCOUNT" in useGoogleAuth.js and AppleSignInButton.js), kept in a ref and
+  // never in state, for the reason AppleYearStep.js gives. Create account
+  // sends the same proof with intent 'create', so nobody goes through the
+  // sheet twice; past its five minutes the app opens the sheet again itself,
+  // and the website puts its Google button back with a line saying so. Not
+  // now drops the proof.
+  //
+  // `createFor` is the provider whose button a Create account has just sent
+  // the person back to, to finish the account they asked for: the website's
+  // Google button after its hold ran out ("Tap Continue with Google to make
+  // your account."), a year step's button after a lost hold, and the server's
+  // warning about an unconfirmed account, which ends "tap Continue with Google
+  // again". The year ask sets it wherever it lands: on Create account, and on
+  // the button's own 'create', the tap the first line sends the person to.
+  // Either way the step it opens can lose its hold or meet the warning at its
+  // Continue, and the button is then the way on. The warning sets it wherever
+  // it lands too: on Create account, and on a tap of the button itself, such
+  // as the one an earlier warning asked for made after the server's ten
+  // minutes (warnBeforeEvictingUsedAccount in backend/routes/auth.js), which
+  // is warned again in a sentence that again says to tap once more. That
+  // button's NEXT tap sends 'create', so it makes the account it was asked to
+  // make instead of asking the same question again, and no tap after it does.
+  //
+  // It used to be set the moment Create account was tapped and kept until Not
+  // now. A create that failed any other way (a server error, a timeout) closed
+  // the panel and so took Not now away with it, and from then on every tap of
+  // that button sent 'create' for whichever Google account or Apple ID its
+  // sheet returned: a new, empty account opened with no question, which is
+  // the thing this panel is here to stop. Now only the three answers above
+  // set it, the next tap of either provider spends it (freshAttempt below),
+  // and every way off the providers forgets it: the email form's Sign in,
+  // Forgot password, "Sign in with email instead" and Not now.
+  const [offer, setOffer] = useState(null);
+  const offerRef = useRef(null);
+  // Counts the panel's closings, so a Create account still waiting on the
+  // server when a new tap closes the panel does not draw a refusal onto a
+  // screen that has moved on (the same rule as leftRef in AppleYearStep.js).
+  const offerVisit = useRef(0);
+  const [offerBusy, setOfferBusy] = useState(false);
+  const [offerError, setOfferError] = useState('');
+  const [createFor, setCreateFor] = useState(null);
+  // The quiet line under the buttons when Google's sheet in the app closed
+  // after long enough that Google may have refused the account
+  // (GOOGLE_SLOW_DISMISS_MS in useGoogleAuth.js).
+  const [googleHint, setGoogleHint] = useState(false);
+
+  const closeOffer = () => {
+    offerVisit.current += 1;
+    offerRef.current = null;
+    setOffer(null);
+    setOfferError('');
+  };
+  const openOffer = (provider, resume) => {
+    closeOffer();
+    leaveSteps();
+    setError('');
+    offerRef.current = resume;
+    setOffer(provider);
+  };
+  // A NEW TAP STARTS CLEAN. Either provider's button clears what an earlier
+  // attempt left on screen: the error line, an open panel and its proof, the
+  // Google hint. It used to clear only its own, so a Google failure stayed
+  // under an Apple sheet the person then dismissed, and read as Apple's.
+  //
+  // It also spends createFor, whichever button was tapped. The tap it was
+  // kept for has already read it: the Google button reads it before calling
+  // this, and Apple's click posts the intent the button was drawn with. So a
+  // sheet that tap opens and the person dismisses leaves nothing behind, and
+  // the tap after it asks to sign in again, for whatever account it brings.
+  //
+  // And it closes the OTHER provider's year step, with the proof it holds,
+  // as it closes the panel. A year step is only ever a 'create' (a year ask
+  // answers nothing else), and what kept its button a 'create' is the
+  // createFor this tap has just spent. It used to stay open, so on the
+  // website Google's step outlived an Apple popup the person closed, its
+  // Continue met the unconfirmed-account warning ("tap Continue with Google
+  // again"), and that tap sent 'signin' and reopened the no-account panel; a
+  // lost hold sent the person to the same tap. The tapped provider's own step
+  // stays, because that tap is the one its line asks for.
+  const freshAttempt = (provider) => {
+    setError('');
+    closeOffer();
+    setGoogleHint(false);
+    setCreateFor(null);
+    (provider === 'apple' ? google : apple).leave();
+  };
+
   // -------------------------------------------------------------------------
   // WHY A DATE TYPED HERE IS NOT THE SAME AS A DATE TYPED ON SIGNUP
   //
@@ -166,12 +309,37 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   // the path: native Google Sign-In on iOS, the GIS browser flow everywhere
   // else. Both end at POST /api/auth/google and both surface needsDob here.
   const startGoogle = useGoogleAuth({
+    intent: 'signin',
+    onSlowDismiss: () => setGoogleHint(true),
     onSuccess: (user) => { leaveSteps(); onLoginSuccess(user); },
     onError: (msg, err, resume) => {
+      if (err?.data?.noAccount && resume) {
+        openOffer('google', resume);
+        return;
+      }
+      // The unconfirmed-account warning, answered to this button's own tap.
+      // Only a 'create' gets it (a 'signin' is told noAccount first), so this
+      // is a tap a line sent the person back to: after a hold that ran out, or
+      // after an earlier warning the server has since forgotten. Its sentence
+      // ends "tap Continue with Google again", and that next tap has to do
+      // what it says, as it does when the warning answers Create account
+      // (createFor above). It used to send 'signin' and open the no-account
+      // panel instead. Shown where any other refusal is, below.
+      if (err?.data?.unconfirmedAccount) setCreateFor('google');
       if (err?.data?.needsDob) {
         const granularity = err.data.dobGranularity || null;
         setNeedsDob(true);
         setDobGranularity(granularity);
+        // The year ask is the server agreeing to make this account once it
+        // has a year, and it only ever answers a 'create' (a 'signin' is told
+        // noAccount first): the tap a line sent the person back to, whose
+        // 'create' freshAttempt has just spent. So this button's next tap
+        // finishes the account, as it does after Create account's year ask
+        // below (createFor above). It used to keep nothing, and when the step
+        // then lost its hold, or its Continue met the warning ("tap Continue
+        // with Google again"), the tap the line asked for sent 'signin' and
+        // reopened the no-account panel.
+        if (granularity === 'year') setCreateFor('google');
         // A new account asked for its year, with Google's proof held: the
         // Google step (THE GOOGLE STEP above). The server's sentence says to
         // tap Google again, which is what the step makes unnecessary, so it
@@ -198,9 +366,100 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
     setBusy: setGoogleBusy,
   });
 
+  // Create account, in the panel: the held proof again, with intent 'create'.
+  const createAccount = async () => {
+    if (offerBusy || !offer) return;
+    const provider = offer;
+    const name = PROVIDER_LABEL[provider];
+    const resume = offerRef.current;
+    // Used once, whatever happens next.
+    offerRef.current = null;
+    const visit = offerVisit.current;
+    // createFor is not set here. A panel is only ever opened by a provider's
+    // tap, which spent it, so it is empty now, and only the three answers
+    // below that send the person back to this provider's button set it.
+    setOfferError('');
+    setOfferBusy(true);
+    try {
+      if (!resume) throw Object.assign(new Error(`${name} sign-in timed out`), { expired: true });
+      const data = await resume();
+      // An account made is followed even if the panel was closed meanwhile:
+      // the server has made it and handed over a session.
+      closeOffer();
+      leaveSteps();
+      onLoginSuccess(data.user);
+    } catch (err) {
+      if (offerVisit.current !== visit) return;
+      // Nothing was sent: the app's sheet, reopened past the proof's minutes,
+      // was dismissed, or the request provably never reached Flock. The same
+      // handle is still good, so the panel stays and Create account works
+      // again. A dismissed sheet says nothing, as everywhere else.
+      if (err?.cancelled || ((err?.isOffline || err?.isCaptivePortal) && !err?.expired)) {
+        offerRef.current = resume;
+        if (!err?.cancelled) setOfferError(err.message);
+        return;
+      }
+      closeOffer();
+      // The website asks every new account for its year, so a create there is
+      // answered with the year ask, and its handle comes back on the error
+      // (err.resume, bound to 'create'). The year step takes over exactly as
+      // it does for any other new account.
+      if (err?.data?.needsDob && err.data.dobGranularity === 'year') {
+        const step = provider === 'apple' ? apple : google;
+        setNeedsDob(true);
+        setDobGranularity('year');
+        // The step's button after a lost hold, or the line below, is the
+        // provider's button, and its next tap finishes this account.
+        setCreateFor(provider);
+        if (err.resume) {
+          step.hold(err.resume);
+        } else {
+          setError(`Add the year you were born below, then tap Continue with ${name} again.`);
+        }
+        return;
+      }
+      // The proof ran out where there is no sheet to reopen: the website's
+      // Google popup, which a Continue must not wait on (useGoogleAuth.js
+      // says why). Its button is still there, and its next tap sends 'create'.
+      if (err?.expired) {
+        setCreateFor(provider);
+        setError(`Tap Continue with ${name} to make your account.`);
+        return;
+      }
+      // The server's warning about an unconfirmed account that holds
+      // something (warnBeforeEvictingUsedAccount in backend/routes/auth.js).
+      // Its sentence ends by saying a tap on this button starts the new
+      // account, so that tap sends 'create', and the server, which remembers
+      // the warning, then makes it.
+      if (err?.data?.unconfirmedAccount) {
+        setCreateFor(provider);
+        setError(userMessage(err, `${name} sign-in didn't finish. Try again, or use email.`));
+        return;
+      }
+      // Anything else is the server's own sentence when it wrote one: an
+      // address that belongs to another account says which way to sign in.
+      // createFor stays empty, so the next tap asks again.
+      setError(userMessage(err, `${name} sign-in didn't finish. Try again, or use email.`));
+    } finally {
+      setOfferBusy(false);
+    }
+  };
+
+  const notNow = () => {
+    closeOffer();
+    setCreateFor(null);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    // Signing in with email is the panel's other answer, so it closes it, and
+    // it is the person going another way, so a 'create' a provider's button
+    // was keeping for its next tap goes too (createFor above). Kept, a wrong
+    // password here left that tap making an account for whichever Google
+    // account or Apple ID its sheet returned, with the line that said so gone.
+    closeOffer();
+    setCreateFor(null);
 
     // The form carries noValidate, so these checks are the only thing standing
     // between an incomplete form and a request. See the comment on the <form>.
@@ -320,7 +579,19 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           gate and it always renders a message through AuthError. Its Sign in
           button is in AuthShell's actions bar and names this form by id. */}
       <form id="login-form" onSubmit={handleSubmit} noValidate>
-        <AuthError>{error}</AuthError>
+        {/* NO FLOCK ACCOUNT YET takes the error line's place while it asks;
+            openOffer clears the line, so the two never stand together. */}
+        {offer ? (
+          <NoAccountPanel
+            provider={offer}
+            busy={offerBusy}
+            error={offerError}
+            onCreate={createAccount}
+            onNotNow={notNow}
+          />
+        ) : (
+          <AuthError>{error}</AuthError>
+        )}
         <AuthNotice>{notice}</AuthNotice>
 
         {/* The retry field the error message points at. It sits first so
@@ -426,7 +697,10 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
             <button
               type="button"
               className="auth-link hit44"
-              onClick={() => { setError(''); setNotice(''); setView('forgot'); }}
+              /* Forgets createFor for the reason handleSubmit does: this
+                 screen stays mounted under the forgot-password one, and its
+                 way back lands here with the line gone. */
+              onClick={() => { setError(''); setNotice(''); setCreateFor(null); setView('forgot'); }}
             >
               Forgot password?
             </button>
@@ -476,11 +750,16 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
               document.getElementById('login-dob-check')?.focus();
               return;
             }
-            setError('');
+            // Read before freshAttempt spends it: 'signin' unless a Create
+            // account has just sent the person back to this button to finish
+            // their account (createFor, NO FLOCK ACCOUNT YET above).
+            const create = createFor === 'google';
+            freshAttempt('google');
             google.setError('');
             startGoogle({
               dob: needsDob && dobToSend ? dobToSend : undefined,
               dobGranularity: askYearOnly ? 'year' : undefined,
+              ...(create ? { intent: 'create' } : {}),
             });
           }}
           disabled={loading || googleBusy}
@@ -523,17 +802,34 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
         onSuccess={(user) => { leaveSteps(); onLoginSuccess(user); }}
         dob={needsDob && dobToSend ? dobToSend : undefined}
         dobGranularity={askYearOnly ? 'year' : undefined}
+        /* 'signin' unless a Create account has just sent the person back to
+           this button to finish their account (createFor, NO FLOCK ACCOUNT
+           YET above). The click posts the intent the button was drawn with,
+           so beforeAuthorize can spend it below. */
+        intent={createFor === 'apple' ? 'create' : 'signin'}
         /* Returning false stops the native sheet before it opens. Apple's flow
            is the one path that cannot be re-entered from a confirmation panel,
            because the sheet needs this button's own tap, so the guard has to
            sit in front of it rather than around it. */
         beforeAuthorize={() => {
-          if (!dobNeedsCheck) return true;
-          setError(`Check the date of birth ${dobCheckWhere} before you continue.`);
-          document.getElementById('login-dob-check')?.focus();
-          return false;
+          if (dobNeedsCheck) {
+            setError(`Check the date of birth ${dobCheckWhere} before you continue.`);
+            document.getElementById('login-dob-check')?.focus();
+            return false;
+          }
+          freshAttempt('apple');
+          apple.setError('');
+          return true;
         }}
         onError={(m, err, resume) => {
+          if (err?.data?.noAccount && resume) {
+            openOffer('apple', resume);
+            return;
+          }
+          // The same warning answered to this tap, for the reason the Google
+          // button's handler gives: its sentence says to tap Continue with
+          // Apple again, so that tap sends 'create'.
+          if (err?.data?.unconfirmedAccount) setCreateFor('apple');
           if (err?.data?.needsDob) {
             // Read off the answer, not off screen state: askYearOnly is the
             // PREVIOUS render's value, which is how the first message used to
@@ -541,6 +837,10 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
             const granularity = err.data.dobGranularity || null;
             setNeedsDob(true);
             setDobGranularity(granularity);
+            // A year ask answers only a 'create', so the button's next tap
+            // finishes the account, for the reason the Google button's
+            // handler gives.
+            if (granularity === 'year') setCreateFor('apple');
             if (granularity === 'year' && resume) {
               setError('');
               google.leave();
@@ -623,6 +923,15 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
         </>
       )}
 
+      {/* Quiet, not red: nothing is known to have failed, only that Google's
+          sheet stayed open a while and closed without an answer. role
+          "status" so a screen reader hears it without being interrupted. */}
+      {googleHint && (
+        <p className="auth-hint" role="status" style={{ textAlign: 'center', marginTop: '12px' }}>
+          {GOOGLE_BLOCKED_HINT}
+        </p>
+      )}
+
       {/* Guideline 1.2 / EULA consent, worded exactly as SignupScreen words
           it. The Google and Apple buttons above CREATE an account for anyone
           who has none, and the server stamps terms_accepted_at on that row,
@@ -632,7 +941,9 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           is always answered needsDob before any row is written, and an
           account that already exists signs in without seeing it. That holds
           on the website; the iPhone app shows the line above the buttons. */}
-      {askAge && needsDob && consent}
+      {/* The no-account panel's Create account makes the account too, so the
+          agreement is on screen while it asks. */}
+      {askAge && (needsDob || offer) && consent}
 
       {/* Under the providers, the email form; while a provider's year step
           is open it steps aside, in either order, as on the sign-up screen:
@@ -644,7 +955,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
         <button
           type="button"
           className="auth-textbtn"
-          onClick={() => { leaveSteps(); setError(''); }}
+          onClick={() => { leaveSteps(); setError(''); setCreateFor(null); }}
           style={{ display: 'block', margin: '16px auto 0' }}
         >
           Sign in with email instead

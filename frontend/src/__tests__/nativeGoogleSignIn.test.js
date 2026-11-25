@@ -180,7 +180,9 @@ describe('the native path is used on native iOS and nowhere else', () => {
     clickGoogle();
     await waitFor(() => expect(onLoginSuccess).toHaveBeenCalledWith({ id: 3 }));
 
-    expect(api.googleLoginWithToken).toHaveBeenCalledWith('web-access-token', undefined);
+    // The same call, plus the sign-in screen's intent (LoginScreen.js, NO
+    // FLOCK ACCOUNT YET).
+    expect(api.googleLoginWithToken).toHaveBeenCalledWith('web-access-token', undefined, { intent: 'signin' });
     expect(mockSocialLogin.login).not.toHaveBeenCalled();
     expect(mockNativeModuleLoads).toBe(0);
   });
@@ -220,14 +222,15 @@ describe('the native token reaches the endpoint that already exists', () => {
     render(React.createElement(Screen, { onLoginSuccess: jest.fn() }));
     clickGoogle();
 
-    await waitFor(() => expect(api.googleLogin).toHaveBeenCalledWith('native-id-token', undefined));
+    await waitFor(() => expect(api.googleLogin).toHaveBeenCalledWith('native-id-token', undefined, { intent: 'signin' }));
 
     // The other half of the contract, read from the file that decides it: an
     // ID token is `credential`, and it goes to the route the web flow uses.
     const fn = API_SRC.slice(API_SRC.indexOf('export async function googleLogin(credential'));
     // reconfirmField adds `reconfirm: true` only for the delete and export
-    // dialogs' "confirm it's you" sheet; a sign-in posts `credential` alone.
-    expect(fn).toMatch(/const body = \{ credential, \.\.\.reconfirmField\(opts\) \}/);
+    // dialogs' "confirm it's you" sheet, and intentField the screen's intent;
+    // the token itself is `credential` either way.
+    expect(fn).toMatch(/const body = \{ credential, \.\.\.reconfirmField\(opts\), \.\.\.intentField\(opts\) \}/);
     expect(fn.slice(0, fn.indexOf('export async function apple'))).toContain("'/api/auth/google'");
   });
 
@@ -331,7 +334,7 @@ describe('needsDob is handled on the native path exactly as on the web one', () 
     api.googleLogin.mockResolvedValue({ user: { id: 9 } });
     clickGoogle();
     await waitFor(() =>
-      expect(api.googleLogin).toHaveBeenLastCalledWith('native-id-token', '2000-01-01')
+      expect(api.googleLogin).toHaveBeenLastCalledWith('native-id-token', '2000-01-01', { intent: 'signin' })
     );
   });
 });

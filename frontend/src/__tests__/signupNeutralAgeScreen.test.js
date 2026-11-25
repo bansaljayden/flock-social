@@ -150,6 +150,13 @@ const codeOnly = (src) => src
 // ---------------------------------------------------------------------------
 // The two doors. Everything below this runs against both.
 // ---------------------------------------------------------------------------
+// The options a door's provider call carries: what the test expects, plus the
+// door's intent, or nothing at all when that leaves nothing.
+const optsFor = (door, extra = {}) => {
+  const opts = { ...extra, ...door.sends };
+  return Object.keys(opts).length ? opts : undefined;
+};
+
 const DOORS = [
   {
     label: 'the consumer signup screen',
@@ -157,6 +164,9 @@ const DOORS = [
     fieldId: 'id="signup-dob"',
     hintId: 'signup-dob-hint',
     nameLabel: 'Name',
+    // The consumer screen names its intent (opts.intent in services/api.js);
+    // the venue portal sends none.
+    sends: { intent: 'create' },
     open: () => {
       const onCreated = jest.fn();
       const utils = render(
@@ -171,6 +181,7 @@ const DOORS = [
     fieldId: 'id="venue-dob"',
     hintId: 'venue-dob-hint',
     nameLabel: 'Your name',
+    sends: {},
     open: () => {
       const onCreated = jest.fn();
       const utils = render(
@@ -338,7 +349,7 @@ DOORS.forEach((door) => {
       // The third argument is not decoration: it is how the server knows this
       // date was derived from a year and must not be written onto an account
       // that already exists.
-      expect(api.googleLoginWithToken).toHaveBeenCalledWith('web-access-token', dob, { dobGranularity: 'year' });
+      expect(api.googleLoginWithToken).toHaveBeenCalledWith('web-access-token', dob, optsFor(door, { dobGranularity: 'year' }));
       await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(UNDERAGE_MSG));
     });
 
@@ -351,7 +362,7 @@ DOORS.forEach((door) => {
       setYear(utils, year);
       fireEvent.click(utils.getByRole('button', { name: /continue with google/i }));
 
-      await waitFor(() => expect(api.googleLoginWithToken).toHaveBeenCalledWith('web-access-token', dob, { dobGranularity: 'year' }));
+      await waitFor(() => expect(api.googleLoginWithToken).toHaveBeenCalledWith('web-access-token', dob, optsFor(door, { dobGranularity: 'year' })));
       await waitFor(() => expect(utils.onCreated).toHaveBeenCalledWith({ id: 9 }));
     });
 
@@ -380,7 +391,8 @@ DOORS.forEach((door) => {
 
       await waitFor(() => expect(api.appleLogin).toHaveBeenCalledTimes(1));
       expect(api.appleLogin.mock.calls[0][3]).toBeUndefined();
-      expect(api.appleLogin.mock.calls[0][4]).toBeUndefined();
+      // No granularity either: only the screen's intent rides in the options.
+      expect(api.appleLogin.mock.calls[0][4]).toEqual(optsFor(door));
       await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(UNDERAGE_MSG));
     });
   });
@@ -457,7 +469,7 @@ DOORS.forEach((door) => {
       fireEvent.click(utils.getByRole('button', { name: /^continue$/i }));
       await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(UNDERAGE_MSG));
       expect(api.appleLogin.mock.calls[1][3]).toBe(dobOf(year));
-      expect(api.appleLogin.mock.calls[1][4]).toEqual({ dobGranularity: 'year' });
+      expect(api.appleLogin.mock.calls[1][4]).toEqual(optsFor(door, { dobGranularity: 'year' }));
       expect(mockAppleAuthorize).toHaveBeenCalledTimes(1);
     });
   });

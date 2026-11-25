@@ -72,7 +72,9 @@ const LoginScreen = require('../components/auth/LoginScreen').default;
 const AppleSignInButton = require('../components/auth/AppleSignInButton').default;
 const OAuthReconfirm = require('../components/auth/OAuthReconfirm').default;
 
-const APPLE_1000 = "The operation couldn't be completed. (com.apple.AuthenticationServices.AuthorizationError error 1000.)";
+// 1004 (AuthorizationError.failed): Apple's own log text, with no fix to name.
+// Error 1000 has a line of its own, which names one (signInNoAccountAsked.test.js).
+const APPLE_1004 = "The operation couldn't be completed. (com.apple.AuthenticationServices.AuthorizationError error 1004.)";
 const APPLE_SAYS = "Apple sign-in didn't finish. Try again, or use email.";
 const GOOGLE_SAYS = "Google sign-in didn't finish. Try again, or use email.";
 
@@ -109,11 +111,11 @@ describe('Apple', () => {
   it('the plugin\'s own error text never reaches the screen: it reads in words, and the detail is logged', async () => {
     asNativeIos();
     const utils = openLogin();
-    mockAppleAuthorize.mockRejectedValueOnce(new Error(APPLE_1000));
+    mockAppleAuthorize.mockRejectedValueOnce(new Error(APPLE_1004));
     fireEvent.click(appleButton(utils));
     await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(APPLE_SAYS));
     expect(utils.container.textContent).not.toContain('AuthorizationError');
-    expect(warn).toHaveBeenCalledWith('[flock] error kept off the screen:', APPLE_1000);
+    expect(warn).toHaveBeenCalledWith('[flock] error kept off the screen:', APPLE_1004);
     expect(api.appleLogin).not.toHaveBeenCalled();
   });
 
@@ -152,7 +154,7 @@ describe('Apple', () => {
     asNativeIos();
     const onError = jest.fn();
     const utils = render(React.createElement(AppleSignInButton, { onError, reconfirm: true }));
-    mockAppleAuthorize.mockRejectedValueOnce(new Error(APPLE_1000));
+    mockAppleAuthorize.mockRejectedValueOnce(new Error(APPLE_1004));
     fireEvent.click(appleButton(utils));
     await waitFor(() => expect(onError).toHaveBeenCalled());
     expect(onError.mock.calls[0][0]).toBe("Apple sign-in didn't finish. Try again.");

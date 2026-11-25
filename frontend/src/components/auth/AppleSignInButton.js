@@ -72,6 +72,20 @@ const webError = (message) => Object.assign(new Error(message), { userFacing: tr
 const APPLE_DID_NOT_FINISH = "Apple sign-in didn't finish. Try again, or use email.";
 const APPLE_RECONFIRM_DID_NOT_FINISH = "Apple sign-in didn't finish. Try again.";
 
+// Error 1000 is AuthorizationError.unknown, and on a phone the usual reason
+// for it is a phone with no Apple ID signed in to iCloud: the sheet cannot
+// open for an account the phone does not have, so it fails at once, every
+// time, and "Try again" sends the person round the same loop. This line names
+// the fix instead. 1001 is a dismissal and stays silent (isCancelled below).
+const APPLE_NO_ICLOUD = "Apple sign-in didn't finish. Make sure you're signed in to iCloud in Settings, or use email.";
+const APPLE_RECONFIRM_NO_ICLOUD = "Apple sign-in didn't finish. Make sure you're signed in to iCloud in Settings, then try again.";
+const isAppleError1000 = (err) => /error 1000\b/.test(String(err?.message || ''));
+
+const didNotFinishLine = (err, reconfirm) => {
+  if (isAppleError1000(err)) return reconfirm ? APPLE_RECONFIRM_NO_ICLOUD : APPLE_NO_ICLOUD;
+  return reconfirm ? APPLE_RECONFIRM_DID_NOT_FINISH : APPLE_DID_NOT_FINISH;
+};
+
 // Apple delivers the person's name exactly once per Apple ID, on the first
 // sheet that completes, and never again unless they revoke the app in
 // Settings. The sheet completes on the device before the server has said
@@ -317,9 +331,24 @@ const loginOpts = (held, extra) => {
   return Object.keys(opts).length ? [opts] : [];
 };
 
-const makeResume = (first) => {
+const isYearAsk = (err) => Boolean(err?.data?.needsDob && err.data.dobGranularity === 'year');
+
+// THE SAME HOLD, FOR "CREATE ACCOUNT". The sign-in screen sends intent
+// 'signin' (opts.intent in services/api.js), and an Apple ID with no Flock
+// account behind it is then answered 409 {noAccount, canCreate}. That answer
+// comes before the code exchange and writes nothing, the same as the year ask
+// above, so the same credentials are held for it and the screen's Create
+// account sends them again with intent 'create' (LoginScreen.js, NO FLOCK
+// ACCOUNT YET). The rules are the ones above, unchanged: one use, memory
+// only, and past the code's few minutes this opens Apple's sheet itself.
+//
+// A handle carries its intent to the post it makes, and a create answered
+// with the year ask (the website asks every new account for one) puts a new
+// handle on the error as `err.resume`, bound to 'create' too and counting
+// from the same sheet, because the code's five minutes started there.
+const makeResume = (first, intent, since = Date.now()) => {
   let held = first;
-  let heldAt = Date.now();
+  let heldAt = since;
   let used = false;
   return async (dob, dobGranularity) => {
     // One use. A second call, whatever happened to the first, is a stale
@@ -347,13 +376,17 @@ const makeResume = (first) => {
     let data;
     try {
       data = await appleLogin(held.identityToken, held.fullName, held.authorizationCode, dob,
-        ...loginOpts(held, dobGranularity ? { dobGranularity } : {}));
+        ...loginOpts(held, {
+          ...(dobGranularity ? { dobGranularity } : {}),
+          ...(intent ? { intent } : {}),
+        }));
     } catch (err) {
       // Kept only when the request provably never reached Flock: offline, which
       // api.js refuses before sending, or a captive portal answering in Flock's
       // place. Any other connection failure may have landed after the server
       // accepted them (a lost 200), and a retry would only spend a 401.
       if (err?.isOffline || err?.isCaptivePortal) used = false;
+      else if (isYearAsk(err)) err.resume = makeResume(held, intent, heldAt);
       throw err;
     }
     // Accepted, so the same rule as a first-tap success: forget the name.
@@ -382,7 +415,11 @@ const makeResume = (first) => {
 // `reconfirm` (optional): the signed-in person proving it again (the delete and
 // export dialogs), not a sign-in, so appleLogin skips the login analytics; see
 // opts.reconfirm in services/api.js.
-const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuthorize, className = 'auth-provider', style, reconfirm }) => {
+// `intent` (optional): 'signin' from the sign-in screen, 'create' from the
+// sign-up screen, sent with the credentials (opts.intent in services/api.js).
+// A 'signin' answered noAccount hands the screen a `resume` that creates the
+// account (THE SAME HOLD, FOR "CREATE ACCOUNT" above).
+const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuthorize, className = 'auth-provider', style, reconfirm, intent }) => {
   const [busy, setBusy] = useState(false);
   const onWebsite = !isNativeIos() && Boolean(appleWebHost());
 
@@ -408,6 +445,7 @@ const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuth
         ...loginOpts(held, {
           ...(dobGranularity ? { dobGranularity } : {}),
           ...(reconfirm ? { reconfirm: true } : {}),
+          ...(intent ? { intent } : {}),
         }));
       // Accepted: the account carries the name now, and nothing else on this
       // device should ever receive it.
@@ -421,10 +459,12 @@ const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuth
       // that only sees the message string cannot offer the retry field.
       //
       // The third argument is `resume`, and only on the creation 403 that asks
-      // for a year: see makeResume above. Every other refusal gets none.
-      const resume = held && err?.data?.needsDob && err.data.dobGranularity === 'year'
-        ? makeResume(held)
-        : undefined;
+      // for a year, or on the sign-in screen's noAccount where the server
+      // says an account may be made: see makeResume above. Every other
+      // refusal gets none.
+      let resume;
+      if (held && isYearAsk(err)) resume = makeResume(held, intent);
+      else if (held && intent === 'signin' && err?.data?.noAccount && err.data.canCreate) resume = makeResume(held, 'create');
       held = null;
       // On the website a held sign-in may have to reopen the popup once its
       // code has run out (PAST THE CODE'S FEW MINUTES), and that tap should
@@ -433,7 +473,7 @@ const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuth
       if (isCancelled(err)) return;
       // The message is worked out only for a real failure, so a dismissed
       // sheet is not logged as one.
-      onError?.(failureMessage(err, reconfirm ? APPLE_RECONFIRM_DID_NOT_FINISH : APPLE_DID_NOT_FINISH), err, resume);
+      onError?.(failureMessage(err, didNotFinishLine(err, reconfirm)), err, resume);
     } finally {
       setBusy(false);
     }

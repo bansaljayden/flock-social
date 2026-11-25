@@ -1945,10 +1945,23 @@ export async function login(email, password, dateOfBirth, opts) {
 // iPhone app no longer sends or is asked for one.
 const reconfirmField = (opts) => (opts?.reconfirm ? { reconfirm: true } : {});
 
+// opts.intent, on the same three calls: which screen the tap came from. The
+// sign-in screen sends 'signin', and the server then refuses to make an
+// account for a credential that has none (409 {noAccount, canCreate}), writes
+// nothing, and lets the same credential come back with 'create' once the
+// person has said that is what they want (LoginScreen.js, NO FLOCK ACCOUNT
+// YET). Before this, a Continue with Apple on the sign-in screen with Hide My
+// Email made a second, empty account for somebody whose account was made
+// with Google, and opened it as if it were theirs. The sign-up screen sends
+// 'create'. The delete and export dialogs send none: reconfirm already
+// refuses to create. Anything but those two words is not sent, so a call
+// without it is the request it always was.
+const intentField = (opts) => (opts?.intent === 'signin' || opts?.intent === 'create' ? { intent: opts.intent } : {});
+
 // Custom-button flow: useGoogleLogin yields an OAuth access token, verified
 // server-side (tokeninfo aud check + userinfo). Same backend route.
 export async function googleLoginWithToken(accessToken, dateOfBirth, opts) {
-  const body = { access_token: accessToken, ...reconfirmField(opts) };
+  const body = { access_token: accessToken, ...reconfirmField(opts), ...intentField(opts) };
   if (dateOfBirth) body.date_of_birth = dateOfBirth;
   // See login() for dobGranularity.
   if (dateOfBirth && opts?.dobGranularity === 'year') body.dob_granularity = 'year';
@@ -1970,7 +1983,7 @@ export async function googleLoginWithToken(accessToken, dateOfBirth, opts) {
 }
 
 export async function googleLogin(credential, dateOfBirth, opts) {
-  const body = { credential, ...reconfirmField(opts) };
+  const body = { credential, ...reconfirmField(opts), ...intentField(opts) };
   // Pass DOB on consumer sign-up so the backend age gate (>= 13) fires for new
   // OAuth accounts too, matching email signup. Existing-user logins omit it.
   if (dateOfBirth) body.date_of_birth = dateOfBirth;
@@ -2010,7 +2023,7 @@ export async function getAppleNonce() {
 // very FIRST authorization for an Apple ID, so pass it through when present.
 // opts.nonce is the website's nonce (getAppleNonce above).
 export async function appleLogin(identityToken, fullName, authorizationCode, dateOfBirth, opts) {
-  const body = { identityToken, ...reconfirmField(opts) };
+  const body = { identityToken, ...reconfirmField(opts), ...intentField(opts) };
   if (fullName) body.fullName = fullName;
   if (authorizationCode) body.authorizationCode = authorizationCode;
   if (opts?.nonce) body.nonce = opts.nonce;

@@ -134,7 +134,8 @@ describe('the first Google tap for a new account, with the year empty', () => {
 
     expect(mockSocialLogin.login).toHaveBeenCalledTimes(1);
     // Sent with no year at all, which is what earns the creation 403.
-    expect(api.googleLogin).toHaveBeenCalledWith('google-id-token-1', undefined);
+    // The sign-up screen names its intent: it is the one that makes accounts.
+    expect(api.googleLogin).toHaveBeenCalledWith('google-id-token-1', undefined, { intent: 'create' });
 
     const field = utils.getByLabelText('Year of birth');
     expect(field.id).toBe('signup-google-year');
@@ -165,7 +166,7 @@ describe('the first Google tap for a new account, with the year empty', () => {
     await waitFor(() => expect(utils.onSignupSuccess).toHaveBeenCalledWith({ id: 61 }));
     expect(mockSocialLogin.login).toHaveBeenCalledTimes(1);
     expect(api.googleLogin).toHaveBeenCalledTimes(2);
-    expect(api.googleLogin.mock.calls[1]).toEqual(['google-id-token-1', '2000-12-31', { dobGranularity: 'year' }]);
+    expect(api.googleLogin.mock.calls[1]).toEqual(['google-id-token-1', '2000-12-31', { dobGranularity: 'year', intent: 'create' }]);
   });
 
   it('an empty year on Continue is answered on the device and nothing is posted', async () => {
@@ -208,7 +209,7 @@ describe('the first Google tap for a new account, with the year empty', () => {
     api.googleLogin.mockResolvedValueOnce({ user: { id: 63 } });
     fireEvent.click(googleButton(utils));
     await waitFor(() => expect(utils.onSignupSuccess).toHaveBeenCalledWith({ id: 63 }));
-    expect(api.googleLogin).toHaveBeenCalledWith('google-id-token-1', undefined);
+    expect(api.googleLogin).toHaveBeenCalledWith('google-id-token-1', undefined, { intent: 'create' });
   });
 });
 
@@ -248,7 +249,7 @@ describe('when the held token cannot be used', () => {
     expect(mockSocialLogin.login).toHaveBeenCalledTimes(2);
     expect(api.googleLogin).toHaveBeenCalledTimes(2);
     // The new sheet's token with the year typed, never the held one.
-    expect(api.googleLogin.mock.calls[1]).toEqual(['google-id-token-2', '2001-12-31', { dobGranularity: 'year' }]);
+    expect(api.googleLogin.mock.calls[1]).toEqual(['google-id-token-2', '2001-12-31', { dobGranularity: 'year', intent: 'create' }]);
   });
 
   it('past the handle\'s few minutes, a dismissed sheet keeps Continue, says why, and the next Continue opens it again', async () => {
@@ -272,7 +273,7 @@ describe('when the held token cannot be used', () => {
     await act(async () => { fireEvent.click(continueButton(utils)); });
     await waitFor(() => expect(utils.onSignupSuccess).toHaveBeenCalledWith({ id: 66 }));
     expect(mockSocialLogin.login).toHaveBeenCalledTimes(3);
-    expect(api.googleLogin.mock.calls[1]).toEqual(['google-id-token-3', '2001-12-31', { dobGranularity: 'year' }]);
+    expect(api.googleLogin.mock.calls[1]).toEqual(['google-id-token-3', '2001-12-31', { dobGranularity: 'year', intent: 'create' }]);
   });
 
   it('a request refused while offline keeps Continue, and the retry sends the same token', async () => {
@@ -291,7 +292,7 @@ describe('when the held token cannot be used', () => {
     await act(async () => { fireEvent.click(continueButton(utils)); });
     await waitFor(() => expect(utils.onSignupSuccess).toHaveBeenCalledWith({ id: 65 }));
     expect(mockSocialLogin.login).toHaveBeenCalledTimes(1);
-    expect(api.googleLogin.mock.calls[2]).toEqual(['google-id-token-1', '2000-12-31', { dobGranularity: 'year' }]);
+    expect(api.googleLogin.mock.calls[2]).toEqual(['google-id-token-1', '2000-12-31', { dobGranularity: 'year', intent: 'create' }]);
   });
 
   it('a connection that died after sending drops the token and asks for a fresh Google sheet', async () => {

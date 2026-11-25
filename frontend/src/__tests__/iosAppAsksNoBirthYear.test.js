@@ -165,7 +165,8 @@ describe('consumer sign-up in the iPhone app', () => {
     const args = api.appleLogin.mock.calls[0];
     expect(args[0]).toBe('apple-id-token-1');
     expect(args[3]).toBeUndefined();
-    expect(args.length).toBeLessThanOrEqual(4);
+    // The options carry the screen's intent and nothing else: no granularity.
+    expect(args[4]).toEqual({ intent: 'create' });
     await waitFor(() => expect(onSignupSuccess).toHaveBeenCalledWith({ id: 4 }));
   });
 
@@ -285,8 +286,8 @@ describe('"confirm it\'s you" never creates an account', () => {
   it('every OAuth call made with opts.reconfirm tells the server so', () => {
     const src = read('services', 'api.js');
     expect(src).toMatch(/const reconfirmField = \(opts\) => \(opts\?\.reconfirm \? \{ reconfirm: true \} : \{\}\);/);
-    expect(src).toMatch(/const body = \{ access_token: accessToken, \.\.\.reconfirmField\(opts\) \};/);
-    expect(src).toMatch(/const body = \{ credential, \.\.\.reconfirmField\(opts\) \};/);
-    expect(src).toMatch(/const body = \{ identityToken, \.\.\.reconfirmField\(opts\) \};/);
+    expect(src).toMatch(/const body = \{ access_token: accessToken, \.\.\.reconfirmField\(opts\), \.\.\.intentField\(opts\) \};/);
+    expect(src).toMatch(/const body = \{ credential, \.\.\.reconfirmField\(opts\), \.\.\.intentField\(opts\) \};/);
+    expect(src).toMatch(/const body = \{ identityToken, \.\.\.reconfirmField\(opts\), \.\.\.intentField\(opts\) \};/);
   });
 });

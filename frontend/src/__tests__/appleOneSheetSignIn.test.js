@@ -11,7 +11,11 @@
  *
  * Now the credentials from that first sheet are held in memory, the year field
  * appears where the Apple button was, focused, and Continue posts the SAME
- * credentials with the year. The server side of why that is allowed is pinned
+ * credentials with the year. The sign-in screen's first post now says intent
+ * 'signin' and is answered that there is no account, so there the year is
+ * asked of Create account's 'create', the same credentials again (NO FLOCK
+ * ACCOUNT YET in LoginScreen.js); the sign-up screen's 'create' is asked
+ * straight away. The server side of why that is allowed is pinned
  * in backend/__tests__/oauthReplayAtomicity.test.js ("the year 403 spends
  * nothing"). What is pinned here:
  *   - one sheet, same identity token, same code, same name, plus the year;
@@ -90,12 +94,32 @@ const open = (onLoginSuccess = jest.fn()) => {
 
 const appleButton = (utils) => utils.queryByRole('button', { name: /continue with apple/i });
 const continueButton = (utils) => utils.queryByRole('button', { name: /^continue$/i });
+const createButton = (utils) => utils.queryByRole('button', { name: 'Create account' });
 
-// First tap: Apple's sheet completes, the server asks for a year.
+// First tap on the sign-up screen, whose intent is 'create': Apple's sheet
+// completes, the server asks for a year.
 const firstTap = async (utils) => {
   mockAppleAuthorize.mockResolvedValueOnce({ response: { ...SHEET } });
   api.appleLogin.mockRejectedValueOnce(yearAsk());
   fireEvent.click(appleButton(utils));
+  await waitFor(() => expect(continueButton(utils)).not.toBeNull());
+};
+
+// The sign-in screen's way to the same step, the way the server leads there:
+// its tap says 'signin', which is answered that there is no account ahead of
+// any year question (`intent` in backend/routes/auth.js), and Create account
+// sends the same credentials with 'create', which is asked for the year. One
+// sheet, and the step's Continue is the third post.
+const toYearStep = async (utils) => {
+  mockAppleAuthorize.mockResolvedValueOnce({ response: { ...SHEET } });
+  api.appleLogin.mockRejectedValueOnce(Object.assign(
+    httpError(409, 'No Flock account uses this Apple ID yet.', { noAccount: true, canCreate: true }),
+    { userFacing: true },
+  ));
+  fireEvent.click(appleButton(utils));
+  await waitFor(() => expect(createButton(utils)).not.toBeNull());
+  api.appleLogin.mockRejectedValueOnce(yearAsk());
+  fireEvent.click(createButton(utils));
   await waitFor(() => expect(continueButton(utils)).not.toBeNull());
 };
 
@@ -112,7 +136,7 @@ afterEach(() => {
 describe('the first Apple tap for a new account', () => {
   it('puts the year field where the Apple button was, focused, with its own line and no red error', async () => {
     const utils = open();
-    await firstTap(utils);
+    await toYearStep(utils);
 
     const field = utils.getByLabelText('Year of birth');
     expect(document.activeElement).toBe(field);
@@ -133,30 +157,35 @@ describe('the first Apple tap for a new account', () => {
 
   it('Continue posts the SAME credentials plus the year and never opens a second sheet', async () => {
     const utils = open();
-    await firstTap(utils);
+    await toYearStep(utils);
 
     fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2000' } });
-    api.appleLogin.mockResolvedValueOnce({ user: { id: 41 } });
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 41 }, created: true });
     fireEvent.click(continueButton(utils));
 
     await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 41 }));
     expect(mockAppleAuthorize).toHaveBeenCalledTimes(1);
-    expect(api.appleLogin).toHaveBeenCalledTimes(2);
-    const [first, second] = api.appleLogin.mock.calls;
+    expect(api.appleLogin).toHaveBeenCalledTimes(3);
+    const [first, create, withYear] = api.appleLogin.mock.calls;
     expect(first[0]).toBe('apple-id-token-1');
-    expect(second[0]).toBe(first[0]);
-    expect(second[1]).toEqual({ givenName: 'Sam', familyName: 'Lee' });
-    expect(second[2]).toBe('apple-code-1');
-    expect(second[3]).toBe('2000-12-31');
-    expect(second[4]).toEqual({ dobGranularity: 'year' });
+    expect(first[4]).toEqual({ intent: 'signin' });
+    expect(create.slice(0, 3)).toEqual(first.slice(0, 3));
+    expect(create[4]).toEqual({ intent: 'create' });
+    expect(withYear[0]).toBe(first[0]);
+    expect(withYear[1]).toEqual({ givenName: 'Sam', familyName: 'Lee' });
+    expect(withYear[2]).toBe('apple-code-1');
+    expect(withYear[3]).toBe('2000-12-31');
+    // The year goes with 'create'. With 'signin' the server would answer
+    // that there is no account again, year or not.
+    expect(withYear[4]).toEqual({ dobGranularity: 'year', intent: 'create' });
   });
 
   it('an empty year is answered on the device and nothing is posted', async () => {
     const utils = open();
-    await firstTap(utils);
+    await toYearStep(utils);
     fireEvent.click(continueButton(utils));
     await waitFor(() => expect(utils.getByRole('alert').textContent).toBe('Add the year you were born.'));
-    expect(api.appleLogin).toHaveBeenCalledTimes(1);
+    expect(api.appleLogin).toHaveBeenCalledTimes(2);
     expect(continueButton(utils)).not.toBeNull();
   });
 });
@@ -175,7 +204,7 @@ describe('the copy follows the server, not the previous render', () => {
 
   it('the year ask never says date of birth, even on the very first answer', async () => {
     const utils = open();
-    await firstTap(utils);
+    await toYearStep(utils);
     expect(utils.container.textContent).not.toMatch(/date of birth/i);
   });
 });
@@ -189,7 +218,7 @@ describe('when the held credentials cannot be used', () => {
     const utils = open();
     const t0 = Date.now();
     const clock = jest.spyOn(Date, 'now').mockReturnValue(t0);
-    await firstTap(utils);
+    await toYearStep(utils);
     fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2001' } });
 
     clock.mockReturnValue(t0 + 10 * 60 * 1000);
@@ -199,22 +228,22 @@ describe('when the held credentials cannot be used', () => {
 
     await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 42 }));
     expect(mockAppleAuthorize).toHaveBeenCalledTimes(2);
-    expect(api.appleLogin).toHaveBeenCalledTimes(2);
-    const last = api.appleLogin.mock.calls[1];
+    expect(api.appleLogin).toHaveBeenCalledTimes(3);
+    const last = api.appleLogin.mock.calls[2];
     // The new sheet's credentials, never the stale code.
     expect(last[0]).toBe('apple-id-token-2');
     expect(last[2]).toBe('apple-code-2');
     // Apple sends the name only once; the one from the first sheet goes.
     expect(last[1]).toEqual({ givenName: 'Sam', familyName: 'Lee' });
     expect(last[3]).toBe('2001-12-31');
-    expect(last[4]).toEqual({ dobGranularity: 'year' });
+    expect(last[4]).toEqual({ dobGranularity: 'year', intent: 'create' });
   });
 
   it("past Apple's five minutes, a dismissed sheet keeps Continue, says why, and the next Continue opens it again", async () => {
     const utils = open();
     const t0 = Date.now();
     const clock = jest.spyOn(Date, 'now').mockReturnValue(t0);
-    await firstTap(utils);
+    await toYearStep(utils);
     fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2001' } });
 
     clock.mockReturnValue(t0 + APPLE_CODE_LIFETIME_MS + 1000);
@@ -223,7 +252,7 @@ describe('when the held credentials cannot be used', () => {
     await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(
       'Apple sign-in timed out, so Apple needs to check it is you again. Tap Continue to open it. Your year is still filled in.'));
     // Nothing was sent, the stale code least of all.
-    expect(api.appleLogin).toHaveBeenCalledTimes(1);
+    expect(api.appleLogin).toHaveBeenCalledTimes(2);
     expect(continueButton(utils)).not.toBeNull();
     expect(appleButton(utils)).toBeNull();
     expect(utils.getByLabelText('Year of birth').value).toBe('2001');
@@ -233,15 +262,15 @@ describe('when the held credentials cannot be used', () => {
     await act(async () => { fireEvent.click(continueButton(utils)); });
     await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 45 }));
     expect(mockAppleAuthorize).toHaveBeenCalledTimes(3);
-    expect(api.appleLogin.mock.calls[1][0]).toBe('apple-id-token-3');
-    expect(api.appleLogin.mock.calls[1][3]).toBe('2001-12-31');
+    expect(api.appleLogin.mock.calls[2][0]).toBe('apple-id-token-3');
+    expect(api.appleLogin.mock.calls[2][3]).toBe('2001-12-31');
   });
 
   it("past Apple's five minutes, a new sheet whose post never left is sent again without a third sheet", async () => {
     const utils = open();
     const t0 = Date.now();
     const clock = jest.spyOn(Date, 'now').mockReturnValue(t0);
-    await firstTap(utils);
+    await toYearStep(utils);
     fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2001' } });
 
     clock.mockReturnValue(t0 + APPLE_CODE_LIFETIME_MS + 1000);
@@ -257,8 +286,8 @@ describe('when the held credentials cannot be used', () => {
     await act(async () => { fireEvent.click(continueButton(utils)); });
     await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 46 }));
     expect(mockAppleAuthorize).toHaveBeenCalledTimes(2);
-    expect(api.appleLogin.mock.calls[2][0]).toBe('apple-id-token-4');
-    expect(api.appleLogin.mock.calls[2][2]).toBe('apple-code-4');
+    expect(api.appleLogin.mock.calls[3][0]).toBe('apple-id-token-4');
+    expect(api.appleLogin.mock.calls[3][2]).toBe('apple-code-4');
   });
 
   it.each([
@@ -266,7 +295,7 @@ describe('when the held credentials cannot be used', () => {
     [503, "Apple sign-in didn't complete. Try again in a moment."],
   ])('a %i from the server falls back to the Apple tap', async (status, message) => {
     const utils = open();
-    await firstTap(utils);
+    await toYearStep(utils);
     fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2000' } });
     api.appleLogin.mockRejectedValueOnce(httpError(status, message, { error: message }));
     fireEvent.click(continueButton(utils));
@@ -279,21 +308,21 @@ describe('when the held credentials cannot be used', () => {
   it('an under-13 refusal is shown in the server\'s words and the credentials are not tried again', async () => {
     const UNDERAGE = 'Flock could not create an account.';
     const utils = open();
-    await firstTap(utils);
+    await toYearStep(utils);
     fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2019' } });
     api.appleLogin.mockRejectedValueOnce(httpError(403, UNDERAGE, { error: UNDERAGE }));
     fireEvent.click(continueButton(utils));
     await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(UNDERAGE));
     expect(continueButton(utils)).toBeNull();
     expect(utils.onLoginSuccess).not.toHaveBeenCalled();
-    expect(api.appleLogin).toHaveBeenCalledTimes(2);
+    expect(api.appleLogin).toHaveBeenCalledTimes(3);
     // The year went to the server as typed; nothing on the device judged it.
-    expect(api.appleLogin.mock.calls[1][3]).toBe('2019-12-31');
+    expect(api.appleLogin.mock.calls[2][3]).toBe('2019-12-31');
   });
 
   it('a request refused while offline keeps Continue, and the retry sends the same credentials', async () => {
     const utils = open();
-    await firstTap(utils);
+    await toYearStep(utils);
     fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2000' } });
     // api.js throws this before sending anything, so the server never saw them.
     api.appleLogin.mockRejectedValueOnce(Object.assign(
@@ -308,15 +337,15 @@ describe('when the held credentials cannot be used', () => {
     await act(async () => { fireEvent.click(continueButton(utils)); });
     await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 43 }));
     expect(mockAppleAuthorize).toHaveBeenCalledTimes(1);
-    expect(api.appleLogin.mock.calls[2][0]).toBe('apple-id-token-1');
-    expect(api.appleLogin.mock.calls[2][2]).toBe('apple-code-1');
+    expect(api.appleLogin.mock.calls[3][0]).toBe('apple-id-token-1');
+    expect(api.appleLogin.mock.calls[3][2]).toBe('apple-code-1');
   });
 
   it('a connection that died after sending drops the credentials and asks for a fresh Apple sheet', async () => {
     // A lost 200 looks exactly like this, and a retry of spent credentials
     // would only earn the replay guard's 401.
     const utils = open();
-    await firstTap(utils);
+    await toYearStep(utils);
     fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2000' } });
     api.appleLogin.mockRejectedValueOnce(Object.assign(
       new Error('Your signal dropped mid-reply. That may have gone through, so check before trying it again.'),
@@ -327,7 +356,7 @@ describe('when the held credentials cannot be used', () => {
       .toMatch(/Tap Continue with Apple to try again\. Your year is still filled in\./));
     expect(continueButton(utils)).toBeNull();
     expect(appleButton(utils)).not.toBeNull();
-    expect(api.appleLogin).toHaveBeenCalledTimes(2);
+    expect(api.appleLogin).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -344,7 +373,8 @@ describe('the signup screen in the iPhone app has no year to type before the she
     fireEvent.click(appleButton(utils));
     await waitFor(() => expect(api.appleLogin).toHaveBeenCalledTimes(1));
     expect(api.appleLogin.mock.calls[0][3]).toBeUndefined();
-    expect(api.appleLogin.mock.calls[0][4]).toBeUndefined();
+    // No granularity either: only the screen's intent rides in the options.
+    expect(api.appleLogin.mock.calls[0][4]).toEqual({ intent: 'create' });
     expect(mockAppleAuthorize).toHaveBeenCalledTimes(1);
   });
 });
@@ -479,7 +509,7 @@ describe('a new Apple account on the signup screen finishes on one sheet', () =>
     expect(second[1]).toEqual({ givenName: 'Sam', familyName: 'Lee' });
     expect(second[2]).toBe(first[2]);
     expect(second[3]).toBe('2000-12-31');
-    expect(second[4]).toEqual({ dobGranularity: 'year' });
+    expect(second[4]).toEqual({ dobGranularity: 'year', intent: 'create' });
   });
 
   it('an Apple ID that already has an account is simply signed in, with no year asked', async () => {
@@ -523,7 +553,7 @@ describe('a new Apple account on the signup screen finishes on one sheet', () =>
     expect(last[0]).toBe('apple-id-token-5');
     expect(last[1]).toEqual({ givenName: 'Sam', familyName: 'Lee' });
     expect(last[3]).toBe('2000-12-31');
-    expect(last[4]).toEqual({ dobGranularity: 'year' });
+    expect(last[4]).toEqual({ dobGranularity: 'year', intent: 'create' });
   });
 
   it('Sign up with email instead puts the form back and drops what was held', async () => {
@@ -564,7 +594,7 @@ describe('the held credentials', () => {
   it('are never written to storage', async () => {
     const setItem = jest.spyOn(Storage.prototype, 'setItem');
     const utils = open();
-    await firstTap(utils);
+    await toYearStep(utils);
     for (const [, value] of setItem.mock.calls) {
       expect(String(value)).not.toContain('apple-id-token-1');
       expect(String(value)).not.toContain('apple-code-1');
