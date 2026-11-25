@@ -38,7 +38,10 @@
 // promoting one is a hand-made UPDATE that puts it in the hourly live sweep.
 // ---------------------------------------------------------------------------
 
-require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
+// backend/.env only when this file is the command run: harvestVenueFilter.js
+// and train/importFilterCache.js require it for the market rule, and an
+// offline import must load no key.
+if (require.main === module) require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 
 const { Pool } = require('pg');
 const { priceLevelToNum, sleep, withCorpusWriteLock } = require('./config');

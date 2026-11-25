@@ -4,7 +4,11 @@
 // Run: node scripts/ml/collectWeekly.js
 // ---------------------------------------------------------------------------
 
-require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
+// backend/.env only when this file is the command run: harvestVenueFilter.js
+// and train/importFilterCache.js require it for the hour axis, and an offline
+// import must load no key (every other command that requires this file loads
+// its own environment).
+if (require.main === module) require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 
 const { Pool } = require('pg');
 const { fetchWeeklyForecast } = require('./bestTimeService');

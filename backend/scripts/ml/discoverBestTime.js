@@ -46,7 +46,9 @@
 // and the row states its axis like every other weekly row in the corpus.
 // ---------------------------------------------------------------------------
 
-require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
+// backend/.env only when this file is the command run: harvestVenueFilter.js
+// requires it for requireVenueIdIndex, and an offline import must load no key.
+if (require.main === module) require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 
 const { Pool } = require('pg');
 const { bestTimeDayToJsDay, sleep } = require('./config');
@@ -79,7 +81,9 @@ const pool = new Pool({
   ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
 });
 
-const API_KEY = process.env.BESTTIME_API_KEY;
+// Read when a search is made, never when this file is loaded (see the dotenv
+// line above).
+const apiKey = () => process.env.BESTTIME_API_KEY;
 
 // New cities for Month 2 expansion
 const EXPANSION_CITIES = {
@@ -152,7 +156,7 @@ function mapCategory(venueTypes) {
 
 async function submitSearch(query, city) {
   const params = new URLSearchParams({
-    api_key_private: API_KEY,
+    api_key_private: apiKey(),
     q: `${query} in ${city.name}`,
     num: 20,
   });
@@ -429,7 +433,7 @@ async function insertForecastData(dbVenue, venue, city) {
 }
 
 async function discover() {
-  if (!API_KEY) {
+  if (!apiKey()) {
     console.error('[ML:BTSearch] BESTTIME_API_KEY not set');
     process.exit(1);
   }

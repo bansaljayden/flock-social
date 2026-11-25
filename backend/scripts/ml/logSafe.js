@@ -41,7 +41,10 @@ function failureReason(text) {
   return labelFor(probe);
 }
 
-// The configured keys, whole and without their pri_/pub_ prefix.
+// The configured keys, whole and without their pri_/pub_ prefix. Every
+// helper below that screens for them takes `secrets` last: given (an array),
+// it is used instead and no key variable is read. harvestVenueFilter.js
+// --offline passes [], since an offline run holds no key and reads none.
 function configuredSecrets() {
   const out = [];
   for (const k of [process.env.BESTTIME_API_KEY, process.env.BESTTIME_API_KEY_PUBLIC]) {
@@ -57,7 +60,7 @@ function configuredSecrets() {
 // or a long mixed hex run (a key's body without its prefix).
 // Checked on the text as it stands and decoded (%XX, doubled %, literal \u and
 // \x escapes, with the account screen's own decoder), without regard to case.
-function keyShaped(text) {
+function keyShaped(text, secretsGiven) {
   if (typeof text !== 'string' || !text) return false;
   const { decodeEscapes, stillEncoded } = require('../../services/besttimeAccount');
   const decoded = decodeEscapes(text);
@@ -66,7 +69,7 @@ function keyShaped(text) {
   if (stillEncoded(decoded)) return true;
   const forms = [...new Set([text, decoded, decoded.replace(/\+/g, ' ')])]
     .map((t) => t.toLowerCase());
-  const secrets = configuredSecrets().map((s) => s.toLowerCase());
+  const secrets = (secretsGiven === undefined ? configuredSecrets() : secretsGiven).map((s) => s.toLowerCase());
   // pri_/pub_ followed by hex, not "pub" alone: "Three Mugs Pub & Restaurant"
   // is a venue, not a key.
   return forms.some((t) => /(pri|pub)_[0-9a-f]{4,}/.test(t)
@@ -76,9 +79,9 @@ function keyShaped(text) {
 
 // A value that came back in a response and is worth printing (a venue's
 // name), printed only if nothing in it looks like a key.
-function safeText(value) {
+function safeText(value, secrets) {
   const text = value === undefined || value === null ? '' : String(value);
-  return keyShaped(text) ? '[withheld]' : text;
+  return keyShaped(text, secrets) ? '[withheld]' : text;
 }
 
 // A caught error, as one printable line. A JSON parse error quotes the body,
@@ -86,7 +89,7 @@ function safeText(value) {
 // request URL (an invalid redirect puts it in cause.input or cause.base), so
 // only the cause's CODE is ever read. Everything else thrown on these paths is
 // ours: a classified status, a timeout, a network failure, a shape error.
-function describeError(err) {
+function describeError(err, secrets) {
   if (!err) return 'unknown error';
   if (err instanceof SyntaxError) return 'the response was not valid JSON';
   let text = typeof err.message === 'string' && err.message ? err.message : 'unknown error';
@@ -94,7 +97,7 @@ function describeError(err) {
   // parse ("Failed to parse URL from https://...?api_key_private=...").
   if (/api_key|https?:\/\/\S*\?/i.test(text)) {
     text = `${err.name || 'Error'} naming a request URL (withheld)`;
-  } else if (/(pri|pub)[_%]/i.test(text) || configuredSecrets().some((s) => text.includes(s))) {
+  } else if (/(pri|pub)[_%]/i.test(text) || (secrets === undefined ? configuredSecrets() : secrets).some((s) => text.includes(s))) {
     // Key-shaped, or a configured key whole or by its body, however it got in
     // (a URL with the key in its path has no "?").
     text = `${err.name || 'Error'} carrying key material (withheld)`;
@@ -107,11 +110,11 @@ function describeError(err) {
 // A Postgres error. Class 22 (data exception: invalid text for a type, value
 // out of range) quotes the offending value, which on these paths came from a
 // BestTime response, so that class is printed by code alone.
-function describeDbError(err) {
+function describeDbError(err, secrets) {
   if (!err) return 'unknown database error';
   const code = typeof err.code === 'string' ? err.code : null;
   if (code && code.startsWith('22')) return `data exception ${code}: a value from the response did not fit its column`;
-  return describeError(err);
+  return describeError(err, secrets);
 }
 
 module.exports = {

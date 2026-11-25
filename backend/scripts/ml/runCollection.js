@@ -7,6 +7,10 @@
 //   node scripts/ml/runCollection.js export    — export to CSV
 // ---------------------------------------------------------------------------
 
+// backend/.env, as the command run: collectWeekly.js loads it only as its
+// own command, so `weekly` would otherwise start without it.
+if (require.main === module) require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
+
 const mode = process.argv[2] || 'realtime';
 
 async function main() {

@@ -73,14 +73,12 @@ const {
 } = require('./helpers/embeddedPgPort');
 const { removeTempDir } = require('./helpers/removeTempDir');
 
-// Synchronous, before the requires below: scripts/ml/* call dotenv on
-// backend/.env, and only a variable already set keeps them off it.
+// Synchronous, before the requires below: the database every module sees.
+// None of them loads backend/.env when required.
 const PG_PORT = pickEmbeddedPgPort('importFilterCache');
 const CONN = `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/flock_import_cache_test`;
 process.env.DATABASE_URL = CONN;
 process.env.PGSSLMODE = 'disable';
-process.env.BESTTIME_API_KEY = 'pri_not_a_real_key_for_import_tests';
-process.env.BESTTIME_API_KEY_PUBLIC = 'pub_not_a_real_key_for_import_tests';
 
 const { migrate } = require('../db/migrate');
 const H = require('../scripts/ml/harvestVenueFilter');
@@ -90,8 +88,9 @@ const { bestTimeSlotToLocal } = require('../scripts/ml/collectWeekly');
 const { bestTimeDayToJsDay, VENUE_TARGETS } = require('../scripts/ml/config');
 const { kmBetween } = require('../scripts/ml/addDemandVenues');
 
-// Every module is loaded, so no dotenv call is left to make: the import refuses
-// to run while any BESTTIME_API_KEY* variable is set (NO KEY in its header).
+// The import refuses to run while any BESTTIME_API_KEY* variable is set (NO
+// KEY in its header), and none of the modules above brings one in: only the
+// shell running these tests could have.
 const KEY_NAME_RE = /^BESTTIME_API_KEY/i;
 for (const name of Object.keys(process.env)) if (KEY_NAME_RE.test(name)) delete process.env[name];
 
@@ -263,6 +262,7 @@ const C = {
   decembertown: { key: 'decembertown', lat: -20.0, lon: -30.0, radiusKm: 5 },
   stringtown: { key: 'stringtown', lat: -26.0, lon: -30.0, radiusKm: 5 },
   shorttown: { key: 'shorttown', lat: -28.0, lon: -30.0, radiusKm: 5 },
+  duptown: { key: 'duptown', lat: -34.0, lon: -30.0, radiusKm: 5 },
   // Refused (the cacher stopped it, no folder), 18.9 km north of testville.
   haltedtown: { key: 'haltedtown', lat: 10.17, lon: 10.0, radiusKm: 10 },
 };
@@ -329,6 +329,7 @@ let planFile;
 let refDir;
 let snapshotFile;
 let shortFile;
+let dupFile;
 let exportDir;
 let absentExportDir;
 let cacheExportDir;
@@ -425,6 +426,14 @@ async function buildFixture() {
   const listing = fs.readdirSync(st.dir).find((f) => JSON.parse(fs.readFileSync(path.join(st.dir, f), 'utf8')).data.venues.length === 1);
   rewriteAnswer(path.join(st.dir, listing), (entry) => { entry.data.venues_n = 2; });
   shortFile = listing;
+  // duptown: an answer lists its venue twice, the second time with a 23-slot
+  // curve. harvestDay keeps the first, so mergeDay never sees the second.
+  const dt = await fill(C.duptown, [one('duptown', 97)]);
+  const twice = fs.readdirSync(dt.dir).find((f) => JSON.parse(fs.readFileSync(path.join(dt.dir, f), 'utf8')).data.venues.length === 1);
+  rewriteAnswer(path.join(dt.dir, twice), (entry) => {
+    entry.data.venues.push({ ...entry.data.venues[0], day_raw_whole: entry.data.venues[0].day_raw_whole.slice(0, 23) });
+  });
+  dupFile = twice;
   // haltedtown: the cacher stopped it before it made a folder.
   progress.cities.haltedtown = progressRecord(C.haltedtown, 0, 'stopped');
   // A training city's key on a plan entry the plan forgot to mark config,
@@ -578,6 +587,33 @@ test('a CSV field may hold commas, doubled quotes and line breaks; created_at re
   assert.ok(Number.isNaN(I.parseTimestamp('Tue Nov 18 2026')));
 });
 
+test('the 2 km rule reaches every cell 2 km can on kmBetween\'s sphere, at any latitude and across the antimeridian', () => {
+  // The review's case: at 63.3 degrees, 1.998 km apart and three 0.02 degree
+  // cells apart (500 and 503); the 111.32 km degree reached two.
+  const hit633 = I.keepAwayIndex([{ id: 9, latitude: 63.3, longitude: 10.0600001 }])(63.3, 10.0199999);
+  assert.ok(hit633 && hit633.row.id === 9 && hit633.km < 2, JSON.stringify(hit633));
+  // Due east and due west of a point just inside a cell edge, 1.999 km away
+  // (found) and 2.001 km away (not), at five latitudes.
+  const along = (lat, km) => (2 * Math.asin(Math.sin(km / (2 * H.EARTH_KM)) / Math.cos((lat * Math.PI) / 180)) * 180) / Math.PI;
+  for (const lat of [0, 45, 63.3, 70, -63.3]) {
+    for (const [from, sign] of [[10.0000001, 1], [10.0199999, -1]]) {
+      const near = { id: 1, latitude: lat, longitude: from + sign * along(lat, 1.999) };
+      const far = { id: 2, latitude: lat, longitude: from + sign * along(lat, 2.001) };
+      const km = kmBetween(lat, from, lat, near.longitude);
+      assert.ok(km > 1.998 && km < 2, `${lat} ${sign}: ${km}`);
+      const found = I.keepAwayIndex([near])(lat, from);
+      assert.ok(found && found.row.id === 1, `${lat} ${sign}: ${JSON.stringify(found)}`);
+      assert.equal(I.keepAwayIndex([far])(lat, from), null, `${lat} ${sign}: 2.001 km is outside`);
+    }
+  }
+  // Across the antimeridian: 1.1 km apart at 10 degrees, found either way;
+  // 2.2 km apart, not.
+  const dateline = I.keepAwayIndex([{ id: 3, latitude: 10.0, longitude: 179.995 }]);
+  assert.ok(dateline(10.0, -179.995) && dateline(10.0, -179.995).km < 1.2);
+  assert.ok(I.keepAwayIndex([{ id: 4, latitude: 10.0, longitude: -179.995 }])(10.0, 179.995));
+  assert.equal(I.keepAwayIndex([{ id: 5, latitude: 10.0, longitude: 179.99 }])(10.0, -179.99), null);
+});
+
 test('the 2 km rule searches every grid cell 2 km reaches, east and west, at any latitude', () => {
   // At 10 degrees a 0.02 degree cell is 2.2 km wide: a row 1.5 km due east
   // across a cell edge is one cell over, and so is one due west.
@@ -630,33 +666,40 @@ test('the arguments refuse what would make an import unsafe', () => {
   assert.deepEqual([inferred.cities, inferred.radiusKm], [['nyc'], 40]);
   assert.match(p('--parity', '--cache-dir=x/nyc-2026-11-r40', '--identity-snapshot=s', '--export-csv=e', '--radius-km=20').error,
     /would ask other questions/);
+  // --written-before: an instant with its zone, for --parity only.
+  const parityArgs = ['--parity', '--cache-dir=x/nyc-2026-11', '--identity-snapshot=s', '--export-csv=e'];
+  assert.equal(p(...parityArgs, '--written-before=2026-11-20T00:00:00Z').writtenBefore, Date.parse('2026-11-20T00:00:00Z'));
+  assert.equal(p(...parityArgs).writtenBefore, null);
+  for (const bad of ['2026-11-20', '2026-11-20T00:00:00', 'yesterday', '']) {
+    assert.match(p(...parityArgs, `--written-before=${bad}`).error, /--written-before takes an ISO instant with its zone/, bad);
+  }
+  assert.match(p('--dry-run', '--cache-root=a', '--plan=b', '--written-before=2026-11-20T00:00:00Z').error, /belongs to --parity/);
 });
 
 // ---------------------------------------------------------------------------
 // No key, ever (NO KEY in the importer's header).
 // ---------------------------------------------------------------------------
-// Preloaded into a child with -r: every read of a BESTTIME_API_KEY* variable
-// through process.env, with the file that made it; every file named .env
-// opened; dotenv calls (SPY_STUB_PATHED: a call naming a path, which is how
-// the collectors load backend/.env, is recorded and skipped, so the child
-// behaves the same whatever this checkout's backend/.env holds; a call
-// naming none, which would load the working folder's .env, runs for real);
-// SPY_LOAD_KEY: a key set the moment collectWeekly.js is loaded, as its
-// dotenv does from a backend/.env that holds one. Reported to SPY_OUT at exit.
+// Preloaded into a child with -r. Any read of a BESTTIME_API_KEY* variable's
+// value through process.env is FORBIDDEN: it is recorded, with the file that
+// made it, and throws. Also recorded: every file named .env opened, whether
+// dotenv was ever loaded, and which of harvestVenueFilter.js and
+// discoverBestTime.js were. SPY_LOAD_KEY sets a key the moment collectWeekly.js
+// is loaded, as anything that brought one in after the first check would.
+// Reported to SPY_OUT at exit.
 const SPY = `
 const fs = require('fs');
 const path = require('path');
 const Module = require('module');
 const real = process.env;
-const seen = { keyReads: [], envFiles: [], dotenv: [] };
+const seen = { keyReads: [], envFiles: [], dotenvLoaded: false };
 process.env = new Proxy(real, {
   get(t, k) {
-    const v = Reflect.get(t, k);
     if (typeof k === 'string' && /^BESTTIME_API_KEY/i.test(k)) {
       const from = (new Error().stack.split('\\n').slice(2).find((l) => !l.includes('node:')) || '').trim();
-      seen.keyReads.push({ name: k, defined: v !== undefined, from });
+      seen.keyReads.push({ name: k, from });
+      throw new Error('a BestTime key variable was read');
     }
-    return v;
+    return Reflect.get(t, k);
   },
 });
 for (const name of ['readFileSync', 'openSync', 'readFile', 'createReadStream']) {
@@ -668,38 +711,42 @@ for (const name of ['readFileSync', 'openSync', 'readFile', 'createReadStream'])
 }
 const load = Module._load;
 Module._load = function spiedLoad(request, ...rest) {
+  if (request === 'dotenv') seen.dotenvLoaded = true;
   const out = load.call(this, request, ...rest);
-  if (request === 'dotenv' && real.SPY_STUB_PATHED) {
-    return { ...out, config: (o) => {
-      seen.dotenv.push(o && o.path ? path.resolve(o.path) : null);
-      return o && o.path ? { parsed: {} } : out.config(o);
-    } };
-  }
   if (/collectWeekly$/.test(request) && real.SPY_LOAD_KEY) real.BESTTIME_API_KEY = real.SPY_LOAD_KEY;
   return out;
 };
 process.on('exit', () => {
   const canaries = Object.entries(real).filter(([, v]) => /canary/.test(String(v))).map(([k]) => k);
-  const loaded = Object.keys(require.cache).filter((f) => /harvestVenueFilter/.test(f));
+  const loaded = Object.keys(require.cache).filter((f) => /harvestVenueFilter|discoverBestTime/.test(f)).map((f) => path.basename(f));
   fs.writeFileSync(real.SPY_OUT, JSON.stringify({ ...seen, canaries, loaded }));
 });
 `;
 
-test('the import never holds a key: one set before it loads or loaded by a module refuses it, and a clean run reads none', async () => {
+test('the import never holds or reads a key: cold start, refusals and error paths, with any key read forbidden', async () => {
   const { spawnSync } = require('node:child_process');
   const work = tmp('flock-import-nokey-');
   const spyFile = path.join(work, 'spy.js');
   fs.writeFileSync(spyFile, SPY);
   // A .env in the working folder, holding keys a default dotenv call would load.
   fs.writeFileSync(path.join(work, '.env'), 'BESTTIME_API_KEY=pri_canary_dotenv_0000000000\nBESTTIME_API_KEY_PUBLIC=pub_canary_dotenv_00000\n');
-  const importer = path.join(__dirname, '..', 'scripts', 'ml', 'train', 'importFilterCache.js');
+  const scripts = path.join(__dirname, '..', 'scripts', 'ml');
+  const importer = path.join(scripts, 'train', 'importFilterCache.js');
   const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !KEY_NAME_RE.test(k)));
-  const child = (name, env) => {
+  const child = (name, env, args = [importer, '--dry-run', `--cache-root=${root}`, `--plan=${planFile}`]) => {
     const spyOut = path.join(work, `${name}.json`);
-    const r = spawnSync(process.execPath, ['-r', spyFile, importer, '--dry-run', `--cache-root=${root}`, `--plan=${planFile}`], {
-      cwd: work, env: { ...base, SPY_OUT: spyOut, SPY_STUB_PATHED: '1', ...env }, encoding: 'utf8', timeout: 120000,
+    const r = spawnSync(process.execPath, ['-r', spyFile, ...args], {
+      cwd: work, env: { ...base, SPY_OUT: spyOut, ...env }, encoding: 'utf8', timeout: 120000,
     });
     return { status: r.status, out: `${r.stdout}${r.stderr}`, spy: JSON.parse(fs.readFileSync(spyOut, 'utf8')) };
+  };
+  // Nothing loaded dotenv, opened a .env or read a key, and no canary arrived.
+  const untouched = (c) => {
+    assert.deepEqual(c.spy.keyReads, [], JSON.stringify(c.spy.keyReads));
+    assert.equal(c.spy.dotenvLoaded, false, 'dotenv was loaded');
+    assert.deepEqual(c.spy.envFiles, []);
+    assert.deepEqual(c.spy.canaries, []);
+    assert.doesNotMatch(c.out, /canary/);
   };
 
   // A key in the environment: refused before any module of the repository
@@ -707,29 +754,41 @@ test('the import never holds a key: one set before it loads or loaded by a modul
   const set = child('set', { BESTTIME_API_KEY: 'pri_canary_env_000000000000' });
   assert.equal(set.status, 2, set.out);
   assert.match(set.out, /REFUSED: BESTTIME_API_KEY is set in the environment/);
-  assert.doesNotMatch(set.out, /canary|DRY RUN/);
+  assert.doesNotMatch(set.out, /DRY RUN/);
   assert.deepEqual(set.spy.keyReads, []);
   assert.deepEqual(set.spy.loaded, [], 'harvestVenueFilter.js was loaded');
 
-  // A key a module loads (as collectWeekly.js's dotenv would from a
-  // backend/.env holding one): refused once the modules are loaded, before
-  // any answer is read.
+  // A key that arrives while the modules load: refused once they are,
+  // before any answer is read, still by name.
   const loaded = child('loaded', { SPY_LOAD_KEY: 'pri_canary_loaded_0000000000' });
   assert.equal(loaded.status, 2, loaded.out);
   assert.match(loaded.out, /REFUSED: BESTTIME_API_KEY is set in this process once its modules were loaded/);
   assert.doesNotMatch(loaded.out, /canary|DRY RUN/);
+  assert.deepEqual(loaded.spy.keyReads, []);
 
-  // A clean run: the dry run goes on, the working folder's .env is never
-  // opened, no dotenv call loads a file by default, and the only look at a
-  // key variable in the whole process is discoverBestTime.js's, at load,
-  // finding nothing.
+  // A cold start that runs: every module loaded (discoverBestTime.js
+  // included), every refusal path of the fixture taken, and not one look at
+  // a key, a dotenv or a .env.
   const clean = child('clean', {});
   assert.equal(clean.status, 0, clean.out);
   assert.match(clean.out, /DRY RUN \(nothing is written\)/);
-  assert.ok(!clean.spy.envFiles.includes(path.join(work, '.env')), JSON.stringify(clean.spy.envFiles));
-  assert.ok(clean.spy.dotenv.every((p) => p !== null), 'a dotenv call with no path would load the working folder\'s .env');
-  assert.deepEqual(clean.spy.canaries, []);
-  assert.ok(clean.spy.keyReads.every((r) => !r.defined && /discoverBestTime\.js/.test(r.from)), JSON.stringify(clean.spy.keyReads));
+  assert.deepEqual(clean.spy.loaded.sort(), ['discoverBestTime.js', 'harvestVenueFilter.js']);
+  untouched(clean);
+
+  // An error path of the import: a plan that is not there.
+  const failed = child('failed', {}, [importer, '--dry-run', `--cache-root=${root}`, `--plan=${path.join(work, 'none.json')}`]);
+  assert.equal(failed.status, 1, failed.out);
+  assert.match(failed.out, /FAILED/);
+  untouched(failed);
+
+  // The harvester's own --offline command, whose database is not there: the
+  // error is printed by logSafe with no key to screen for (an online run
+  // reads both to screen it).
+  const offline = child('offline', { DATABASE_URL: 'postgresql://nobody:nothing@127.0.0.1:1/none', PGSSLMODE: 'disable' },
+    [path.join(scripts, 'harvestVenueFilter.js'), '--city=philly', '--offline', `--cache-dir=${work}`]);
+  assert.equal(offline.status, 1, offline.out);
+  assert.match(offline.out, /ABORTED: .*ECONNREFUSED/);
+  untouched(offline);
 
   // In process too: run() refuses while one is set, by name.
   process.env.BESTTIME_API_KEY_PUBLIC = 'pub_canary_inprocess_000000';
@@ -785,18 +844,23 @@ test('a dry run refuses every city that fails a rule, by that rule, and never op
   assert.ok(reasons(c.brokentown).includes('replayAbort'), JSON.stringify(c.brokentown.reasons));
   assert.ok(!reasons(c.brokentown).includes('dayCheck'));
   assert.match(c.brokentown.reasons.find((r) => r.reason === 'replayAbort').detail, /without a venue list/);
-  assert.deepEqual(reasons(c.malformtown), ['malformedRecords']);
-  assert.equal(c.malformtown.malformed, 1);
+  // A record with no curve: malformed in the merge, and a bad shape before it.
+  assert.deepEqual(reasons(c.malformtown), ['invalidCurveShapes', 'malformedRecords']);
+  assert.deepEqual([c.malformtown.malformed, c.malformtown.invalidCurveShapes], [1, 1]);
   // A string in one curve slot: nothing malformed, every file read, the
-  // offline check alone, naming the city, the file and the slot.
+  // offline check alone, naming the city, the file, the record and the slot.
   assert.deepEqual(reasons(c.stringtown), ['invalidCurveValues']);
   assert.deepEqual([c.stringtown.malformed, c.stringtown.invalidCurveValues, c.stringtown.filesRead], [0, 1, c.stringtown.filesHeld]);
-  assert.match(c.stringtown.reasons[0].detail, /stringtown [0-9a-f]{64}\.json day_int 1 slot 7 \(a string of 2 characters\)/);
+  assert.match(c.stringtown.reasons[0].detail, /stringtown [0-9a-f]{64}\.json record 0 day_int 1 slot 7 \(a string of 2 characters\)/);
+  // A duplicate record with a 23-slot curve, which the merge never sees.
+  assert.deepEqual(reasons(c.duptown), ['invalidCurveShapes']);
+  assert.deepEqual([c.duptown.malformed, c.duptown.invalidCurveShapes, c.duptown.invalidCurveValues], [0, 1, 0]);
+  assert.match(c.duptown.reasons[0].detail, new RegExp(`duptown ${dupFile.replace('.', '\\.')} record 1 day_int \\d \\(a list of 23\\)`));
   // A short page whose venues_n says one more venue was there.
   assert.deepEqual(reasons(c.shorttown), ['shortPageBelowTotal']);
   assert.equal(c.shorttown.shortOfTotal, 1);
-  assert.match(c.shorttown.reasons[0].detail, new RegExp(`shorttown ${shortFile.replace('.', '\\.')} day_int \\d page 0: `
-    + '1 listed, 1 in the box so far, venues_n 2'));
+  assert.match(c.shorttown.reasons[0].detail, new RegExp(`shorttown day_int \\d, paging ended at page 0 \\(${shortFile.replace('.', '\\.')}\\): `
+    + '1 listed in the box, venues_n 2'));
   assert.deepEqual(reasons(c.movedtown), ['progressDisagrees']);
   assert.deepEqual(reasons(c.decembertown), ['monthUnknown']);
   assert.deepEqual(reasons(c.haltedtown), ['cacherNotDone', 'noFolder']);
@@ -808,11 +872,11 @@ test('a dry run refuses every city that fails a rule, by that rule, and never op
     assert.equal(c[key].state, 'accepted', key);
     assert.equal(c[key].filesRead, c[key].filesHeld, `${key} left a file unread`);
     assert.equal(c[key].misses, c[key].notFound, key);
-    assert.deepEqual([c[key].malformed, c[key].truncatedTiles, c[key].strayFiles, c[key].invalidCurveValues, c[key].shortOfTotal],
-      [0, 0, 0, 0, 0], key);
+    assert.deepEqual([c[key].malformed, c[key].truncatedTiles, c[key].strayFiles, c[key].invalidCurveShapes,
+      c[key].invalidCurveValues, c[key].shortOfTotal], [0, 0, 0, 0, 0, 0], key);
   }
   assert.equal(result.report.totals.accepted, accepted.length);
-  assert.match(out, /malformed 0 {2}no day 0 {2}cut 0 {2}stray 0 {2}bad slots 0 {2}short of total 0/);
+  assert.match(out, /malformed 0 {2}no day 0 {2}cut 0 {2}stray 0 {2}bad curves 0 {2}bad slots 0 {2}short of total 0/);
 });
 
 test('a box still at the 500 cap at the smallest tile refuses its city: venues there were never listed', async () => {
@@ -899,9 +963,10 @@ test('with the snapshot, a venue the corpus holds and one within 2 km of a corpu
   assert.equal(result.report.totals.snapshotCompleteness.proven, true);
 });
 
-test('the twin rule and identity rule 4 reach every longitude cell 40 m spans: one either side below 68.9 degrees, two at 70', () => {
-  for (const lat of [0, 35, -45, 60, 64.3, 68.9]) assert.equal(H.nearDupLngCells(lat), 1, String(lat));
-  assert.deepEqual([H.nearDupLngCells(70), H.nearDupLngCells(-70)], [2, 2]);
+test('the twin rule and identity rule 4 reach every cell 40 m can: one either side below 68.9 degrees, two at 70, and across the antimeridian', () => {
+  const reach = (lat) => H.cellsWithin(lat, H.NEAR_DUP_METERS / 1000, 0.001);
+  for (const lat of [0, 35, -45, 60, 64.3, 68.9]) assert.deepEqual(reach(lat), { lat: 1, lng: 1 }, String(lat));
+  assert.deepEqual([reach(70), reach(-70)], [{ lat: 1, lng: 2 }, { lat: 1, lng: 2 }]);
   // Two listings of one bar 38.8 m apart at 70 degrees, two longitude cells
   // apart (20000 and 20002): before, both were kept as new venues.
   const days = new Map([[0, Array(24).fill(30)]]);
@@ -919,6 +984,59 @@ test('the twin rule and identity rule 4 reach every longitude cell 40 m spans: o
   const row = { id: 7, name: 'Nordlys Bar', latitude: b.lat, longitude: b.lng, besttime_venue_id: null, google_place_id: 'ChIJarcticRow00000001' };
   const known = H.planVenues([a], { byBtId: new Map(), byPlaceId: new Map(), nearby: [row] }, ['arctic'], opts);
   assert.deepEqual(known.plan.map((p) => [p.kind, p.row && p.row.id]), [['known_near', 7]]);
+  // Across the antimeridian: 179.9999 and -179.9999 at the equator, 22 m
+  // apart, are one venue, as a twin and against a corpus row.
+  const east = { ...bar('ven_dateline_a', 179.9999, 'ChIJdatelineBarA00001'), lat: 0, name: 'Dateline Bar' };
+  const west = { ...bar('ven_dateline_b', -179.9999, 'ChIJdatelineBarB00001'), lat: 0, name: 'Dateline Bar' };
+  assert.ok(kmBetween(east.lat, east.lng, west.lat, west.lng) * 1000 < 23);
+  const datelineOpts = { markets: { dateline: { lat: 0, lon: 180 } }, insideRadius: () => true };
+  const pair = H.planVenues([east, west], { byBtId: new Map(), byPlaceId: new Map(), nearby: [] }, ['dateline'], datelineOpts);
+  assert.deepEqual(pair.plan.map((p) => [p.kind, p.venue.venueId]), [['new', east.venueId]]);
+  assert.equal(pair.skipped.nearDuplicateInRun, 1);
+  const corpusRow = { id: 8, name: 'Dateline Bar', latitude: 0, longitude: 179.9999, besttime_venue_id: null,
+    google_place_id: 'ChIJdatelineRow000001' };
+  const held = H.planVenues([west], { byBtId: new Map(), byPlaceId: new Map(), nearby: [corpusRow] }, ['dateline'], datelineOpts);
+  assert.deepEqual(held.plan.map((p) => [p.kind, p.row && p.row.id]), [['known_near', 8]]);
+});
+
+test('offline, a box whose paging ends below the venues_n any page declared is counted, on a short page or a missing one', async () => {
+  // Answers written by hand into a cache, as the harvester names them.
+  const dir = tmp('flock-import-pages-');
+  const opts = { cacheDir: dir, offline: true, pageSize: 100, resultCap: 500, allTypes: false, askPlaceId: true };
+  const tile = { s: 10000, w: 10000, n: 10010, e: 10010 };
+  const put = (day, page, count, venuesN) => {
+    const keyless = H.cacheKeyUrl(H.buildFilterUrl(H.OFFLINE_KEY, { tile, day, page }, opts));
+    const venues = Array.from({ length: count }, (_, i) => ({ venue_id: `ven_page_${day}_${page}_${i}`, day_int: day,
+      day_raw_whole: Array(24).fill(10) }));
+    fs.writeFileSync(path.join(dir, H.cacheFileName(keyless)), JSON.stringify({ url: keyless, fetchedAt: FETCHED_AT,
+      data: { status: 'OK', venues, venues_n: venuesN } }));
+  };
+  put(0, 0, 100, 150); // page 0 says 150, page 1 lists 49: 149 in all
+  put(0, 1, 49, 49);
+  put(1, 0, 100, 149); // page 0 says 149, and page 1 has no answer
+  put(2, 0, 100, 100); // venues_n per page, as every real answer: nothing wrong
+  put(2, 1, 49, 49);
+  const seen = [];
+  const ctx = {
+    key: H.OFFLINE_KEY, opts, stats: H.emptyStats(), city: H.emptyCityStats(1), otherDays: new Map(), dayTally: new Map(),
+    onShortOfTotal: (x) => seen.push(x),
+  };
+  const counts = [];
+  for (const day of [0, 1, 2]) counts.push((await H.fetchTile(ctx, tile, day)).venues.length);
+  assert.deepEqual(counts, [149, 100, 149]);
+  assert.equal(ctx.stats.shortOfTotal, 2);
+  assert.equal(ctx.stats.cacheMisses, 1);
+  assert.deepEqual(seen.map((x) => [x.day, x.page, x.collected, x.total, x.miss]), [[0, 1, 149, 150, false], [1, 1, 100, 149, true]]);
+  // Online, nothing of the kind is counted.
+  const online = { ...ctx, opts: { ...opts, offline: false }, stats: H.emptyStats() };
+  const saved = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('the network was reached'); };
+  try {
+    await H.fetchTile(online, tile, 0);
+  } finally {
+    globalThis.fetch = saved;
+  }
+  assert.equal(online.stats.shortOfTotal, 0);
 });
 
 // --write's arguments with another snapshot and another reference.
@@ -1284,7 +1402,7 @@ test('--offline answers from the cache alone: no fetch, no key, misses counted a
   rewriteAnswer(path.join(damagedDir, listing[1]), (entry) => { entry.data.venues_n = entry.data.venues.length + 1; });
   const damaged = await harvestOffline(['--city=philly', '--new-only', '--offline', `--cache-dir=${damagedDir}`]);
   assert.equal(damaged.summary.aborted, true);
-  assert.match(damaged.summary.abortReason, /REFUSED: 1 curve slots in --cache-dir were no number from 0 to 100, and 1 short pages/);
+  assert.match(damaged.summary.abortReason, /REFUSED: 0 records in --cache-dir had no 24-slot curve, 1 curve slots were no number from 0 to 100, and 1 boxes ended below/);
   assert.equal(damaged.fetches, 0);
   // Inside an offline run any fetch is refused before it leaves.
   await assert.rejects(H.withNoNetwork(() => fetch('https://besttime.app/api/v1/keys/x')), /REFUSED: an --offline run makes no request/);
@@ -1412,6 +1530,24 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
   assert.equal(early.result.exitCode, 0, early.out);
   assert.equal(early.result.venues, 1);
   assert.deepEqual([early.result.left.heldBeforeFirstAnswer, early.result.harvestedElsewhere], [25, 1]);
+
+  // Or a later writer (the next pass, a venue search) wrote NEW2 after
+  // every answer here, as London's 40 km pass did: created_at alone takes it
+  // for this folder's, and --written-before, the next writer's start, does
+  // not. A row created at the bound itself is the later writer's.
+  const laterSnap = snapshot('later.csv', { createdAt: { [NEW2.id]: '2026-11-25T00:00:00.000000Z' } });
+  assert.equal((await parity(otherPassCsv, { snapFile: laterSnap })).result.exitCode, 1, 'without the bound NEW2 is compared');
+  for (const bound of ['2026-11-24T18:00:00Z', '2026-11-25T00:00:00Z']) {
+    const later = await parity(otherPassCsv, { snapFile: laterSnap, extra: [`--written-before=${bound}`] });
+    assert.equal(later.result.exitCode, 0, later.out);
+    assert.equal(later.result.venues, 1);
+    assert.deepEqual([later.result.left.writtenByALaterWriter, later.result.harvestedElsewhere], [1, 1]);
+    assert.match(later.out, /writtenByALaterWriter 1/);
+  }
+  // Before the folder's own writes, the bound leaves nothing to compare.
+  const tooEarly = await parity(exported.trainPath, { extra: ['--written-before=2026-11-24T12:30:00Z'] });
+  assert.equal(tooEarly.result.exitCode, 1);
+  assert.equal(tooEarly.result.left.writtenByALaterWriter, 2);
 
   // Or after the folder's first answer but before its answers for NEW2 here
   // (fetched at 14:00; NEW2's row is from 13:00, NEW1's from 15:00).

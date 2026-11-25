@@ -228,9 +228,14 @@
 // "Venue Filter harvest".
 // ---------------------------------------------------------------------------
 
-// backend/.env is loaded at the foot of this file, only when it runs as its own
-// command without --offline: a module that requires this one brings its own
-// environment, and an --offline run needs no key (OFFLINE, beside THE CACHE).
+// backend/.env only when this file is the command run, and never for
+// --offline, which needs no key and loads none (OFFLINE, beside THE CACHE): a
+// module that requires this one brings its own environment. collectWeekly.js,
+// addDemandVenues.js and discoverBestTime.js, required below, load it only as
+// their own commands too, and read no key when loaded.
+if (require.main === module && !process.argv.includes('--offline')) {
+  require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
+}
 
 const crypto = require('crypto');
 const fs = require('fs');
@@ -1168,39 +1173,60 @@ function namesSimilar(a, b, cityKey = null) {
   return total > 0 && (2 * shared) / total >= 0.75;
 }
 
-// The 0.001-degree longitude cells a NEAR_DUP_METERS search must reach on each
-// side at `lat`. One wherever a cell is wider than NEAR_DUP_METERS, which is
-// everywhere below about 68.9 degrees (every training city, every cache city);
-// more toward the poles, where a cell narrows under it: at 70 degrees two
-// listings 38.8 m apart can sit two cells apart. Measured in kmBetween's own
-// degree (6371 km radius), at the latitude the other listing may reach, so
-// the span is never short of the distance test it serves.
-function nearDupLngCells(lat) {
-  const reach = Math.min(89, Math.abs(lat) + 0.001);
-  const metersPerDegLng = ((6371000 * Math.PI) / 180) * Math.cos((reach * Math.PI) / 180);
-  return Math.max(1, Math.ceil(NEAR_DUP_METERS / metersPerDegLng / 0.001));
+// GRID SEARCHES (the twin rule and identity rule 4 here, the 2 km rule in
+// train/importFilterCache.js). Points go into square cells of `cellDeg`
+// degrees, and a search for everything within `km` reads the cells
+// cellsWithin names on each side. On kmBetween's own sphere (EARTH_KM), two
+// points that close differ by at most km/R in latitude, and in longitude by at
+// most 2 asin(sin(km/2R) / cos(the poleward latitude either can have)); the
+// count is floor + 1 of that span in cells, never short at a cell edge. For
+// NEAR_DUP_METERS in 0.001-degree cells that is one cell either way wherever
+// a cell is wider than 40 m, which is everywhere below about 68.9 degrees
+// (every training city, every cache city); at 70 degrees two listings 38.8 m
+// apart can sit two cells apart. Longitude cells wrap at the antimeridian
+// (wrapCell), so 179.9999 and -179.9999, 22 m apart at the equator, are
+// neighbours; near a pole the reach is the whole circle, each cell read once.
+const EARTH_KM = 6371;
+function cellsWithin(lat, km, cellDeg) {
+  const latDeg = ((km / EARTH_KM) * 180) / Math.PI;
+  const poleward = (Math.min(90, Math.abs(lat) + latDeg) * Math.PI) / 180;
+  const s = Math.sin(km / (2 * EARTH_KM)) / Math.cos(poleward);
+  const lngDeg = s >= 1 ? 180 : (2 * Math.asin(s) * 180) / Math.PI;
+  return { lat: Math.floor(latDeg / cellDeg) + 1, lng: Math.floor(lngDeg / cellDeg) + 1 };
 }
+// A longitude cell index on a circle of `around` cells, from -around/2.
+const wrapCell = (cell, around) => ((((cell + around / 2) % around) + around) % around) - around / 2;
+// The longitude cells within `reach` of `cell`, wrapped, each once.
+function lngCellsAround(cell, reach, around) {
+  const out = [];
+  const n = Math.min(2 * reach + 1, around);
+  for (let k = 0; k < n; k++) out.push(wrapCell(cell - reach + k, around));
+  return out;
+}
+const NEAR_DUP_CELL_DEG = 0.001;
+const NEAR_DUP_LNG_CELLS = 360000;
+const nearDupLngCell = (lng) => wrapCell(Math.floor(lng * 1000), NEAR_DUP_LNG_CELLS);
 
 // Rows by a ~110 m grid, so a lookup reads nine cells instead of the market
-// (more toward the poles: nearDupLngCells).
+// (more toward the poles: GRID SEARCHES).
 function nearIndex(rows) {
   const grid = new Map();
   for (const r of rows) {
     const lat = Number(r.latitude);
     const lng = Number(r.longitude);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
-    const key = `${Math.floor(lat * 1000)}_${Math.floor(lng * 1000)}`;
+    const key = `${Math.floor(lat * 1000)}_${nearDupLngCell(lng)}`;
     if (!grid.has(key)) grid.set(key, []);
     grid.get(key).push({ row: r, lat, lng });
   }
   return (lat, lng) => {
     const out = [];
     const gx = Math.floor(lat * 1000);
-    const gy = Math.floor(lng * 1000);
-    const span = nearDupLngCells(lat);
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -span; dy <= span; dy++) {
-        for (const c of grid.get(`${gx + dx}_${gy + dy}`) || []) {
+    const reach = cellsWithin(lat, NEAR_DUP_METERS / 1000, NEAR_DUP_CELL_DEG);
+    const lngCells = lngCellsAround(nearDupLngCell(lng), reach.lng, NEAR_DUP_LNG_CELLS);
+    for (let dx = -reach.lat; dx <= reach.lat; dx++) {
+      for (const gy of lngCells) {
+        for (const c of grid.get(`${gx + dx}_${gy}`) || []) {
           const m = kmBetween(lat, lng, c.lat, c.lng) * 1000;
           if (m <= NEAR_DUP_METERS) out.push({ row: c.row, meters: m });
         }
@@ -1277,23 +1303,26 @@ function buildFilterUrl(key, q, opts) {
 // (a dead key refuses every run there) and fetched whatever the directory
 // lacked. --offline needs --cache-dir and never reaches BestTime: no key is
 // required or read (OFFLINE_KEY stands in; the cache is keyed on the URL
-// without it; this file loads no backend/.env for it, though three modules
-// it requires load that file themselves), neither key status read is made,
-// and every fetch made while the run lasts is refused before it can leave
-// (withNoNetwork), the admission guard's allowed calls included. A question
-// the directory has no answer for is an empty box, as a 404 is, and is
-// counted apart (cacheMisses): a cache never holds a 404 (requestPage returns
+// without it; no module it loads reads a key variable or backend/.env, so an
+// --offline --commit takes its database from DATABASE_URL or PG* in the
+// environment; what it prints is screened with no key, logSafe.js's []),
+// neither key status read is made, and every fetch made while the run lasts
+// is refused before it can leave (withNoNetwork), the admission guard's
+// allowed calls included. A question the directory has no answer for is an
+// empty box, as a 404 is, and is counted apart (cacheMisses): a cache never
+// holds a 404 (requestPage returns
 // before writeCache, and the cacher did the same), so that count must equal
 // the 404s the run that filled it recorded, which --expect-misses=<n> states
 // and the run checks before planning; an --offline --commit refuses to start
 // without it. Also counted: the answer files in the directory that no
 // question read. A run over part of a directory's scope leaves some unread; a
 // city replayed whole must read every one (train/importFilterCache.js refuses
-// a city that does not). And two
-// kinds of damage a live answer could carry but a cache cannot be asked
-// again about, each refusing the run before planning: a curve slot that is no
-// number from 0 to 100 (checkOfflineCurves), and a short page whose venues_n
-// says its box holds more than was listed (fetchTile).
+// a city that does not). And three kinds of damage a live answer could carry
+// but a cache cannot be asked again about, each refusing the run before
+// planning: a record without a 24-slot curve and a slot that is no number
+// from 0 to 100, in any record of an answer, duplicates and other days'
+// included (checkOfflineCurves), and a box whose paging ended below the
+// venues_n any of its pages declared (fetchTile).
 // ---------------------------------------------------------------------------
 function cacheKeyUrl(url) {
   const u = new URL(url);
@@ -1492,23 +1521,32 @@ async function requestPage(ctx, q) {
   }
 }
 
-// OFFLINE (beside THE CACHE): every slot of a 24-hour curve the replay reads
-// must be a finite number from 0 to 100. readHours keeps any 24-long list and
-// turns a slot that is not a number into a hole, which writes one row fewer
-// with nothing counted; online that is a live answer's to give, but a cache is
-// all there is, so a slot like that is counted (invalidCurveValues), each one
-// handed to ctx.onInvalidCurve with its day, slot and the answer it came in.
-// A list of another length is a malformed record already (mergeDay).
+// OFFLINE (beside THE CACHE): every record of every answer the replay reads,
+// as it stands in the file, before a record for another day is set aside or
+// a second record of a venue is dropped as a duplicate (harvestDay keeps the
+// first), must carry a 24-slot curve, each slot a finite number from 0 to
+// 100. readHours keeps any 24-long list and turns a slot that is not a number
+// into a hole, which writes one row fewer with nothing counted; a curve of
+// another length is noticed only in mergeDay, after the duplicates are gone.
+// Online that is a live answer's to give, but a cache is all there is, so
+// each is counted (invalidCurveShapes, invalidCurveValues) and handed to
+// ctx.onInvalidCurve with the answer, the record's place in it, its day, and
+// the slot (null for a shape).
 function checkOfflineCurves(ctx, keyless, records) {
-  for (const raw of records) {
-    const curve = raw && typeof raw === 'object' ? raw.day_raw_whole : null;
-    if (!Array.isArray(curve) || curve.length !== 24) continue;
+  records.forEach((raw, record) => {
+    const dayInt = raw && typeof raw === 'object' ? raw.day_int : undefined;
+    const curve = raw && typeof raw === 'object' ? raw.day_raw_whole : undefined;
+    if (!Array.isArray(curve) || curve.length !== 24) {
+      ctx.stats.invalidCurveShapes++;
+      if (ctx.onInvalidCurve) ctx.onInvalidCurve({ keyless, record, dayInt, slot: null, value: curve });
+      return;
+    }
     curve.forEach((value, slot) => {
       if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100) return;
       ctx.stats.invalidCurveValues++;
-      if (ctx.onInvalidCurve) ctx.onInvalidCurve({ keyless, dayInt: raw.day_int, slot, value });
+      if (ctx.onInvalidCurve) ctx.onInvalidCurve({ keyless, record, dayInt, slot, value });
     });
-  }
+  });
 }
 
 // Every record naming a day other than the one asked, counted for the run as
@@ -1538,11 +1576,18 @@ async function fetchTile(ctx, tile, day) {
   const venues = [];
   let saturated = false;
   let pages = 0;
-  for (let page = 0; ; page++) {
+  // OFFLINE: the largest venues_n any page of this box declared, and whether
+  // the page that ended it was a question with no answer (see below).
+  let declared = null;
+  let endedOnMiss = false;
+  let page = 0;
+  for (; ; page++) {
     const res = await requestPage(ctx, { tile, day, page });
     noteOtherDays(ctx, day, res.venues);
     pages++;
     const n = res.venues.length;
+    if (ctx.opts.offline && res.total !== null && (declared === null || res.total > declared)) declared = res.total;
+    endedOnMiss = res.miss === true;
     if (res.cached) {
       // Bought by an earlier run: not billed now, and not this run's budget.
       ctx.stats.cachedResults += n;
@@ -1567,18 +1612,20 @@ async function fetchTile(ctx, tile, day) {
       saturated = true;
       break;
     }
-    if (n < ctx.opts.pageSize) {
-      // OFFLINE: a short page ends the box, so one whose venues_n says more
-      // venues exist than its pages listed is a damaged answer, not the end:
-      // counted (shortOfTotal) and handed to ctx.onShortOfTotal. Every answer
-      // of the November caches carried venues_n equal to its own page.
-      if (ctx.opts.offline && res.total !== null && res.total > venues.length) {
-        ctx.stats.shortOfTotal++;
-        if (ctx.onShortOfTotal) ctx.onShortOfTotal({ tile, day, page, listed: n, collected: venues.length, total: res.total });
-      }
-      break;
-    }
+    if (n < ctx.opts.pageSize) break;
     if (total !== null && venues.length >= total) break;
+  }
+  // OFFLINE: paging ended under the cap, on a short page, a question with no
+  // answer, or a page that reached its own total. If any page of the box
+  // declared more venues than its pages listed (venues_n on page 0 says 150,
+  // and page 1 lists 49), the answers are damaged, not the box finished:
+  // counted (shortOfTotal) and handed to ctx.onShortOfTotal. Every answer of
+  // the November caches carried venues_n equal to its own page.
+  if (ctx.opts.offline && !saturated && declared !== null && declared > venues.length) {
+    ctx.stats.shortOfTotal++;
+    if (ctx.onShortOfTotal) {
+      ctx.onShortOfTotal({ tile, day, page, collected: venues.length, total: declared, miss: endedOnMiss });
+    }
   }
   return { venues, saturated, pages };
 }
@@ -1933,15 +1980,15 @@ function planVenues(venues, identities, cities, {
     const hasSignal = [...v.days.values()].some((hours) => hours.some((x) => x != null && x > 0));
     if (!hasSignal) { skip(v, 'noSignal'); continue; }
     // Two new listings of one venue: the first (lower BestTime id) is kept.
-    // A latitude cell is always wider than NEAR_DUP_METERS; a longitude cell
-    // is not near the poles (nearDupLngCells).
+    // The cells searched are GRID SEARCHES', wrapped at the antimeridian.
     const gx = Math.floor(v.lat * 1000);
-    const gy = Math.floor(v.lng * 1000);
-    const span = nearDupLngCells(v.lat);
+    const gy = nearDupLngCell(v.lng);
+    const reach = cellsWithin(v.lat, NEAR_DUP_METERS / 1000, NEAR_DUP_CELL_DEG);
+    const lngCells = lngCellsAround(gy, reach.lng, NEAR_DUP_LNG_CELLS);
     let twin = false;
-    for (let dx = -1; dx <= 1 && !twin; dx++) {
-      for (let dy = -span; dy <= span && !twin; dy++) {
-        twin = (newGrid.get(`${gx + dx}_${gy + dy}`) || []).some((o) => (
+    for (let dx = -reach.lat; dx <= reach.lat && !twin; dx++) {
+      for (let k = 0; k < lngCells.length && !twin; k++) {
+        twin = (newGrid.get(`${gx + dx}_${lngCells[k]}`) || []).some((o) => (
           kmBetween(v.lat, v.lng, o.lat, o.lng) * 1000 <= NEAR_DUP_METERS && namesSimilar(v.name, o.name, where.cityKey)));
       }
     }
@@ -2147,9 +2194,10 @@ function emptyStats() {
     otherDay: 0,
     // THE CACHE: pages answered from it and their results, and pages written.
     cachedPages: 0, cachedResults: 0, cacheWrites: 0, cacheWriteFailures: 0,
-    // OFFLINE: questions the cache had no answer for, each an empty box; curve
-    // slots that were no number from 0 to 100; short pages below their venues_n.
-    cacheMisses: 0, invalidCurveValues: 0, shortOfTotal: 0,
+    // OFFLINE: questions the cache had no answer for, each an empty box;
+    // records whose curve was not 24 slots, and slots that were no number
+    // from 0 to 100 (checkOfflineCurves); boxes that ended below a venues_n.
+    cacheMisses: 0, invalidCurveShapes: 0, invalidCurveValues: 0, shortOfTotal: 0,
     // Which field each venue-day's curve came from, and how the other compared.
     fromWhole: 0, fieldsIdentical: 0, fieldsDiffer: 0, fieldAltAbsent: 0,
   };
@@ -2223,8 +2271,10 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
   summary.newOnly = opts.newOnly;
   summary.dayOverVoters = opts.dayOverVoters;
   summary.budget.limit = opts.resultBudget;
-  // OFFLINE needs no key: the cache is keyed on the URL without one.
+  // OFFLINE needs no key: the cache is keyed on the URL without one. Nor does
+  // it read one to screen what it prints (logSafe.js: [] for the keys).
   const key = opts.offline ? OFFLINE_KEY : besttime.configuredKey();
+  const screen = opts.offline ? [] : undefined;
   if (!key) {
     summary.aborted = true;
     summary.abortReason = 'BESTTIME_API_KEY is not set';
@@ -2376,7 +2426,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
         const unread = heldNames.filter((f) => !readFiles.has(f)).length;
         summary.offline = {
           misses: s.cacheMisses, expectedMisses: opts.expectMisses, filesHeld: heldNames.length, filesRead: readFiles.size, filesUnread: unread,
-          invalidCurveValues: s.invalidCurveValues, shortOfTotal: s.shortOfTotal,
+          invalidCurveShapes: s.invalidCurveShapes, invalidCurveValues: s.invalidCurveValues, shortOfTotal: s.shortOfTotal,
         };
         console.log(`${TAG} OFFLINE: ${readFiles.size} of the ${heldNames.length} answers in --cache-dir answered a question `
           + `and ${unread} answered none (expected only when the directory holds more than this run asks); `
@@ -2386,10 +2436,11 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
             + `${opts.expectMisses} says ${opts.expectMisses} were 404s. A miss that was not a 404 is a box whose venues `
             + 'would be left out, or written with part of their week. Nothing is written.');
         }
-        if (s.invalidCurveValues > 0 || s.shortOfTotal > 0) {
-          throw abortError(`REFUSED: ${s.invalidCurveValues} curve slots in --cache-dir were no number from 0 to 100, and `
-            + `${s.shortOfTotal} short pages said more venues existed than their box listed: a damaged answer, whose `
-            + 'venue-hours would be left out unseen. Nothing is written.');
+        if (s.invalidCurveShapes > 0 || s.invalidCurveValues > 0 || s.shortOfTotal > 0) {
+          throw abortError(`REFUSED: ${s.invalidCurveShapes} records in --cache-dir had no 24-slot curve, `
+            + `${s.invalidCurveValues} curve slots were no number from 0 to 100, and ${s.shortOfTotal} boxes ended below the `
+            + 'venues_n a page of theirs declared: a damaged answer, whose venue-hours would be left out unseen. '
+            + 'Nothing is written.');
         }
       }
 
@@ -2528,7 +2579,8 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
             summary.rowsRefreshed += res.written - res.inserted;
           } catch (err) {
             summary.writeFailures++;
-            console.error(`  write failed for ${safeText(item.venue.venueId)} (${err.code || 'no code'}): ${describeDbError(err)}`);
+            console.error(`  write failed for ${safeText(item.venue.venueId, screen)} (${err.code || 'no code'}): `
+              + `${describeDbError(err, screen)}`);
           }
         }
         console.log(`${TAG} Wrote ${summary.rowsWritten} weekly rows (${summary.rowsInserted} new, `
@@ -2570,7 +2622,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
     summary.aborted = true;
     summary.exitCode = 1;
     summary.abortReason = err.message;
-    console.error(`${TAG} ABORTED: ${describeError(err)}`);
+    console.error(`${TAG} ABORTED: ${describeError(err, screen)}`);
     if (opts.cacheDir) logCache(opts, summary.stats);
     if (err.abort && !opts.offline) {
       // The run is over; the after-read still shows what was spent. Outside the
@@ -2660,7 +2712,11 @@ module.exports = {
   REFUSED_CITIES,
   CENTROIDS,
   NEAR_DUP_METERS,
-  nearDupLngCells,
+  // GRID SEARCHES, which train/importFilterCache.js's 2 km rule shares.
+  cellsWithin,
+  wrapCell,
+  lngCellsAround,
+  EARTH_KM,
   AXIS_MIN_VENUES,
   AXIS_MIN_OVERLAP,
   AXIS_MIN_WITHIN5,
@@ -2670,13 +2726,10 @@ module.exports = {
 
 // Only when run directly: a require from a test must not call BestTime.
 if (require.main === module) {
-  // Never for --offline, which reads no key. collectWeekly.js,
-  // discoverBestTime.js and addDemandVenues.js, required above, still load
-  // the same file when they are loaded, so this alone keeps no key out of an
-  // offline process (train/importFilterCache.js refuses to run with one).
-  if (!process.argv.includes('--offline')) require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
   main().catch((err) => {
-    console.error(`${TAG} Fatal (${(err && err.name) || 'unknown error'}): ${describeError(err)}`);
+    // --offline reads no key variable, even to screen an error for one.
+    console.error(`${TAG} Fatal (${(err && err.name) || 'unknown error'}): `
+      + `${describeError(err, process.argv.includes('--offline') ? [] : undefined)}`);
     process.exitCode = 1;
   });
 }

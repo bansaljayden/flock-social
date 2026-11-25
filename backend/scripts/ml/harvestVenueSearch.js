@@ -59,6 +59,11 @@
 // ---------------------------------------------------------------------------
 'use strict';
 
+// backend/.env, as the command run: the modules below no longer load it when
+// required (harvestVenueFilter.js, collectWeekly.js, addDemandVenues.js and
+// discoverBestTime.js each load it only as their own command).
+if (require.main === module) require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
+
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');

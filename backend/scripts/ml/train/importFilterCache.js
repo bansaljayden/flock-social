@@ -14,14 +14,18 @@
 //   node scripts/ml/train/importFilterCache.js --parity --cache-dir=<one harvest-cache run folder>
 //        --cities=<the run's --city keys> --radius-km=<its radius> --identity-snapshot=<csv>
 //        --export-csv=<the harvest-inclusive training_data.csv> [--expect-misses=<n>]
+//        [--written-before=<ISO UTC instant>]
 //
-// NO KEY. Every mode refuses to run while any BESTTIME_API_KEY* variable is
-// set (by name; its value is never read): as a script, before any module of
-// this repository is loaded, and again in run() once they are, because
-// collectWeekly.js, discoverBestTime.js and addDemandVenues.js load
-// backend/.env when they are loaded. Run it from a checkout whose
-// backend/.env holds no BestTime key. A run that goes on has had no key in
-// its process at any point, and nothing it does reads one.
+// NO KEY. No module this script loads reads a BestTime key variable or loads
+// backend/.env when it is loaded (harvestVenueFilter.js, collectWeekly.js,
+// discoverBestTime.js and addDemandVenues.js load that file only as their own
+// commands, and discoverBestTime.js reads its key only when it searches), and
+// what it prints is never screened against one. The only way a key can reach
+// this process is its environment, so every mode refuses to run while any
+// BESTTIME_API_KEY* variable is set, by name (its value is never read): as a
+// script, before any module of this repository is loaded, and again in run().
+// A run that goes on has had no key in its process at any point and has
+// read no key variable.
 //
 // THE SNAPSHOT (plan step C.4), one read-only query, as CSV with a header,
 // and beside it <the snapshot without .csv>.meta.json, written from the same
@@ -90,15 +94,19 @@
 //   * no record was malformed (no venue id, or no 24-hour curve) and no box
 //     reached the 500 cap at the smallest tile (venues there were never
 //     listed): the counts are printed for every city, accepted or not;
-//   * every slot of every 24-hour curve read is a finite number from 0 to
-//     100 (readHours would make any other value a hole: a row missing, with
-//     nothing counted): refused as invalidCurveValues, naming the city, the
-//     file, the day and the slot. Every slot of the November caches is a whole
-//     number from 0 to 100 (63,584,760 in the accepted cities' answers);
-//   * no short page said its box held more venues than its pages listed
-//     (venues_n above the count, so paging stopped early): refused as
-//     shortPageBelowTotal, naming the file and the counts. Every answer of
-//     the November caches carries venues_n equal to its own page's length;
+//   * every record of every answer read, as it stands in the file (before
+//     duplicates and other days' records are set aside), carries a 24-slot
+//     curve, and every slot is a finite number from 0 to 100 (readHours would
+//     make any other value a hole: a row missing, with nothing counted):
+//     refused as invalidCurveShapes and invalidCurveValues, naming the city,
+//     the file, the record, the day and the slot. Every record of the
+//     November caches holds 24 whole numbers from 0 to 100 (2,649,365 records,
+//     63,584,760 slots in the accepted cities' answers);
+//   * no box's paging ended below the venues_n any of its pages declared (on
+//     a short page, or a question with no answer): refused as
+//     shortPageBelowTotal, naming the day, the page and the counts. Every
+//     answer of the November caches carries venues_n equal to its own page's
+//     length;
 //   * the month is the same in every time zone at every fetchedAt.
 //
 // ONE GLOBAL PASS, so a venue inside two cities' circles is one venue. Every
@@ -114,8 +122,9 @@
 // venue the corpus already holds, by BestTime id, by Google place id or as a
 // near-duplicate, is dropped: the corpus has it), then the radius, the type
 // map, the name, the signal and the twin rule, as a harvest's new venues (the
-// near-duplicate and twin searches reach as many longitude cells as 40 m
-// spans at the venue's latitude: nearDupLngCells). The
+// near-duplicate, twin and 2 km searches read every grid cell their distance
+// can reach on kmBetween's sphere, at any latitude and across the
+// antimeridian: harvestVenueFilter's GRID SEARCHES). The
 // radius is every accepted circle's: a venue inside any accepted city's
 // circle passes, placed in its nearest city, even when that city's own
 // circle is smaller and does not reach it (814 venues of the November cache,
@@ -184,10 +193,20 @@
 // duplicateExportRow, and only its first row is compared. Exit 0 only when
 // every compared row matches, no cell is held twice, and neither side has a
 // weekly row the other lacks. The snapshot needs its meta here too. What
-// created_at cannot show: a row another writer (the other pass, a venue
-// search) created after this folder's last answer for the venue and before
-// this folder's own commit. The November passes ran one city at a time, 20 km
-// then 40 km, so prove parity on a folder no other writer overlapped.
+// created_at alone cannot show: a row another writer (the other pass, a venue
+// search) created after this folder's last answer for the venue. So
+// --written-before=<instant> bounds it: a venue is compared only if its row
+// was also created before that instant, and one created at or after it is
+// counted apart (writtenByALaterWriter), never as a mismatch. Set it to the
+// start of the next writer for those cities: the next pass's first answer
+// (the earliest fetchedAt in its folder) or the first venue-search run there,
+// whichever came first. London's 20 km folder (answers 2026-11-19 02:48 to
+// 04:00, every venue committed by 06:59) needs 2026-11-20T00:00:00Z: without
+// it, 267 venues a venue search (2026-11-20) and the 40 km pass (2026-11-22)
+// wrote were compared as its own and failed. Within the bound, a row another
+// writer made between this folder's answers and its commit is still taken
+// for this folder's; the November passes ran one city at a time, 20 km then
+// 40 km, so prove parity on a folder no other writer overlapped.
 //
 // OUTPUTS (--write; each refused if it exists): cache_rows.csv (HEADER, then
 // the rows; append it to training_data.csv without its first line),
@@ -202,8 +221,7 @@
 const KEY_VARIABLE_RE = /^BESTTIME_API_KEY/i;
 const keyVariables = () => Object.keys(process.env).filter((name) => KEY_VARIABLE_RE.test(name)).sort();
 const keyRefusal = (names, when) => `REFUSED: ${names.join(', ')} ${names.length === 1 ? 'is' : 'are'} set ${when}. This `
-  + 'import is offline and must never hold a BestTime key: unset it, and run from a checkout whose backend/.env '
-  + 'holds none (collectWeekly.js, discoverBestTime.js and addDemandVenues.js load that file when loaded). Nothing was read.';
+  + 'import is offline and must never hold a BestTime key: unset it in the shell that runs it. Nothing was read.';
 if (require.main === module && keyVariables().length > 0) {
   console.error(`[ML:ImportCache] ${keyRefusal(keyVariables(), 'in the environment')}`);
   process.exit(2);
@@ -245,6 +263,8 @@ const DETAIL_EXAMPLES = 5;
 // only, since text from an answer is never printed (logSafe.js).
 const valueText = (v) => (typeof v === 'number' ? String(v) : v === null ? 'null'
   : typeof v === 'string' ? `a string of ${v.length} characters` : `a ${Array.isArray(v) ? 'list' : typeof v}`);
+// A curve that is not 24 slots, described the same way.
+const shapeText = (v) => (v === undefined ? 'no day_raw_whole' : Array.isArray(v) ? `a list of ${v.length}` : valueText(v));
 // UTC offsets in use span -12 h to +14 h.
 const UTC_OFFSET_MIN_MS = -12 * 3600 * 1000;
 const UTC_OFFSET_MAX_MS = 14 * 3600 * 1000;
@@ -287,7 +307,7 @@ function parseImportArgs(argv) {
   const flags = ['--dry-run', '--write', '--parity'];
   const valued = ['--cache-root=', '--plan=', '--progress=', '--harvest-cache=', '--identity-snapshot=', '--report-json=',
     '--out-dir=', '--accept-peak-flags=', '--only=', '--cache-dir=', '--cities=', '--radius-km=', '--export-csv=',
-    '--expect-misses=', '--export-dir='];
+    '--expect-misses=', '--export-dir=', '--written-before='];
   for (const a of args) {
     if (!flags.includes(a) && !valued.some((p) => a.startsWith(p))) return { error: `Unknown argument "${a}".` };
   }
@@ -323,6 +343,7 @@ function parseImportArgs(argv) {
     exportCsv: filePath('export-csv'),
     expectMisses: null,
     exportDir: filePath('export-dir'),
+    writtenBefore: null,
   };
   if (mode === 'parity') {
     for (const [name, v] of [['cache-dir', opts.cacheDir], ['identity-snapshot', opts.identitySnapshot],
@@ -352,12 +373,21 @@ function parseImportArgs(argv) {
       if (!/^\d+$/.test(m)) return { error: '--expect-misses takes a whole number.' };
       opts.expectMisses = Number(m);
     }
+    // An instant with its zone said (Z or an offset), never a local reading.
+    const wb = val('written-before');
+    if (wb !== null) {
+      const at = parseTimestamp(wb);
+      if (!Number.isFinite(at)) {
+        return { error: '--written-before takes an ISO instant with its zone, e.g. 2026-11-20T00:00:00Z.' };
+      }
+      opts.writtenBefore = at;
+    }
     for (const name of ['cache-root', 'plan', 'progress', 'harvest-cache', 'out-dir', 'accept-peak-flags', 'only', 'export-dir']) {
       if (val(name) !== null) return { error: `--${name} belongs to --dry-run and --write, not --parity.` };
     }
     return opts;
   }
-  for (const name of ['cache-dir', 'cities', 'radius-km', 'export-csv', 'expect-misses']) {
+  for (const name of ['cache-dir', 'cities', 'radius-km', 'export-csv', 'expect-misses', 'written-before']) {
     if (val(name) !== null) return { error: `--${name} belongs to --parity.` };
   }
   if (!opts.cacheRoot || !opts.plan) return { error: `--${mode} needs --cache-root and --plan.` };
@@ -532,6 +562,7 @@ async function replayFolder({ dir, cities, radiusKm, centroids = null, venueAnsw
   const answered = venueAnswered ? new Map() : null;
   // The offline checks' findings, the first few in full (harvestVenueFilter's
   // checkOfflineCurves and fetchTile): which file, and what was wrong.
+  const invalidShapes = [];
   const invalidCurves = [];
   const shortPages = [];
   let lastFile = null;
@@ -539,16 +570,19 @@ async function replayFolder({ dir, cities, radiusKm, centroids = null, venueAnsw
     key: H.OFFLINE_KEY, opts, stats: H.emptyStats(), sleep: async () => {}, pace: async () => {},
     city: H.emptyCityStats(tilePlan.length), area: null, dayTally: new Map(), otherDays: new Map(), secrets: [],
     centroids: centroids || undefined, quiet: true,
-    onInvalidCurve: ({ keyless, dayInt, slot, value }) => {
-      if (invalidCurves.length >= DETAIL_EXAMPLES) return;
-      invalidCurves.push({
-        file: H.cacheFileName(keyless), dayInt: Number.isInteger(dayInt) ? dayInt : null, slot, value: valueText(value),
+    // A shape (slot null) and a slot value are listed apart.
+    onInvalidCurve: ({ keyless, record, dayInt, slot, value }) => {
+      const list = slot === null ? invalidShapes : invalidCurves;
+      if (list.length >= DETAIL_EXAMPLES) return;
+      list.push({
+        file: H.cacheFileName(keyless), record, dayInt: Number.isInteger(dayInt) ? dayInt : null, slot,
+        value: slot === null ? shapeText(value) : valueText(value),
       });
     },
-    // The short page is the answer read last: requestPage hands it over
-    // before fetchTile judges it.
-    onShortOfTotal: ({ day, page, listed, collected, total }) => {
-      if (shortPages.length < DETAIL_EXAMPLES) shortPages.push({ file: lastFile, day, page, listed, collected, venuesN: total });
+    // The box's last answered page is the answer read last: fetchTile judges
+    // the box once its paging ends.
+    onShortOfTotal: ({ day, page, collected, total, miss }) => {
+      if (shortPages.length < DETAIL_EXAMPLES) shortPages.push({ file: lastFile, day, page, collected, venuesN: total, miss });
     },
     onCacheHit: (keyless, entry) => {
       lastFile = H.cacheFileName(keyless);
@@ -597,6 +631,8 @@ async function replayFolder({ dir, cities, radiusKm, centroids = null, venueAnsw
     truncatedTiles: s.truncatedTiles,
     malformed: s.malformed,
     unverifiable: s.unverifiable,
+    invalidCurveShapes: s.invalidCurveShapes,
+    invalidShapes,
     invalidCurveValues: s.invalidCurveValues,
     invalidCurves,
     shortOfTotal: s.shortOfTotal,
@@ -647,15 +683,21 @@ async function replayCity(city) {
     refuse(city, 'truncatedTiles', `${r.truncatedTiles} boxes reached the ${CACHER.resultCap} cap at the smallest tile: `
       + 'venues there were never listed');
   }
+  if (r.invalidCurveShapes > 0) {
+    refuse(city, 'invalidCurveShapes', `${r.invalidCurveShapes} records carry no 24-slot curve, duplicates and other days' `
+      + `records included: ${r.invalidShapes.map((x) => `${city.key} ${x.file} record ${x.record} day_int ${x.dayInt} `
+        + `(${x.value})`).join('; ')}${r.invalidCurveShapes > r.invalidShapes.length ? '; ...' : ''}`);
+  }
   if (r.invalidCurveValues > 0) {
     refuse(city, 'invalidCurveValues', `${r.invalidCurveValues} curve slots are no number from 0 to 100, each a venue-hour `
-      + `that would be left out unseen: ${r.invalidCurves.map((x) => `${city.key} ${x.file} day_int ${x.dayInt} slot ${x.slot} `
-        + `(${x.value})`).join('; ')}${r.invalidCurveValues > r.invalidCurves.length ? '; ...' : ''}`);
+      + `that would be left out unseen: ${r.invalidCurves.map((x) => `${city.key} ${x.file} record ${x.record} `
+        + `day_int ${x.dayInt} slot ${x.slot} (${x.value})`).join('; ')}${r.invalidCurveValues > r.invalidCurves.length ? '; ...' : ''}`);
   }
   if (r.shortOfTotal > 0) {
-    refuse(city, 'shortPageBelowTotal', `${r.shortOfTotal} short pages said their box held more venues than its pages listed, `
-      + `so venues there were never read: ${r.shortPages.map((x) => `${city.key} ${x.file} day_int ${x.day} page ${x.page}: `
-        + `${x.listed} listed, ${x.collected} in the box so far, venues_n ${x.venuesN}`).join('; ')}`
+    refuse(city, 'shortPageBelowTotal', `${r.shortOfTotal} boxes ended below the venues_n a page of theirs declared, so `
+      + `venues there were never read: ${r.shortPages.map((x) => `${city.key} day_int ${x.day}, paging ended at page `
+        + `${x.page} (${x.miss ? `no answer file; the last page read was ${x.file}` : x.file}): `
+        + `${x.collected} listed in the box, venues_n ${x.venuesN}`).join('; ')}`
       + `${r.shortOfTotal > r.shortPages.length ? '; ...' : ''}`);
   }
   if (r.month === null) {
@@ -720,25 +762,26 @@ function parseCsv(text) {
 
 // A grid of rows by about 2.2 km of latitude, for the keep-away rule.
 const KEEP_AWAY_CELL_DEG = 0.02;
+const KEEP_AWAY_LNG_CELLS = 18000; // 360 / KEEP_AWAY_CELL_DEG, around the globe
+const keepAwayLngCell = (lng) => H.wrapCell(Math.floor(lng / KEEP_AWAY_CELL_DEG), KEEP_AWAY_LNG_CELLS);
 function keepAwayIndex(rows) {
   const grid = new Map();
   for (const r of rows) {
     if (!Number.isFinite(r.latitude) || !Number.isFinite(r.longitude)) continue;
-    const k = `${Math.floor(r.latitude / KEEP_AWAY_CELL_DEG)}_${Math.floor(r.longitude / KEEP_AWAY_CELL_DEG)}`;
+    const k = `${Math.floor(r.latitude / KEEP_AWAY_CELL_DEG)}_${keepAwayLngCell(r.longitude)}`;
     if (!grid.has(k)) grid.set(k, []);
     grid.get(k).push(r);
   }
-  // The nearest row within `km`, or null. The search reaches as many cells
-  // as `km` spans at this latitude, so a high latitude's narrow cells are
-  // all read.
+  // The nearest row within `km`, or null. The search reaches every cell a
+  // point within `km` can be in on kmBetween's own sphere, at any latitude
+  // and across the antimeridian (harvestVenueFilter's GRID SEARCHES).
   return (lat, lng, km = CORPUS_KEEP_AWAY_KM) => {
     const gy = Math.floor(lat / KEEP_AWAY_CELL_DEG);
-    const gx = Math.floor(lng / KEEP_AWAY_CELL_DEG);
-    const dy = Math.ceil(km / (111.32 * KEEP_AWAY_CELL_DEG));
-    const dx = Math.ceil(km / (111.32 * Math.max(0.05, Math.cos((lat * Math.PI) / 180)) * KEEP_AWAY_CELL_DEG));
+    const reach = H.cellsWithin(lat, km, KEEP_AWAY_CELL_DEG);
+    const lngCells = H.lngCellsAround(keepAwayLngCell(lng), reach.lng, KEEP_AWAY_LNG_CELLS);
     let best = null;
-    for (let y = gy - dy; y <= gy + dy; y++) {
-      for (let x = gx - dx; x <= gx + dx; x++) {
+    for (let y = gy - reach.lat; y <= gy + reach.lat; y++) {
+      for (const x of lngCells) {
         for (const r of grid.get(`${y}_${x}`) || []) {
           const d = kmBetween(lat, lng, r.latitude, r.longitude);
           if (d <= km && (best === null || d < best.km)) best = { row: r, km: d };
@@ -1471,14 +1514,15 @@ async function runImport(opts, { log }) {
   const flagged = [];
   log(`${TAG} BY CITY: files read of held; misses against progress.json's 404s; venues found by the city's replay; `
     + 'home venues (placed here, or found here and dropped); kept; weekly rows; records malformed and without a day, '
-    + 'boxes cut at the cap, stray files, curve slots no number from 0 to 100, short pages below their venues_n; drops; '
+    + 'boxes cut at the cap, stray files, records with no 24-slot curve, curve slots no number from 0 to 100, boxes ended '
+    + 'below their venues_n; drops; '
     + `peak hour per category (mode, venues, hours from the training mode${reference ? '' : ': not run'}).`);
   const records = (r) => ({
     malformed: r.malformed, unverifiable: r.unverifiable, truncatedTiles: r.truncatedTiles, strayFiles: r.strayFiles,
-    invalidCurveValues: r.invalidCurveValues, shortOfTotal: r.shortOfTotal,
+    invalidCurveShapes: r.invalidCurveShapes, invalidCurveValues: r.invalidCurveValues, shortOfTotal: r.shortOfTotal,
   });
   const recordText = (r) => `malformed ${r.malformed}  no day ${num(r.unverifiable)}  cut ${r.truncatedTiles}  stray ${r.strayFiles}`
-    + `  bad slots ${r.invalidCurveValues}  short of total ${r.shortOfTotal}`;
+    + `  bad curves ${r.invalidCurveShapes}  bad slots ${r.invalidCurveValues}  short of total ${r.shortOfTotal}`;
   // The bar and nightclub comparisons the reference could not make, by city.
   const peakUnavailable = {};
   for (const city of [...accepted].sort((a, b) => a.key.localeCompare(b.key))) {
@@ -1534,7 +1578,9 @@ async function runImport(opts, { log }) {
   // Counted again from the kept venues themselves: the drop above makes it 0,
   // and --write refuses if it ever is not.
   const keptNearHoldout = pass.kept.filter((k) => nearHoldout(k.venue.lat, k.venue.lng)).length;
-  const recordTotals = { malformed: 0, unverifiable: 0, truncatedTiles: 0, strayFiles: 0, invalidCurveValues: 0, shortOfTotal: 0 };
+  const recordTotals = {
+    malformed: 0, unverifiable: 0, truncatedTiles: 0, strayFiles: 0, invalidCurveShapes: 0, invalidCurveValues: 0, shortOfTotal: 0,
+  };
   for (const city of accepted) for (const k of Object.keys(recordTotals)) recordTotals[k] += city.replay[k];
   const unavailableCount = Object.values(peakUnavailable).reduce((n, cats) => n + cats.length, 0);
   report.totals = {
@@ -1724,7 +1770,7 @@ async function writeOutputs(opts, result, { log }) {
 // Which venues of a parity replay this folder's runs wrote (see the header):
 // `expected` by stored id, and every other venue the replay found, counted by
 // why it is left out.
-function parityVenues(r, snapshot, cities, radiusKm) {
+function parityVenues(r, snapshot, cities, radiusKm, writtenBefore = null) {
   const t0 = Date.parse(r.fetchedAt.min);
   // The corpus as the folder's first answer found it. A row with no
   // created_at is taken as older: it can only make a venue known, never new.
@@ -1737,6 +1783,7 @@ function parityVenues(r, snapshot, cities, radiusKm) {
     neverWritten: 0, // planned new, and no row carries its BestTime id
     storedUnderAnotherStatus: 0, // its row is not 'harvested'
     writtenBeforeItsAnswerHere: 0, // its row is older than an answer here that lists it: another pass wrote it
+    writtenByALaterWriter: 0, // its row is from --written-before or later: the next writer's
     noCreatedAt: 0,
     notPlannedNew: 0, // skipped by the replay's own rules (radius, type, name, signal, twins, claims)
   };
@@ -1750,6 +1797,7 @@ function parityVenues(r, snapshot, cities, radiusKm) {
     if (stored.createdAtMs === null) { left.noCreatedAt++; continue; }
     const lastAnswer = r.venueAnswered.get(item.venue.venueId);
     if (!(stored.createdAtMs >= lastAnswer)) { left.writtenBeforeItsAnswerHere++; continue; }
+    if (writtenBefore !== null && !(stored.createdAtMs < writtenBefore)) { left.writtenByALaterWriter++; continue; }
     expected.set(stored.id, {
       item: { venue: item.venue, category: item.category, month: r.month }, city: stored.city,
       cells: sortedCells(item.venue), seen: new Set(),
@@ -1791,9 +1839,10 @@ async function runParity(opts, { log }) {
     log(`${TAG} PARITY REFUSED: ${r.misses} misses, ${opts.expectMisses} expected.`);
     return { exitCode: 1 };
   }
-  const { expected, left, harvestedElsewhere } = parityVenues(r, snapshot, opts.cities, opts.radiusKm);
+  const { expected, left, harvestedElsewhere } = parityVenues(r, snapshot, opts.cities, opts.radiusKm, opts.writtenBefore);
+  const bound = opts.writtenBefore === null ? '' : ` and before ${new Date(opts.writtenBefore).toISOString()} (--written-before)`;
   log(`${TAG} PARITY: ${num(expected.size)} venues this folder's runs wrote to compare (planned new against the corpus `
-    + `before ${r.fetchedAt.min}, stored 'harvested', created after every answer here that lists them). Left out: `
+    + `before ${r.fetchedAt.min}, stored 'harvested', created after every answer here that lists them${bound}). Left out: `
     + `${dropText(left) || 'none'}. Of those, ${num(harvestedElsewhere)} are stored 'harvested' from another pass's answers, `
     + 'never compared.');
   const header = HEADER_FIELDS;
