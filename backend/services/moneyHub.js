@@ -1114,6 +1114,10 @@ function buildPriceSheet({ expenses = [], reconciled = null, todayYmd }) {
   for (const [list, cadence] of [[costModel.FIXED_MONTHLY, 'monthly'], [costModel.FIXED_ANNUAL, 'yearly'], [costModel.ONE_TIME, 'one_time']]) {
     for (const e of list) {
       if (replaced.has(e.id)) continue;
+      // A code line whose subscription has ended (endedOn) is no longer paid,
+      // so it is off the sheet like a stopped bill, and never falls due for a
+      // price check (2026-11-25, the BestTime cancellation).
+      if (isYmd(e.endedOn)) continue;
       rows.push({ id: `code-${e.id}`, label: e.label, priceCents: Math.round(Number(e.usd) * 100), unit: unitOf[cadence], checkedOn: e.checked || null, source: e.source || null, from: 'code', dueAfterDays: cadence === 'one_time' ? null : PRICE_SHEET_STALE_DAYS });
     }
   }
@@ -1596,7 +1600,10 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     || (codeCadence === 'usage' && rowCadence === 'monthly')
     || (codeCadence === 'monthly' && rowCadence === 'usage');
   for (const c of lines) {
-    if (c.origin === 'expense' || !c.counted || !has(CODE_LINE_LOOKALIKE, c.id)) continue;
+    // A $0 code line adds nothing to any total, so a bill beside it is counted
+    // once and nothing is doubled (2026-11-25: the cancelled BestTime line is
+    // $0, and a $119 BestTime row beside it was flagged as counted twice).
+    if (c.origin === 'expense' || !c.counted || !(c.amountCents > 0) || !has(CODE_LINE_LOOKALIKE, c.id)) continue;
     for (const x of expenses) {
       // Every row counted this month, a stopped one paid this month included.
       if (!countedExpenseIds.has(x.id)) continue;

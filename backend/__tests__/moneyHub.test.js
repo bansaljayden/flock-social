@@ -3153,6 +3153,22 @@ test('a Railway plan that runs the BestTime cron service is Railway\'s bill, nev
   assert.deepStrictEqual(unlinked.possibleDoubles.map((d) => [d.codeLineId, d.expenseId]), [['railway', 2]]);
 });
 
+test('a bill beside a $0 code line is counted once and not flagged as a double', () => {
+  // The BestTime line is $0 since the subscription was cancelled on
+  // 2026-11-25. A $119 BestTime row beside it adds the only $119 there is, so
+  // "Possibly counted twice" would be wrong (review 2026-11-25).
+  const cm = require('../services/costModel');
+  assert.strictEqual(cm.FIXED_MONTHLY.find((e) => e.id === 'besttime-subscription').usd, 0);
+  const base = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
+  const pic = moneyHub.buildCostPicture({
+    expenses: [expense({ id: 1, vendor: 'BestTime.app', product: 'Package Pro 3', kind: 'infrastructure', amountCents: 11900 })],
+    month: MONTH,
+  });
+  assert.ok(pic.lines.find((l) => l.id === 'besttime-subscription').counted, 'the $0 line is still on the list');
+  assert.deepStrictEqual(pic.possibleDoubles.filter((d) => d.codeLineId === 'besttime-subscription'), [], JSON.stringify(pic.possibleDoubles));
+  assert.strictEqual(pic.totals.perMonthCents, base.totals.perMonthCents + 11900, 'the row adds its $119 once');
+});
+
 test('a real double still flags: the vendor\'s own bill beside its code line, and a product that names a line when the vendor names none', () => {
   // The vendor's example is TheSportsDB, a code line that bills something: the
   // BestTime line it used to be is $0 since the 2026-11-25 cancellation, so a
@@ -3835,7 +3851,12 @@ test('the price sheet lists every bill and rate card once, never checked and old
   });
   const ids = ps.rows.map((r) => r.id);
   assert.strictEqual(new Set(ids).size, ids.length, 'a line appears twice');
-  for (const e of [...cm.FIXED_MONTHLY, ...cm.FIXED_ANNUAL, ...cm.ONE_TIME]) assert.ok(ids.includes(`code-${e.id}`), e.id);
+  for (const e of [...cm.FIXED_MONTHLY, ...cm.FIXED_ANNUAL, ...cm.ONE_TIME]) {
+    // An ended subscription (endedOn) is not a price paid now, like a stopped bill.
+    if (e.endedOn) assert.ok(!ids.includes(`code-${e.id}`), `${e.id} ended on ${e.endedOn} and is still on the sheet`);
+    else assert.ok(ids.includes(`code-${e.id}`), e.id);
+  }
+  assert.ok(cm.FIXED_MONTHLY.some((e) => e.id === 'besttime-subscription' && e.endedOn), 'the cancelled BestTime line is the ended case this checks');
   for (const l of cm.RECONCILED.lines) assert.ok(ids.includes(`rec-${l.id}`), l.id);
   for (const k of Object.keys(cm.RATES)) assert.ok(ids.includes(`rate-${k}`), k);
   assert.ok(!ids.includes('expense-3'), 'a stopped bill is not a price paid now');
