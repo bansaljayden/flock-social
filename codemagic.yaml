@@ -32,6 +32,10 @@
 #                                      work (useGoogleAuth.js
 #                                      isGoogleSignInAvailable). Nothing on the
 #                                      login screen says a provider went missing.
+#                                      Not failing green any more: the Google
+#                                      check step below stops the App Store
+#                                      build when it is unset or does not match
+#                                      the URL scheme in Info.plist
 #      REACT_APP_FIREBASE_*            web push registration only. NATIVE push
 #                                      comes from GoogleService-Info.plist below,
 #                                      not from these six. One of them is read by
@@ -117,6 +121,76 @@ workflows:
     scripts:
       - name: Install web dependencies
         script: npm install --no-audit --no-fund
+      - name: Check the Google iOS client id against the app's URL scheme
+        script: |
+          # CONTINUE WITH GOOGLE FAILS GREEN TWO WAYS, and both builds install
+          # and run. With REACT_APP_GOOGLE_IOS_CLIENT_ID unset, the button hides
+          # itself (useGoogleAuth.js isGoogleSignInAvailable) and the sign-in
+          # screen shows Apple and email with nothing missing. With it set to an
+          # id whose reversed form is not the URL scheme in Info.plist,
+          # GoogleSignIn looks for that scheme on the tap and raises "Your app
+          # is missing support for the following URL schemes", which closes the
+          # app. The web client id pasted in its place is the likeliest slip.
+          # Both answers are in two values already here, so this asks before the
+          # build, not on somebody's phone.
+          set -eu
+          SUFFIX=".apps.googleusercontent.com"
+          ID="${REACT_APP_GOOGLE_IOS_CLIENT_ID:-}"
+          if [ -z "$ID" ]; then
+            echo "GOOGLE CHECK FAILED: REACT_APP_GOOGLE_IOS_CLIENT_ID is not set in the flock_web group."
+            echo "Continue with Google would hide itself on every iPhone, and nothing on the sign-in"
+            echo "screen would say a way in had gone missing."
+            echo "FIX: set it to the iOS OAuth client id (Google Cloud, APIs and Services, Credentials),"
+            echo "     the one whose reversed form is the URL scheme in ios/App/App/Info.plist."
+            exit 1
+          fi
+          case "$ID" in
+            *[[:space:]]*)
+              echo "GOOGLE CHECK FAILED: REACT_APP_GOOGLE_IOS_CLIENT_ID holds a space or a line break."
+              echo "FIX: paste the id again with nothing around it."
+              exit 1
+              ;;
+          esac
+          case "$ID" in
+            ?*"$SUFFIX") ;;
+            *)
+              echo "GOOGLE CHECK FAILED: REACT_APP_GOOGLE_IOS_CLIENT_ID does not end in $SUFFIX,"
+              echo "so it is not a Google OAuth client id."
+              exit 1
+              ;;
+          esac
+          if [ "$ID" = "${REACT_APP_GOOGLE_CLIENT_ID:-}" ]; then
+            echo "GOOGLE CHECK FAILED: REACT_APP_GOOGLE_IOS_CLIENT_ID is the same id as REACT_APP_GOOGLE_CLIENT_ID."
+            echo "That one is the web client, which the server checks. The iPhone needs the iOS client"
+            echo "from the same Google Cloud project."
+            exit 1
+          fi
+          WANT="com.googleusercontent.apps.${ID%"$SUFFIX"}"
+          if ! SCHEMES=$(python3 -c '
+          import plistlib, sys
+          with open(sys.argv[1], "rb") as f:
+              d = plistlib.load(f)
+          for t in d.get("CFBundleURLTypes") or []:
+              for s in t.get("CFBundleURLSchemes") or []:
+                  print(s)
+          ' ios/App/App/Info.plist); then
+            echo "GOOGLE CHECK FAILED: ios/App/App/Info.plist could not be read as a plist."
+            exit 1
+          fi
+          FOUND=0
+          for s in $SCHEMES; do
+            if [ "$s" = "$WANT" ]; then FOUND=1; fi
+          done
+          if [ "$FOUND" -ne 1 ]; then
+            echo "GOOGLE CHECK FAILED: Info.plist does not declare $WANT as a URL scheme."
+            echo "Declared: $(echo ${SCHEMES:-none})"
+            echo "A tap on Continue with Google would close the app."
+            echo "FIX: REACT_APP_GOOGLE_IOS_CLIENT_ID and the CFBundleURLSchemes entry in"
+            echo "     ios/App/App/Info.plist are one setting in two places. Set both from the same"
+            echo "     iOS client id, the plist one reversed."
+            exit 1
+          fi
+          echo "Google sign-in: REACT_APP_GOOGLE_IOS_CLIENT_ID matches the URL scheme in Info.plist ($WANT)."
       - name: Build web app (root asset paths)
         # REACT_APP_PURCHASES=off: the App Store build sells nothing (no purchase
         # screen, no price, no store SDK; a server limit is stated without an

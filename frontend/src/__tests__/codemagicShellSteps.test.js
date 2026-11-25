@@ -1,11 +1,12 @@
 // ---------------------------------------------------------------------------
 // THE SHELL STEPS IN codemagic.yaml, EXECUTED.
 //
-// Three now: the push plist check, the provisioning profile check, and the
-// RevenueCat key check (section 3 at the bottom), which stops a build that
-// sells Flock Pro without the Apple key, or with the Pro sheet and no store,
-// and does nothing to one that sells nothing. The history below is about the
-// first two.
+// Four now: the push plist check, the provisioning profile check, the
+// RevenueCat key check (section 3), which stops a build that sells Flock Pro
+// without the Apple key, or with the Pro sheet and no store, and does nothing
+// to one that sells nothing, and the Google iOS client id check (section 4),
+// which stops a build whose Continue with Google would hide itself or close
+// the app. The history below is about the first two.
 //
 // WHY THIS FILE EXISTS. Both guards in that file were written after a build
 // shipped something broken while printing green, and both were then tested by
@@ -92,6 +93,7 @@ function stepScript(titleRe) {
 const PLIST_STEP = stepScript(/GoogleService-Info\.plist/);
 const PROFILE_STEP = stepScript(/App\.entitlements/);
 const REVENUECAT_STEP = stepScript(/RevenueCat key/);
+const GOOGLE_STEP = stepScript(/Google iOS client id/);
 
 // --- can this machine run a POSIX shell at all? ----------------------------
 // The same rule the generated-config checks in iosShellConfigMatchesCode.js
@@ -150,7 +152,7 @@ const s = (name) => (RUNNABLE ? name : `${name} [${NEEDS_SHELL}]`);
 if (!RUNNABLE) {
   // eslint-disable-next-line no-console
   console.warn(
-    `[codemagicShellSteps] ${NEEDS_SHELL}. NOTHING in codemagic.yaml's three shell`
+    `[codemagicShellSteps] ${NEEDS_SHELL}. NOTHING in codemagic.yaml's four shell`
     + ' steps was executed on this run.'
   );
 }
@@ -272,7 +274,10 @@ function runAsync(step, opts = {}) {
 // guards in them. Cheap, and it is the one thing that cannot be caught by the
 // cases below going green.
 describe('the step bodies come out of codemagic.yaml intact', () => {
-  test('all three steps parse as runnable shell, not as an empty string', () => {
+  test('all four steps parse as runnable shell, not as an empty string', () => {
+    expect(GOOGLE_STEP.body).toMatch(/^set -eu$/m);
+    expect(GOOGLE_STEP.body).toMatch(/GOOGLE CHECK FAILED/);
+    expect(GOOGLE_STEP.body).toMatch(/^ {4}for s in t\.get\("CFBundleURLSchemes"\) or \[\]:$/m);
     expect(PLIST_STEP.body).toMatch(/^set -eu$/m);
     expect(PLIST_STEP.body).toMatch(/PUSH CHECK FAILED/);
     expect(PLIST_STEP.body.split('\n').length).toBeGreaterThan(40);
@@ -782,5 +787,86 @@ describe(s('the RevenueCat key step, run'), () => {
     const r = build({ ...ON_BUILD, 'broken.chunk.js.map': '{ not json' }, 'appl_AbCdEf123456');
     expect(r.code).toBe(1);
     expect(r.out).toContain('PURCHASE CHECK FAILED: the source maps under build/static/js could not be read,');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. The Google iOS client id step.
+//
+// Run against the REAL Info.plist, comments and all, because plistlib reading
+// that file is half of what the step does on the runner. The matching id is
+// taken back out of the plist's own scheme rather than typed here, so a new
+// iOS client changes one file, not two.
+// ---------------------------------------------------------------------------
+describe(s('the Google iOS client id step, run'), () => {
+  jest.setTimeout(30000);
+
+  const REAL_PLIST = fs.readFileSync(path.join(REPO, 'frontend', 'ios', 'App', 'App', 'Info.plist'), 'utf8')
+    .replace(/\r\n/g, '\n');
+  const SCHEME = /<string>(com\.googleusercontent\.apps\.[^<]+)<\/string>/.exec(REAL_PLIST)[1];
+  const IOS_ID = `${SCHEME.replace(/^com\.googleusercontent\.apps\./, '')}.apps.googleusercontent.com`;
+  const WEB_ID = 'web-client-123.apps.googleusercontent.com';
+  const check = (env, plist = REAL_PLIST) => run(GOOGLE_STEP, {
+    files: { 'Info.plist': plist },
+    env,
+  });
+
+  shellTest('the id whose reversed form is the plist scheme passes, and says what it compared', () => {
+    const r = check({ REACT_APP_GOOGLE_IOS_CLIENT_ID: IOS_ID, REACT_APP_GOOGLE_CLIENT_ID: WEB_ID });
+    expect(r.code).toBe(0);
+    expect(r.out.trim()).toBe(`Google sign-in: REACT_APP_GOOGLE_IOS_CLIENT_ID matches the URL scheme in Info.plist (${SCHEME}).`);
+  });
+
+  shellTest('an unset id stops the build, because the button would hide itself', () => {
+    for (const id of [undefined, '']) {
+      const r = check(id === undefined ? {} : { REACT_APP_GOOGLE_IOS_CLIENT_ID: id });
+      expect({ id, code: r.code }).toEqual({ id, code: 1 });
+      expect(r.out).toContain('GOOGLE CHECK FAILED: REACT_APP_GOOGLE_IOS_CLIENT_ID is not set in the flock_web group.');
+    }
+  });
+
+  shellTest('a pasted id with a space or a line break around it stops it', () => {
+    for (const id of [`${IOS_ID}\n`, ` ${IOS_ID}`, `${IOS_ID} `]) {
+      const r = check({ REACT_APP_GOOGLE_IOS_CLIENT_ID: id });
+      expect({ id, code: r.code }).toEqual({ id, code: 1 });
+      expect(r.out).toContain('holds a space or a line break');
+    }
+  });
+
+  shellTest('something that is not a Google client id stops it', () => {
+    for (const id of ['1012360079798-abc', '.apps.googleusercontent.com', 'appl_abc123']) {
+      const r = check({ REACT_APP_GOOGLE_IOS_CLIENT_ID: id });
+      expect({ id, code: r.code }).toEqual({ id, code: 1 });
+      expect(r.out).toContain('does not end in .apps.googleusercontent.com,');
+    }
+  });
+
+  shellTest('the web client id in the iOS slot is named as that', () => {
+    const r = check({ REACT_APP_GOOGLE_IOS_CLIENT_ID: WEB_ID, REACT_APP_GOOGLE_CLIENT_ID: WEB_ID });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('is the same id as REACT_APP_GOOGLE_CLIENT_ID.');
+  });
+
+  shellTest('an iOS id the plist does not declare stops it and shows what the plist does declare', () => {
+    const other = '999999999999-otherclient.apps.googleusercontent.com';
+    const r = check({ REACT_APP_GOOGLE_IOS_CLIENT_ID: other, REACT_APP_GOOGLE_CLIENT_ID: WEB_ID });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('GOOGLE CHECK FAILED: Info.plist does not declare com.googleusercontent.apps.999999999999-otherclient as a URL scheme.');
+    expect(r.out).toContain(`Declared: ${SCHEME}`);
+    expect(r.out).not.toMatch(/^Google sign-in:/m);
+  });
+
+  shellTest('a plist with no URL scheme at all stops it, and says none were declared', () => {
+    const bare = '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>'
+      + '<key>CFBundleIdentifier</key><string>com.flockcorp.flock</string></dict></plist>\n';
+    const r = check({ REACT_APP_GOOGLE_IOS_CLIENT_ID: IOS_ID }, bare);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('Declared: none');
+  });
+
+  shellTest('a plist that cannot be read stops it rather than passing', () => {
+    const r = check({ REACT_APP_GOOGLE_IOS_CLIENT_ID: IOS_ID }, 'not a plist');
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('GOOGLE CHECK FAILED: ios/App/App/Info.plist could not be read as a plist.');
   });
 });
