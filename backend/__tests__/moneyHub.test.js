@@ -1973,6 +1973,25 @@ test('the cycle dates are worked out from the calendar month, the rule the comma
     assert.strictEqual(plan.endedOn, '2026-11-25', day);
     assert.deepStrictEqual([plan.newVenuesPerMonth, plan.cycle, plan.cycleEndsOn, plan.resetsOn], [null, null, null, null], day);
   }
+  // A running plan (no endedOn on the line, as a new subscription would leave
+  // it) gets its cycle from the same rule, through statedBestTimePlan itself
+  // (review 2026-11-25: the helpers alone left that wiring untested).
+  const { STATED_PLAN } = require('../services/besttimeAccount');
+  const line = require('../services/costModel').FIXED_MONTHLY.find((e) => e.id === STATED_PLAN.costLineId);
+  const savedEndedOn = line.endedOn;
+  delete line.endedOn;
+  try {
+    const running = moneyHub.statedBestTimePlan(sep);
+    assert.deepStrictEqual(
+      [running.endedOn, running.newVenuesPerMonth, running.cycle, running.cycleEndsOn, running.resetsOn],
+      [null, STATED_PLAN.newVenuesPerMonth, STATED_PLAN.cycle, '2026-09-30', '2026-10-01'],
+    );
+    const leap = moneyHub.statedBestTimePlan(feb);
+    assert.deepStrictEqual([leap.cycleEndsOn, leap.resetsOn], ['2028-02-29', '2028-03-01']);
+    assert.strictEqual(moneyHub.statedBestTimePlan(new Date('2026-12-31T23:59:00Z')).resetsOn, '2027-01-01');
+  } finally {
+    line.endedOn = savedEndedOn;
+  }
 });
 
 test('crowd data reads the key endpoint once, carries the counters under BestTime\'s names, and never a key', async () => {
@@ -3141,16 +3160,28 @@ test('a Railway plan that runs the BestTime cron service is Railway\'s bill, nev
     vendor: 'Railway', product: 'Pro plan (API, Postgres, BestTime cron)', category: 'hosting', kind: 'infrastructure',
     cadence: 'monthly', amountCents: 2452, lastChargedOn: '2026-09-15', renewsOn: '2026-10-15', verified: true,
   };
-  const linked = moneyHub.buildCostPicture({ expenses: [expense({ id: 1, ...railwayPlan, replacesLine: 'railway' })], month: MONTH });
-  const besttime = linked.lines.find((l) => l.id === 'besttime-subscription');
-  assert.strictEqual(besttime.label, 'BestTime.app Pro, Package 100');
-  assert.strictEqual(besttime.counted, true, 'the BestTime line is counted, so the check had the pair to look at');
-  assert.ok(linked.lines.some((l) => l.expenseId === 1 && l.counted), 'and so is the Railway row');
-  assert.deepStrictEqual(linked.possibleDoubles, [], JSON.stringify(linked.possibleDoubles));
+  // The BestTime line is $0 since the 2026-11-25 cancellation, and a $0 line is
+  // never checked for doubles, so this test gives it a running plan's $119
+  // for its length: otherwise it would pass without the vendor-first matching
+  // it is about ever running (review 2026-11-25).
+  const line = require('../services/costModel').FIXED_MONTHLY.find((e) => e.id === 'besttime-subscription');
+  const savedUsd = line.usd;
+  line.usd = 119;
+  try {
+    const linked = moneyHub.buildCostPicture({ expenses: [expense({ id: 1, ...railwayPlan, replacesLine: 'railway' })], month: MONTH });
+    const besttime = linked.lines.find((l) => l.id === 'besttime-subscription');
+    assert.strictEqual(besttime.label, 'BestTime.app Pro, Package 100');
+    assert.strictEqual(besttime.amountCents, 11900, 'the BestTime line bills something, so the double check reaches it');
+    assert.strictEqual(besttime.counted, true, 'the BestTime line is counted, so the check had the pair to look at');
+    assert.ok(linked.lines.some((l) => l.expenseId === 1 && l.counted), 'and so is the Railway row');
+    assert.deepStrictEqual(linked.possibleDoubles, [], JSON.stringify(linked.possibleDoubles));
 
-  // Not linked to the Railway line, it is still flagged, and only beside it.
-  const unlinked = moneyHub.buildCostPicture({ expenses: [expense({ id: 2, ...railwayPlan })], month: MONTH });
-  assert.deepStrictEqual(unlinked.possibleDoubles.map((d) => [d.codeLineId, d.expenseId]), [['railway', 2]]);
+    // Not linked to the Railway line, it is still flagged, and only beside it.
+    const unlinked = moneyHub.buildCostPicture({ expenses: [expense({ id: 2, ...railwayPlan })], month: MONTH });
+    assert.deepStrictEqual(unlinked.possibleDoubles.map((d) => [d.codeLineId, d.expenseId]), [['railway', 2]]);
+  } finally {
+    line.usd = savedUsd;
+  }
 });
 
 test('a bill beside a $0 code line is counted once and not flagged as a double', () => {
