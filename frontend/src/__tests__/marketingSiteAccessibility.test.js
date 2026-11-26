@@ -1038,15 +1038,15 @@ describe('copy rules (DESIGN-STANDARD)', () => {
   test('/research limits the charted forecast to the venues and readings it was measured on', () => {
     const page = readJs('ResearchPage.js').replace(/\s+/g, ' ');
     expect(page).not.toMatch(/every venue card/);
-    expect(page).toContain("The chart below scores the forecast Flock served from 26 September to mid-October, which moved each venue's weekly pattern with its own live readings. Since 1 November, Starling, Flock's own crowd model and the one the paper tests, makes the forecast behind venue cards wherever Flock knows a place's weekly pattern; other places get what is typical for their kind.");
+    expect(page).toContain("The chart below scores the forecast Flock served from 26 September to mid-October, which moved each venue's weekly pattern with its own live readings. Since 1 November, Flock's own crowd model, Starling, has made the forecast behind venue cards wherever Flock knows a place's weekly pattern, and the paper tests it too. Other places get what is typical for their kind.");
     expect(page).not.toMatch(/has come from Starling/);
     // The readings of 9 to 25 September came before the charted forecast
     // went live, so they were replayed, not served. Its weights were fitted
-    // on 1 to 5 September, so "fixed before the first of them" is true of
+    // on 1 to 5 September, so "fixed before the first one" is true of
     // that forecast. The nowcast weights served from mid-October were chosen
     // on these same readings (backend/scripts/ml/MODEL-METRICS.md), so the
     // bare "None of them was used to set the forecast" stays banned.
-    expect(page).toContain(`note="Share of the same 119,939 live readings at 1,754 venues in Philadelphia, the Lehigh Valley and Miami, 9 September to 8 October 2026, each scored one hour ahead. Flock here is the forecast served from 26 September to mid-October, each venue's weekly pattern moved by its own latest live readings. It was replayed on every reading, and its settings were fixed before the first of them. Higher is better."`);
+    expect(page).toContain(`note="Share of the same 119,939 live readings at 1,754 venues in Philadelphia, the Lehigh Valley and Miami, 9 September to 8 October 2026, each scored one hour ahead. Flock here is the forecast served from 26 September to mid-October, which moved each venue's weekly pattern with its own latest live readings. We replayed it on every reading, and its settings were fixed before the first one. Higher is better."`);
     expect(page).not.toContain('None of them was used to set the forecast. ');
     expect(page).toContain("{ label: 'Exact crowd level', us: 54.9, them: 30.2 }");
   });

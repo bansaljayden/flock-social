@@ -397,11 +397,11 @@ export default function AboutPage() {
               app too.
             </p>
             <p>
-              Flux has only been tested on research footage so far. The next
-              version of Starling isn’t trained yet. Once it is, it gets scored
-              on the crowd readings of November 12 to 25, which it never saw,
-              and it replaces the current one only if it passes thresholds set
-              in September.
+              Flux, a sensor that counts the people in a room, was tested on research footage. Testing in real venues
+              comes next. Once the next version of Starling is trained, it gets
+              scored on the crowd readings of November 12 to 25, which it never
+              sees, and it takes over only if it passes thresholds set in
+              September.
             </p>
           </div>
         </section>

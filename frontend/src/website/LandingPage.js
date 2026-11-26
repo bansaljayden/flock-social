@@ -494,9 +494,9 @@ export default function LandingPage() {
                 a forecast. The quieter pick is the venue card's own suggestion. */}
             <p className="lp-lead">
               Search any place below. Where Flock knows a place’s usual week,
-              Starling, its crowd model, forecasts how far each hour will run
-              above or below that week, from things like the weather and the
-              venues around it. Anywhere else, Flock goes by what is typical for
+              its crowd model, Starling, forecasts how far each hour will run
+              above or below that week, based on things like the weather and the
+              venues nearby. Everywhere else, Flock goes by what’s typical for
               that kind of place. Packed? It suggests a quieter spot nearby.
             </p>
             {/* crowdEngine.js needs MIN_CALIBRATION_REPORTERS (3) distinct
@@ -510,9 +510,9 @@ export default function LandingPage() {
                 reports are from and never that people there made the number.
                 Check-ins do not feed the number at all. */}
             <p className="lp-live-note">
-              Verified reports from three different people for the same time of
-              week, filed in the last four weeks, move a venue’s score for that
-              hour.
+              Once three different people file verified reports for the same
+              time of week, a venue’s score for that hour moves. Only reports
+              from the last four weeks count.
             </p>
             {/* The two pages behind this number, as one line: /ai for the
                 models (it says plainly what the card serves today), /flux for

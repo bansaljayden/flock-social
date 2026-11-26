@@ -94,7 +94,7 @@ const SENSORS = [
   },
   {
     name: 'Door counter',
-    what: 'A VL53L8CX, which measures distance in an 8 by 8 grid. It looks down at a doorway from under the case to count people walking in and out. It hasn’t been tested on people walking through a real doorway yet.',
+    what: 'A VL53L8CX, which measures distance in an 8 by 8 grid. It looks down at a doorway from under the case to count people walking in and out. It hasn’t counted people in a real doorway yet.',
   },
   {
     name: 'Sound meter',

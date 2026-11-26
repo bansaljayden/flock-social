@@ -166,15 +166,13 @@ export default function AiPage() {
             <h2 id="ai-h-starling">Starling forecasts how busy a place will be</h2>
             <div className="ai-text">
               <p>
-                Starling learned, from venues in 30 cities on six continents, how
-                the hour, the weather, events nearby and the kind of place move a
-                venue’s crowd away from its usual week. For every hour it predicts
-                how far the crowd moves and adds that to the usual week, giving a
-                busyness score from 0 to 100. Where Flock knows a venue’s usual
-                week, the number on its card starts from that score. Until late
-                December, the number for a venue Flock read live also moves by
-                half of how far its live readings from the last four weeks ran
-                above or below that week.
+                Starling learned what pushes a venue’s crowd above or below its
+                usual week: the hour, the weather, events nearby and the kind of
+                place. It learned that from venues in 30 cities on six continents.
+                For every hour it predicts how far the crowd will move and adds
+                that to the usual week, which gives a busyness score from 0 to 100.
+                Where Flock knows a venue’s usual week, the number on its card
+                starts from that score. Until late December there’s one more step. If Flock has live readings for a venue from the last four weeks, the venue’s number moves by half of how far those readings ran above or below that week.
               </p>
               <p>
                 We tested it on three cities it never trained on: Miami, Barcelona
@@ -183,14 +181,13 @@ export default function AiPage() {
                 in the paper on the <a href="/research">research page</a>.
               </p>
               <p>
-                The version serving today, trained in August, is 800 small decision
-                trees up to 8 splits deep, each fixing what the trees before it got
-                wrong. The next version will learn from live readings taken up to
-                November 11. It will take over only if it passes all eight tests of
-                a gate fixed in advance, scored on the live readings of November 12
-                to 25, which are kept out of its training. It will also be larger:
-                2,000 trees up to 10 splits deep, a size picked on November 26 by a
-                test on training cities.
+                The version serving today is 800 small decision trees up to 8
+                splits deep, each one fixing what the trees before it got wrong.
+                We trained it in August. The next version will be bigger, 2,000
+                trees up to 10 splits deep, a size we picked on November 26 by
+                testing on training cities. It will learn from live readings taken
+                up to November 11, and it takes over only if it passes all eight
+                tests of a gate we fixed in advance, scored on the live readings of November 12 to 25 that it never trains on.
               </p>
             </div>
             <Figure

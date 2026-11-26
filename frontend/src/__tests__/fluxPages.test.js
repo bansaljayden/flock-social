@@ -260,7 +260,7 @@ describe('what the two pages say', () => {
     // reading at the sensor session's check of 2026-10-21, and the page said
     // so until 2026-11-26; since the bench session of 2026-11-24 it is switched
     // off on the Pi (DOOR_SENSOR=off) until shorter wires arrive.
-    expect(flux).toContain('It looks down at a doorway from under the case to count people walking in and out. It hasn’t been tested on people walking through a real doorway yet.');
+    expect(flux).toContain('It looks down at a doorway from under the case to count people walking in and out. It hasn’t counted people in a real doorway yet.');
     expect(flux).not.toContain('wired up and reading');
     expect(flux).not.toContain('It hasn’t been wired up yet.');
     expect(flux).toContain('It hasn’t run in a venue yet.');

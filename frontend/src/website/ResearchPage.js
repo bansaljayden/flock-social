@@ -155,12 +155,11 @@ export default function ResearchPage() {
               The first study is the crowd forecast. The chart below scores the
               forecast Flock served from 26 September to mid-October, which moved
               each venue's weekly pattern with its own live readings. Since 1
-              November, Starling, Flock's own crowd model and the one the paper
-              tests, makes the forecast behind venue cards wherever Flock knows a
-              place's weekly pattern; other places get what is typical for their
-              kind. The second study is Flux, a sensor that counts the people in
-              a room, tested on six public benchmark sets it never trained on.
-              Testing in real venues comes next.
+              November, Flock's own crowd model, Starling, has made the forecast
+              behind venue cards wherever Flock knows a place's weekly pattern,
+              and the paper tests it too. Other places get what is typical for
+              their kind. The second study is Flux, a sensor that counts the
+              people in a room. We tested it on research footage, including six public benchmark sets. Testing in real venues comes next.
             </p>
 
             <div className="rs-paper">
@@ -229,7 +228,7 @@ export default function ResearchPage() {
               usLabel="Flock"
               themLabel="Chart"
               rows={FORECAST}
-              note="Share of the same 119,939 live readings at 1,754 venues in Philadelphia, the Lehigh Valley and Miami, 9 September to 8 October 2026, each scored one hour ahead. Flock here is the forecast served from 26 September to mid-October, each venue's weekly pattern moved by its own latest live readings. It was replayed on every reading, and its settings were fixed before the first of them. Higher is better."
+              note="Share of the same 119,939 live readings at 1,754 venues in Philadelphia, the Lehigh Valley and Miami, 9 September to 8 October 2026, each scored one hour ahead. Flock here is the forecast served from 26 September to mid-October, which moved each venue's weekly pattern with its own latest live readings. We replayed it on every reading, and its settings were fixed before the first one. Higher is better."
             />
             <Chart
               title="Owl against the heat rule it replaced"

@@ -12,8 +12,10 @@ test('the landing page does not claim check-ins feed the crowd number', () => {
   // same weekly hour, give or take an hour, from the last 28 days, and nothing
   // requires a reporter to be there tonight, so it now says when they are from.
   // Only verified reports count (routes/crowd.js reads verified = true), so it
-  // says "Verified" too: an unverified report moves nothing.
-  expect(s).toMatch(/Verified reports from three different people for the same time of\s+week, filed in the last four weeks, move a venue’s score for that\s+hour\./);
+  // says "verified" too: an unverified report moves nothing. Reworded the same
+  // day in plainer words, with the same three facts: three different people,
+  // verified reports, the last four weeks.
+  expect(s).toMatch(/Once three different people file verified reports for the same\s+time of week, a venue’s score for that hour moves\. Only reports\s+from the last four weeks count\./);
   expect(s).not.toMatch(/Three reports from people at a venue/);
   expect(s).not.toMatch(/Check-ins from people who are actually there fold in live/);
   // "fold in live" went on 2026-09-22. Reports do move the published score and

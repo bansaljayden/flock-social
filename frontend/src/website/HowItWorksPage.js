@@ -215,9 +215,9 @@ const STEPS = [
 ];
 
 const AIS = [
-  { name: 'Starling', what: 'The crowd forecast. It predicts how far each hour at a place will move from its usual week, and we tested it on three cities it never trained on.' },
+  { name: 'Starling', what: 'The crowd forecast. It predicts how far each hour at a place will move from its usual week. We tested it on three cities it never trained on.' },
   { name: 'Birdie', what: 'Built on Google’s Gemini. Ask it where to go and it suggests places that fit the group. It checks with you before it does anything.' },
-  { name: 'Owl', what: 'A small neural network that counts people from body heat, on the Raspberry Pi inside Flux. Its counts leave the box and the heat frames never do: the people in view and, on a unit set up for tables, how many are at each table. So far it’s been tested on research footage.' },
+  { name: 'Owl', what: 'A small neural network that counts people from body heat, on the Raspberry Pi inside Flux. Its counts leave the box and the heat frames never do: the people in view and, on a unit set up for tables, how many are at each table. We tested it on research footage, and real venues come next.' },
   { name: 'Roost’s advisor', what: 'Helps a venue owner make more money: a short answer, a few points, and the sources at the end. Its advice builds on a playbook of tested moves from the trade, and numbers about the venue come from its measured data and are checked before the owner sees them.' },
 ];
 
