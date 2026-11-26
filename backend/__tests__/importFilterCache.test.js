@@ -1629,17 +1629,41 @@ test('--offline answers from the cache alone: no fetch, no key, misses counted a
   rewriteAnswer(path.join(damagedDir, listing[2]), (entry) => { delete entry.data.venues[0].day_int; delete entry.data.venues[0].day_info; });
   const damaged = await harvestOffline(['--city=philly', '--new-only', '--offline', `--cache-dir=${damagedDir}`]);
   assert.equal(damaged.summary.aborted, true);
-  assert.match(damaged.summary.abortReason,
-    /REFUSED: 0 records in --cache-dir had no 24-slot curve, 1 named no day, 1 curve slots were no number from 0 to 100, and 1 boxes ended below/);
+  assert.match(damaged.summary.abortReason, new RegExp('REFUSED: 0 records in --cache-dir were malformed \\(no venue id, or no '
+    + 'curve\\), 0 had no 24-slot curve, 1 named no day, 1 curve slots were no number from 0 to 100, and 1 boxes ended below'));
   // The record naming no day alone refuses it too.
   const dayOnlyDir = path.join(tmp('flock-import-philly-dayonly-'), 'philly-2026-11');
   fs.cpSync(phillyDir, dayOnlyDir, { recursive: true });
   rewriteAnswer(path.join(dayOnlyDir, listing[2]), (entry) => { delete entry.data.venues[0].day_int; delete entry.data.venues[0].day_info; });
   const dayOnly = await harvestOffline(['--city=philly', '--new-only', '--offline', `--cache-dir=${dayOnlyDir}`]);
   assert.equal(dayOnly.summary.aborted, true);
-  assert.match(dayOnly.summary.abortReason, /REFUSED: 0 records in --cache-dir had no 24-slot curve, 1 named no day, 0 curve slots/);
+  assert.match(dayOnly.summary.abortReason, /REFUSED: 0 records in --cache-dir were malformed .*, 0 had no 24-slot curve, 1 named no day, 0 curve slots/);
   assert.equal(dayOnly.fetches, 0);
   assert.equal(damaged.fetches, 0);
+  // A record with no venue id is set aside as malformed: its venue loses
+  // that day unseen, and a venue whose every record lost its id is gone while
+  // the curves, the days and the misses all check out (the other venues still
+  // carry the axis proof). Either alone refuses an offline commit before
+  // anything is planned or written.
+  const new1In = (entry) => entry.data.venues.find((v) => v.venue_id === NEW1.id);
+  const withNew1 = fs.readdirSync(phillyDir).filter((f) => new1In(JSON.parse(fs.readFileSync(path.join(phillyDir, f), 'utf8'))));
+  assert.equal(withNew1.length, 7);
+  for (const [label, files] of [['one day', withNew1.slice(0, 1)], ['the whole venue', withNew1]]) {
+    const noIdDir = path.join(tmp('flock-import-philly-noid-'), 'philly-2026-11');
+    fs.cpSync(phillyDir, noIdDir, { recursive: true });
+    for (const f of files) rewriteAnswer(path.join(noIdDir, f), (entry) => { delete new1In(entry).venue_id; });
+    const rowsBefore = await countRows();
+    const noId = await harvestOffline(['--city=philly', '--new-only', '--offline', `--cache-dir=${noIdDir}`, '--commit',
+      `--expect-misses=${phillyNotFound}`]);
+    assert.equal(noId.summary.aborted, true, label);
+    assert.match(noId.summary.abortReason, new RegExp(`REFUSED: ${files.length} records in --cache-dir were malformed `
+      + '\\(no venue id, or no curve\\), 0 had no 24-slot curve, 0 named no day, 0 curve slots were no number from 0 to 100, '
+      + 'and 0 boxes ended below'), label);
+    assert.deepEqual([noId.summary.offline.malformed, noId.summary.stats.cacheMisses], [files.length, phillyNotFound], label);
+    assert.deepEqual(noId.summary.plan, { known_bt: 0, known_place: 0, known_near: 0, new: 0 }, label);
+    assert.deepEqual(await countRows(), rowsBefore, label);
+    assert.equal(noId.fetches, 0, label);
+  }
   // Inside an offline run any fetch is refused before it leaves.
   await assert.rejects(H.withNoNetwork(() => fetch('https://besttime.app/api/v1/keys/x')), /REFUSED: an --offline run makes no request/);
 });
@@ -1798,14 +1822,56 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
   assert.match(late.out, /PARITY REFUSED: an answer here was fetched at 2026-11-24T14:00:00\.000Z, before --run-started 2026-11-24T14:30:00\.000Z/);
   // A row the run wrote after it started and before the answers here that
   // list it (NEW2 at 11:30, its answers at 12:00): the corpus is taken at
-  // --run-started, so NEW2 is planned new and found written before its
-  // answer here; a corpus taken at the earliest answer would hold it already
-  // and leave the write unreproduced.
+  // --run-started, so NEW2 is planned new, and written before its answers it
+  // cannot have been written from them: inconclusive. A corpus taken at the
+  // earliest answer would hold it already, and fail it as unreproduced.
   const between = await parity(exported.trainPath, {
     snapFile: snapshot('between.csv', { createdAt: { [NEW2.id]: '2026-11-24T11:30:00.000000Z' } }),
   });
-  assert.equal(between.result.exitCode, 0, between.out);
-  assert.deepEqual([between.result.venues, between.result.left.writtenBeforeItsAnswerHere, between.result.writes.justified], [1, 1, 1]);
+  assert.equal(between.result.exitCode, 1, between.out);
+  assert.deepEqual([between.result.venues, between.result.left.writtenBeforeItsAnswerHere], [1, 1]);
+  assert.deepEqual(between.result.inconclusive.map((w) => [w.id, w.btId, w.createdAt]),
+    [[written2.id, NEW2.id, '2026-11-24T11:30:00.000Z']]);
+  assert.deepEqual([between.result.writes.candidates, between.result.writes.compared, between.result.writes.inconclusive,
+    between.result.writes.unreproduced], [2, 1, 1, []]);
+  assert.match(between.out, /PARITY FAIL \(INCONCLUSIVE: 1 writes cannot be reproduced\)/);
+
+  // A write a later answer lists again, the review's case: NEW2's row is from
+  // 13:00, six of its seven days are gone from every answer, and the one day
+  // left is an answer fetched at 14:00 that says another review count. NEW1
+  // compares equal, and NEW2's write, whose own answers cannot be told from
+  // the later one's, is inconclusive: never excused as another pass's.
+  const relistedDir = path.join(tmp('flock-import-philly-relisted-'), 'philly-2026-11');
+  fs.cpSync(phillyDir, relistedDir, { recursive: true });
+  const listing2 = [];
+  for (const name of fs.readdirSync(relistedDir)) {
+    rewriteAnswer(path.join(relistedDir, name), (entry) => {
+      const rec = entry.data.venues.find((v) => v.venue_id === NEW2.id);
+      if (!rec) return;
+      if (rec.day_int === 3) {
+        rec.reviews = 5;
+        entry.fetchedAt = '2026-11-24T14:00:00.000Z';
+        listing2.push(name);
+        return;
+      }
+      entry.data.venues = entry.data.venues.filter((v) => v.venue_id !== NEW2.id);
+      entry.data.venues_n = entry.data.venues.length;
+    });
+  }
+  assert.equal(listing2.length, 1);
+  const relisted = await parity(exported.trainPath, { dir: relistedDir });
+  assert.equal(relisted.result.exitCode, 1, relisted.out);
+  assert.equal(relisted.result.venues, 1);
+  assert.equal(relisted.result.rowsEqual, relisted.result.rowsCompared);
+  assert.deepEqual(relisted.result.inconclusive, [{
+    id: written2.id, btId: NEW2.id, city: 'philly', createdAt: '2026-11-24T13:00:00.000Z',
+    answers: [{ file: listing2[0], fetchedAt: '2026-11-24T14:00:00.000Z' }],
+  }]);
+  assert.deepEqual([relisted.result.writes.candidates, relisted.result.writes.compared, relisted.result.writes.inconclusive,
+    relisted.result.writes.unreproduced], [2, 1, 1, []]);
+  assert.match(relisted.out, new RegExp(`venue ${written2.id} \\(${NEW2.id}, philly\\) created 2026-11-24T13:00:00\\.000Z, `
+    + `listed by 1 answers: ${listing2[0]} fetched 2026-11-24T14:00:00\\.000Z`));
+  assert.match(relisted.out, /PARITY FAIL \(INCONCLUSIVE: 1 writes cannot be reproduced\)/);
 
   // A damaged record, or a miss count other than the fill's: refused.
   const damagedDir = path.join(tmp('flock-import-philly-damaged-'), 'philly-2026-11');
@@ -1921,7 +1987,9 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
   assert.equal(tooEarly.result.left.writtenByALaterWriter, 2);
 
   // Or after the folder's first answer but before its answers for NEW2 here
-  // (fetched at 14:00; NEW2's row is from 13:00, NEW1's from 15:00).
+  // (fetched at 14:00; NEW2's row is from 13:00, NEW1's from 15:00). Inside
+  // the window only this folder's runs wrote, so NEW2 is one of its writes
+  // that a later answer lists again: inconclusive, not another pass's.
   const laterDir = path.join(tmp('flock-import-philly-later-'), 'philly-2026-11');
   fs.cpSync(phillyDir, laterDir, { recursive: true });
   for (const name of fs.readdirSync(laterDir)) {
@@ -1932,13 +2000,23 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
   const mid = await parity(otherPassCsv, {
     dir: laterDir, snapFile: snapshot('mid.csv', { createdAt: { [NEW1.id]: '2026-11-24T15:00:00.000Z' } }),
   });
-  assert.equal(mid.result.exitCode, 0, mid.out);
+  assert.equal(mid.result.exitCode, 1, mid.out);
   assert.equal(mid.result.venues, 1);
   assert.deepEqual([mid.result.left.writtenBeforeItsAnswerHere, mid.result.harvestedElsewhere], [1, 1]);
-  // The snapshot shows NEW2's write in the window, and the replay found it,
-  // written before an answer here that lists it: left out, justified.
-  assert.deepEqual([mid.result.writes.candidates, mid.result.writes.compared, mid.result.writes.justified,
+  assert.deepEqual(mid.result.inconclusive.map((w) => [w.btId, w.answers.length]), [[NEW2.id, 7]]);
+  assert.deepEqual([mid.result.writes.candidates, mid.result.writes.compared, mid.result.writes.inconclusive,
     mid.result.writes.unreproduced.length], [2, 1, 1, 0]);
+  // A row from --written-before on is the later writer's even when an answer
+  // here lists its venue after it was written, as nyc's resumed run listed
+  // venues the searches had written past its bound: left out, not
+  // inconclusive.
+  const searchFirst = await parity(otherPassCsv, {
+    dir: laterDir, bound: '2026-11-24T13:30:00Z',
+    snapFile: snapshot('search_first.csv', { createdAt: { [NEW2.id]: '2026-11-24T13:45:00.000Z' } }),
+  });
+  assert.equal(searchFirst.result.exitCode, 0, searchFirst.out);
+  assert.deepEqual([searchFirst.result.venues, searchFirst.result.left.writtenByALaterWriter, searchFirst.result.inconclusive],
+    [1, 1, []]);
 
   // A verified report for NEW1, a day before its rows were collected: the
   // exporter joins it into the feedback columns of every row of NEW1, and the
