@@ -419,9 +419,10 @@ describe('llms.txt stays true to the shipped model', () => {
     expect(llms).toContain('106 input signals');
   });
 
-  // The served-number figures lead the section now, and they are pinned to the
-  // file that records what the serving configuration measured, the same way
-  // the corpus figures are pinned to the model's metadata.
+  // The served-number figures have their own section, after Starling's, and
+  // they are pinned to the file that records what the serving configuration
+  // measured, the same way the corpus figures are pinned to the model's
+  // metadata.
   test('the served-number figures match servedAccuracy.json', () => {
     const served = JSON.parse(read(path.join(
       FRONTEND, '..', 'backend', 'services', 'servedAccuracy.json'
@@ -472,18 +473,28 @@ describe('llms.txt stays true to the shipped model', () => {
   });
 
   // A venue with no pattern is answered by its kind's pattern or the rule
-  // engine, and one with a pattern but no live reading is Starling's forecast
-  // alone, so neither sentence that describes every venue's number may say it
-  // moves with live readings. Production has served the model since the
-  // evening of 2026-11-01 (CROWD_SERVE_MODE=model, the nowcast on), so the
-  // pattern-plus-live-readings sentence is the forecast the figures above
-  // measured, in the past tense, and never what a venue's number is now.
+  // engine, so no sentence that describes every venue's number may credit it
+  // to Starling or to live readings. Production has served the model since
+  // the evening of 2026-11-01 (CROWD_SERVE_MODE=model), and model mode adds
+  // half the venue's trailing offset, the median gap of its live readings in
+  // the 28 days before the hour (backend/services/mlPredictor.js
+  // DEVIATION_WEIGHT, trailingOffsetBefore), to Starling's forecast. No live
+  // reading has arrived since 2026-11-25 15:59 UTC (the provider's
+  // subscription was cancelled at 11:08 EST, 16:08 UTC, that day), so the
+  // offset empties by about 2026-12-23. The crowd-levels sentence therefore
+  // says the number starts from Starling's forecast and names the offset
+  // with its end, and the pattern-plus-live-readings sentence is the
+  // forecast the September to October figures measured, in the past tense.
   test('the crowd sentences limit live readings to the venues Flock has them for', () => {
     const flat = llms.replace(/\s+/g, ' ');
     expect(flat).not.toMatch(/Each venue's number/);
-    expect(flat).toContain("Where Flock knows a venue's usual pattern, the number is Starling's forecast, moved by the venue's latest live reading when there is one. A place Flock has no pattern for yet gets an estimate from what is typical for its kind.");
+    expect(flat).toContain("Where Flock knows a venue's usual pattern, the number starts from Starling's forecast: that pattern plus Starling's prediction of how far each hour will move from it. Until late December 2026, the number for a venue Flock read live also moves by half of how far its live readings from the last four weeks ran above or below that pattern; the last were taken on November 25, 2026. A place Flock has no pattern for yet gets an estimate from what is typical for its kind.");
+    expect(flat).not.toMatch(/the number is Starling's forecast/);
+    expect(flat).not.toMatch(/has come from Starling/);
+    expect(flat).not.toMatch(/moved by the venue's latest live reading/);
     expect(flat).toContain("In that period a venue's number was its own usual pattern for that hour, moved by its newest live readings where Flock had them.");
     expect(flat).not.toMatch(/A venue's number is its own usual pattern/);
+    expect(flat).not.toMatch(/Flock collects live busyness readings/);
   });
 
   // AUDIT 2026-08-26. The five figures above were pinned; the sentence that

@@ -30,7 +30,11 @@ const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 // rule). The competitions' organizers are named, and some are universities;
 // none is that school.
 //   on the App Store since November 4, 2026                               Apple released 1.0; apps.apple.com/app/id6781442127
-//   no venue charged; Flock Pro on sale on the web since November 13, 2026 (PAYWALL_ENABLED=true)
+//   Roost sold in the venue dashboard since November 10, 2026 (VENUE_BILLING_ENABLED=true);
+//     Flock Pro on sale on the web since November 13, 2026 (PAYWALL_ENABLED=true)
+//   the next Starling is not trained as of 2026-11-26; a                  backend/scripts/ml/RETRAIN.md (the 2026-11-26 block) and
+//     version trained without November 12 to 25 is scored on those days   the paper's section 7.2; the thresholds were committed on
+//     and decides the ship                                                September 25 and 26, 2026
 // The story and the bios were filled out on 2026-11-13 from the record (see
 // PEOPLE and STORY); Asad's photo is up, the maintainer's is still to come.
 // The names are in the title and description because the page is what a
@@ -385,17 +389,19 @@ export default function AboutPage() {
               <AppStoreBadge className="lp-appstore" />
             </div>
             <p>
-              Venues can make a free account;
-              Roost, the paid plan for venues, isn’t charging anyone yet. There’s
+              Venues can make a free account, and
+              Roost, the paid plan for venues, is sold in the venue dashboard. There’s
               a paid plan for people too, Flock Pro, with more Birdie, more crowd
               forecasts and crowd alerts, on sale <a href="/pro">on this site</a>{' '}
               since November 13, 2026. Buying it here unlocks it in the iPhone
               app too.
             </p>
             <p>
-              Flux has only been tested on research footage so far. A retrained
-              crowd model gets scored in late November on days it never saw, and
-              it ships only if it passes thresholds set in September.
+              Flux has only been tested on research footage so far. The next
+              version of Starling isn’t trained yet. Once it is, it gets scored
+              on the crowd readings of November 12 to 25, which it never saw,
+              and it replaces the current one only if it passes thresholds set
+              in September.
             </p>
           </div>
         </section>

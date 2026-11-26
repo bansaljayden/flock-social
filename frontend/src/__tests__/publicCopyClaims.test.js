@@ -7,7 +7,14 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 test('the landing page does not claim check-ins feed the crowd number', () => {
   const s = read('website/LandingPage.js');
-  expect(s).toMatch(/Three reports from people at a venue move its score for that night and hour/);
+  // The line said "Three reports from people at a venue move its score for
+  // that night and hour" until 2026-11-26. The blend reads reports for the
+  // same weekly hour, give or take an hour, from the last 28 days, and nothing
+  // requires a reporter to be there tonight, so it now says when they are from.
+  // Only verified reports count (routes/crowd.js reads verified = true), so it
+  // says "Verified" too: an unverified report moves nothing.
+  expect(s).toMatch(/Verified reports from three different people for the same time of\s+week, filed in the last four weeks, move a venue’s score for that\s+hour\./);
+  expect(s).not.toMatch(/Three reports from people at a venue/);
   expect(s).not.toMatch(/Check-ins from people who are actually there fold in live/);
   // "fold in live" went on 2026-09-22. Reports do move the published score and
   // they never move it in real time: crowdEngine.js blends nothing at all until

@@ -14,20 +14,34 @@ import { shareThisPage } from './shareCard';
 // and two figures the claims ledger only allows with a note beside them
 // ("106 inputs", C-036; "runs on the sensor", C-112) painted out. Birdie has
 // no figure of its own: that page of the video shows a venue photo, which
-// may not be republished.
+// may not be republished. four-models-v3 (2026-11-26) is a new still of the
+// same page (frame 975), cut at the same box, with Starling's second chip
+// saying what the model does ("corrects the usual week") in place of the
+// serving version's "800 trees".
 //
 // What the copy rests on (competitions/_shared/claims.md):
-//   Starling: XGBoost, 800 trees; reads time, weather, events, the venue's
-//     own pattern; tested on three cities it never trained on    C-035, C-036, C-042
+//   Starling learns how far each hour moves from the venue's usual week
+//     (label_type delta) from the hour, weather, events and the kind of
+//     venue; 30 training cities on six continents; tested on three
+//     cities it never trained on                      C-040, C-042, C-159
+//   the version serving today, 2.6.0-starling, trained 2026-08-18:
+//     XGBoost, 800 trees up to 8 deep (model_metadata.json)          C-035
+//   the next version: 2,000 trees up to 10 deep, chosen 2026-11-26 on
+//     training cities (backend/scripts/ml/RETRAIN.md); it learns from
+//     live readings through 11 November and ships only if it passes all
+//     eight tests of the gate on 12 to 25 November (research paper 7.2).
+//     Not trained as of 2026-11-26, so the copy says "will"
 //   the readings are 0 to 100 estimates, not head counts          C-058
-//   where Flock knows the venue's usual week, the card's number is
-//     Starling's forecast, moved by the venue's newest live reading:
-//     CROWD_SERVE_MODE=model and CROWD_NOWCAST_ENABLED=true since the
-//     evening of 2026-11-01, on 2.6.0-starling, the artifact the nowcast
-//     weights were fitted on (NOWCAST_MODEL_FITTED_ON in
-//     backend/services/mlPredictor.js). The delta model cannot score a
-//     venue with no usual week; that venue gets its kind's pattern or the
-//     rule engine
+//   where Flock knows the venue's usual week, the card's number starts
+//     from Starling's forecast: CROWD_SERVE_MODE=model since the evening
+//     of 2026-11-01 (C-157). Model mode then adds 0.5 x the venue's
+//     trailing offset, the median gap of its live readings in the 28 days
+//     before the hour (backend/services/mlPredictor.js DEVIATION_WEIGHT,
+//     trailingOffsetBefore; v2.6.0 has no offset input). No live reading
+//     has arrived since 2026-11-25 15:59 UTC, so the nowcast moves no
+//     number and the offset empties by about 2026-12-23, hence "until
+//     late December". The delta model cannot score a venue with no usual
+//     week; that venue gets its kind's pattern or the rule engine
 //   a venue can set its live number; groups see it credited to the place (utils/venueLabel.js picks the noun);
 //     it lasts 90 minutes                                         C-131
 //   Owl: runs on the Pi; generated frames and 28 public
@@ -44,9 +58,10 @@ const DESCRIPTION = 'The four AI models in Flock: the crowd forecast, the Owl pe
 // Every figure, at the two widths each file was written at. fluxPages.test.js
 // checks each file exists at the width it claims.
 export const FIGURES = {
-  // -v2 since 2026-10-28, when Roost's box stopped saying "zero digits": a
-  // file kept at the same name is served from Cloudflare's edge cache.
-  four: { base: '/ai-figures/four-models-v2', one: 1100, two: 2200, height: 483 },
+  // -v2 since 2026-10-28, when Roost's box stopped saying "zero digits", and
+  // -v3 since 2026-11-26, when Starling's box stopped leading with the tree
+  // count: a file kept at the same name is served from Cloudflare's edge cache.
+  four: { base: '/ai-figures/four-models-v3', one: 1100, two: 2200, height: 483 },
   trees: { base: '/ai-figures/starling-trees', one: 1100, two: 2200, height: 197 },
   map: { base: '/ai-figures/starling-map', one: 640, two: 1280, height: 256 },
   code: { base: '/ai-figures/starling-code', one: 640, two: 1280, height: 242 },
@@ -65,7 +80,8 @@ const HALF = '(min-width: 960px) 520px, calc(100vw - 40px)';
 // (the maintainer, 2026-10-21: "let me click starling roost owl etc box and then it
 // will route me to where it is on the page"). Boxes are in percent of the
 // image, measured on four-models@2x.webp (2200 x 966) from the box outlines;
-// four-models-v2 only changed the words inside Roost's box, so they hold.
+// four-models-v2 and -v3 changed only words inside the boxes (Roost's, then
+// Starling's chip), and v3 is cut from its render at the same box, so they hold.
 export const MODEL_LINKS = [
   { href: '#starling', label: 'Starling', box: [0.95, 2.17, 35.77, 31.78] },
   { href: '#birdie', label: 'Birdie', box: [64.18, 2.17, 99.0, 31.78] },
@@ -140,7 +156,7 @@ export default function AiPage() {
               links={MODEL_LINKS}
               caption="Tap a model to jump to it."
               eager
-              alt="The four models around the Flock mark. Starling, trained by Flock, forecasts how busy a place will be: XGBoost, 800 trees. Birdie, Gemini with consent, helps the group pick a place: tool calls, and it asks first. Owl counts people in a room: a neural network with 718,550 weights. Roost, Gemini plus our checks, is an advisor that helps a venue make more money: claims checked, numbers from data."
+              alt="The four models around the Flock mark. Starling, trained by Flock, forecasts how busy a place will be: XGBoost, correcting each venue’s usual week. Birdie, Gemini with consent, helps the group pick a place: tool calls, and it asks first. Owl counts people in a room: a neural network with 718,550 weights. Roost, Gemini plus our checks, is an advisor that helps a venue make more money: claims checked, numbers from data."
             />
           </div>
         </section>
@@ -150,29 +166,39 @@ export default function AiPage() {
             <h2 id="ai-h-starling">Starling forecasts how busy a place will be</h2>
             <div className="ai-text">
               <p>
-                Starling is 800 small decision trees, each one fixing what the trees
-                before it got wrong. It reads the hour, the weather, events nearby
-                and the venue’s usual week, and gives a busyness score from 0 to 100
-                for every hour.
+                Starling learned, from venues in 30 cities on six continents, how
+                the hour, the weather, events nearby and the kind of place move a
+                venue’s crowd away from its usual week. For every hour it predicts
+                how far the crowd moves and adds that to the usual week, giving a
+                busyness score from 0 to 100. Where Flock knows a venue’s usual
+                week, the number on its card starts from that score. Until late
+                December, the number for a venue Flock read live also moves by
+                half of how far its live readings from the last four weeks ran
+                above or below that week.
               </p>
               <p>
                 We tested it on three cities it never trained on: Miami, Barcelona
-                and Tokyo.
+                and Tokyo. Its training and test readings are a busyness provider’s
+                estimates on that 0 to 100 scale, not head counts. The results are
+                in the paper on the <a href="/research">research page</a>.
               </p>
               <p>
-                The live readings it learns from are estimates on that 0 to 100
-                scale, not head counts. Where Flock knows a venue’s usual week, the
-                number on its card is Starling’s forecast, moved by the venue’s
-                latest live reading when there is one.
-                The <a href="/research">research page</a> has the numbers.
+                The version serving today, trained in August, is 800 small decision
+                trees up to 8 splits deep, each fixing what the trees before it got
+                wrong. The next version will learn from live readings taken up to
+                November 11. It will take over only if it passes all eight tests of
+                a gate fixed in advance, scored on the live readings of November 12
+                to 25, which are kept out of its training. It will also be larger:
+                2,000 trees up to 10 splits deep, a size picked on November 26 by a
+                test on training cities.
               </p>
             </div>
             <Figure
               img={FIGURES.trees}
               sizes={WIDE}
               className="ai-wide"
-              alt="Inputs such as the hour, the temperature, whether it is raining and events nearby run through 800 trees, each fixing what the ones before it got wrong. Out comes the venue’s usual week plus a correction: busyness for each hour, 0 to 100."
-              caption="A schematic, not real readings."
+              alt="Inputs such as the hour, the temperature, rain and events nearby go in. On the chart, the forecast rises above the venue’s usual week toward the peak and runs through the dots that mark what happened. A counter reads 800 of 800 trees, the size of the version serving today, and each tree fixes what the ones before it got wrong. Out comes the usual week plus a correction: busyness for each hour, 0 to 100."
+              caption="A schematic of the version serving today, not real readings."
             />
             <div className="ai-pair">
               <Figure
@@ -185,7 +211,7 @@ export default function AiPage() {
                 img={FIGURES.code}
                 sizes={HALF}
                 alt="Code from backend/scripts/ml/train/train_model.py: 800 estimators, minimum child weight 7, maximum depth 8, cross-validation grouped by city, and the forecast clipped to 0 to 100."
-                caption="The training settings, from the repository."
+                caption="How the version serving today was trained, from the repository."
               />
             </div>
           </div>
@@ -307,8 +333,8 @@ export default function AiPage() {
             <div>
               <h2 id="ai-h-more">See how they did</h2>
               <p className="lp-lead ai-more-lead">
-                The research page scores the forecast and Owl on data neither one
-                trained on, including where they fell short.
+                The paper on the research page tests Starling and Owl on data
+                neither one trained on, including where they fell short.
               </p>
               <div className="lp-cta-row">
                 <a className="lp-btn lp-btn-cream lp-btn-lg" href="/research">Read the research</a>

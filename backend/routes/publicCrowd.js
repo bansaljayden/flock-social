@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// PUBLIC crowd demo — powers the "try it live" section on flockcorp.com.
+// PUBLIC crowd demo — powers the "Try the demo" section on flockcorp.com.
 // No auth: visitors get the real Discover experience (map pins + the full
 // venue card, scored by the same ML model the app serves) before they sign up.
 //
@@ -7,7 +7,8 @@
 //  - per-visitor limit: 20 requests/hour across both endpoints (visitorKey:
 //    the relay's signed visitor address, or the source address)
 //  - global cap: 600 scored requests/day (after that: 429, the site says
-//    "the demo is resting, see it in the app")
+//    DEMO_BUSY_MSG, "The demo cannot answer right now. The full thing is in
+//    the app.")
 //  - aggressive caching: area searches 20 min, venue cards 10 min
 // ---------------------------------------------------------------------------
 const crypto = require('crypto');
@@ -222,7 +223,11 @@ function allowDemo(req) {
   return true;
 }
 
-const DEMO_BUSY_MSG = 'The live demo cannot answer right now. The full thing is in the app.';
+// "The demo", not "the live demo" (2026-11-26, with the menu's "Try the
+// demo"): next to crowd numbers "live" read as live crowd data, and Flock has
+// read no venue live since 2026-11-25. LiveDemo.js shows this text first on a
+// 429 or 503, and api/demo-relay.js sends the same sentence.
+const DEMO_BUSY_MSG = 'The demo cannot answer right now. The full thing is in the app.';
 
 // EVERY UPSTREAM THIS FILE REACHES IS SPENT WITH NOBODY BEHIND IT.
 //
@@ -552,7 +557,7 @@ function withAge(card) {
 // paid one, and it would have made PAYWALL-DECISION.md an argument about a
 // meter nobody had to touch.
 //
-// WHAT THE HONEST DEMO IS. "Try it live" exists to show people without accounts
+// WHAT THE HONEST DEMO IS. "Try the demo" exists to show people without accounts
 // what the product does. What it must show is what they will actually get when
 // they sign up, and a signed-out visitor is strictly LESS entitled than a free
 // account: the free account has thirty forecasts a month, the visitor has none.

@@ -1028,17 +1028,25 @@ describe('copy rules (DESIGN-STANDARD)', () => {
   // which the study does not chart as Flock's number, and the note names the
   // readings, the venues, the cities and the dates, and the horizon they were
   // scored at (one hour ahead), so the headline is never read as holding hours
-  // before a visit.
+  // before a visit. The charted forecast served from 26 September to
+  // mid-October; production has served Starling in model mode since the
+  // evening of 1 November (backend/scripts/ml/RETRAIN.md), so the lead dates
+  // the charted forecast and says a card's number starts from Starling's
+  // forecast today. "Has come from Starling" said more: model mode adds half
+  // the venue's trailing offset (mlPredictor.js DEVIATION_WEIGHT), and until
+  // 25 November an hour-old reading replaced the forecast outright.
   test('/research limits the charted forecast to the venues and readings it was measured on', () => {
     const page = readJs('ResearchPage.js').replace(/\s+/g, ' ');
     expect(page).not.toMatch(/every venue card/);
-    expect(page).toContain("behind the number on a venue card wherever Flock knows that venue's weekly pattern. A venue without one gets an estimate from what is typical for its kind.");
-    // "As it was served then": the forecast charted is the one served over
-    // that month, whose weights were fitted before it. The nowcast weights
-    // served since 14 October 2026 were chosen on these same readings
-    // (backend/scripts/ml/MODEL-METRICS.md), so the bare "None of them was
-    // used to set the forecast" is not true of today's forecast.
-    expect(page).toContain('note="Share of the same 119,939 live readings, one hour ahead, every one the forecast was served for at 1,754 venues in Philadelphia, the Lehigh Valley and Miami from 9 September to 8 October 2026. None of them was used to set the forecast as it was served then. Higher is better."');
+    expect(page).toContain("The chart below scores the one Flock served from 26 September to mid-October, each venue's weekly pattern moved by its own live readings. Since 1 November the number on a venue card has started from a forecast by Starling, the crowd model the paper also tests, wherever Flock knows the venue's weekly pattern. A venue without one gets an estimate from what is typical for its kind.");
+    expect(page).not.toMatch(/has come from Starling/);
+    // The readings of 9 to 25 September came before the charted forecast
+    // went live, so they were replayed, not served. Its weights were fitted
+    // on 1 to 5 September, so "fixed before the first of them" is true of
+    // that forecast. The nowcast weights served from mid-October were chosen
+    // on these same readings (backend/scripts/ml/MODEL-METRICS.md), so the
+    // bare "None of them was used to set the forecast" stays banned.
+    expect(page).toContain(`note="Share of the same 119,939 live readings at 1,754 venues in Philadelphia, the Lehigh Valley and Miami, 9 September to 8 October 2026, each scored one hour ahead. Flock here is the forecast served from 26 September to mid-October, each venue's weekly pattern moved by its own latest live readings. It was replayed on every reading, and its settings were fixed before the first of them. Higher is better."`);
     expect(page).not.toContain('None of them was used to set the forecast. ');
     expect(page).toContain("{ label: 'Exact crowd level', us: 54.9, them: 30.2 }");
   });

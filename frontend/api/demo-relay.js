@@ -45,7 +45,7 @@ const MIN_SECRET = 16;
 
 // The backend's own busy sentence (routes/publicCrowd.js DEMO_BUSY_MSG), so a
 // relay failure reads the same as a backend refusal on the page.
-const BUSY_MSG = 'The live demo is taking a breather. The full thing is in the app.';
+const BUSY_MSG = 'The demo cannot answer right now. The full thing is in the app.';
 
 const PLACE_ID_RE = /^[A-Za-z0-9_-]{1,512}$/;
 

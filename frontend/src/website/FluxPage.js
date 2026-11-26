@@ -15,7 +15,9 @@ import { shareThisPage } from './shareCard';
 // What the page may say comes from the sensor work's own list (2026-10-21)
 // and the claims ledger (competitions/_shared/claims.md):
 //   Pi 5, Lepton 3.5, a doorway distance sensor, a microphone    C-111
-//   the doorway sensor is wired and reading; not tested on real walkers
+//   the doorway sensor has never counted real walkers; since the bench
+//     session of 2026-11-24 it is switched off on the Pi (DOOR_SENSOR=off)
+//     until shorter wires arrive, so the page no longer says it is reading
 //   noise is a relative level from the mic; the dB meter isn't fitted C-118
 //   Owl runs on the Pi; not yet run in a venue                  C-112 (out of date)
 //   Owl's training data: generated frames and 28 public sets       models/NOTICE.md
@@ -92,7 +94,7 @@ const SENSORS = [
   },
   {
     name: 'Door counter',
-    what: 'A VL53L8CX, which measures distance in an 8 by 8 grid. It looks down at a doorway from under the case to count people walking in and out. It’s wired up and reading, but it hasn’t been tested on people walking through a real doorway yet.',
+    what: 'A VL53L8CX, which measures distance in an 8 by 8 grid. It looks down at a doorway from under the case to count people walking in and out. It hasn’t been tested on people walking through a real doorway yet.',
   },
   {
     name: 'Sound meter',

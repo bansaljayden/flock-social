@@ -793,7 +793,7 @@ describe('the demo relay signs CF-Connecting-IP and nothing a caller can write',
   });
 
   test('a 429 and its Retry-After come back unchanged', async () => {
-    backend = () => json(429, { error: 'The live demo is taking a breather. The full thing is in the app.' }, { 'Retry-After': '60' });
+    backend = () => json(429, { error: 'The demo cannot answer right now. The full thing is in the app.' }, { 'Retry-After': '60' });
     const { res } = await run(DEMO, { headers: { 'CF-Connecting-IP': '203.0.113.7' } });
     expect([res.status, res.headers.get('Retry-After'), res.headers.get('Cache-Control')]).toEqual([429, '60', 'private, no-store']);
   });

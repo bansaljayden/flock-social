@@ -43,16 +43,23 @@ export const PAPER_CITATION = {
 // who go looking, so nothing in the scrolling pages or the footer points here.
 //
 // Every number below is one the paper reports, on the data it names. The crowd
-// figures are the served number and the stored weekly curve on all 119,939
-// model-served live readings of 2026-09-09..10-08, the month after the serving
-// weights were set (MODEL-METRICS.md, the month section). The chart's note
-// says no reading was used to set the forecast AS IT WAS SERVED THEN, and
-// stops there on purpose: the two- and three-hour nowcast weights served
-// since 2026-10-14 were chosen on these same readings (MODEL-METRICS.md, "The
-// two- and three-hour nowcast weights set to zero"), so of today's forecast
-// the unqualified sentence would not be true. The
-// counter's figures are owl-4.9 and the heat rule as deployed on the six real
-// benchmark sets, which also guided Owl's development (paper Table 17).
+// figures are the online correction (weekly curve + 0.85 x offset + nowcast)
+// that production served from 2026-09-26 until its two- and three-hour nowcast
+// weights went to zero in mid-October, replayed on all 119,939 live readings of
+// 2026-09-09..10-08 against the stored weekly curve (MODEL-METRICS.md, the
+// month section). The readings of 09-09..25 came before it went live, so the
+// note calls them replayed, never served. Its weights were fitted on
+// 09-01..05, so the note says they were fixed before the first reading, and
+// says it of that forecast only: the nowcast weights served from mid-October
+// were chosen on these same readings (MODEL-METRICS.md, "The two- and
+// three-hour nowcast weights set to zero"). Production has served
+// v2.6.0-starling in model mode since the evening of 2026-11-01
+// (backend/scripts/ml/RETRAIN.md), so the charted forecast is named by its
+// dates and never as the number on a card today. The counter's figures are
+// owl-4.9 with its crowd model and the heat rule as deployed on all six real
+// benchmark sets, which also guided Owl's development (paper Figure 14 and
+// Table 17). Flux has run owl-5.1 since 2026-11-03; the paper reports it
+// (Section 14.7), and this chart does not.
 const DESCRIPTION = 'Why Flock studies how busy places get, what the research found, and the full paper.';
 
 // Share of readings or frames, in percent. `us` is Flock's number, `them` the
@@ -64,6 +71,7 @@ const FORECAST = [
 ];
 const COUNTER = [
   { label: "Flux's camera model", note: 'SDT (TU Wien), indoor rooms, 2,000 frames', us: 89.7, them: 77.1 },
+  { label: 'Crowded classrooms', note: 'Thermal Vision (IISER Bhopal), same camera, 1,375 frames', us: 39.3, them: 33.0 },
   { label: 'Ceiling camera', note: '2,347 frames', us: 92.9, them: 9.2 },
   { label: 'Rooms with hot laptops', note: '265 frames', us: 95.5, them: 71.3 },
   { label: 'Wall-mounted meeting rooms', note: '813 frames', us: 93.0, them: 51.5 },
@@ -131,19 +139,27 @@ export default function ResearchPage() {
         <section className="lp-sec-navy lp-on-navy rs-hero">
           <div className="lp-wrap">
             <h1>Why we study crowds, and what we found.</h1>
-            {/* The first study is the forecast the chart below scores: a
-                venue's weekly pattern moved by its live readings, which only
-                a venue with a pattern gets. A venue with none is scored by
-                the rule engine (crowdEngine.js), which the chart does not
-                measure as Flock's number, so the lead does not put the
-                forecast behind every card. */}
+            {/* The chart below scores the online correction, a venue's
+                weekly pattern moved by its live readings, as served from
+                26 September to mid-October. Since the evening of 1 November
+                production serves Starling (v2.6.0-starling, model mode), and
+                live readings ended on 25 November, so the lead dates the
+                charted forecast and says a card's number starts from
+                Starling's forecast: model mode adds 0.5 x the venue's
+                trailing offset to it (mlPredictor.js DEVIATION_WEIGHT), and
+                until 25 November an hour-old reading replaced it outright.
+                A venue with no pattern gets the no-curve fallback or the rule
+                engine (crowdEngine.js), so the lead never puts Starling
+                behind every card. */}
             <p className="lp-lead rs-hero-lead">
-              The first study is the crowd forecast, the one
-              behind the number on a venue card wherever Flock knows that
-              venue's weekly pattern. A venue without one gets an estimate from
-              what is typical for its kind. The second, a sensor that counts the
-              people actually there, has only been tested on research footage so
-              far.
+              The first study is the crowd forecast. The chart below scores the
+              one Flock served from 26 September to mid-October, each venue's
+              weekly pattern moved by its own live readings. Since 1 November the
+              number on a venue card has started from a forecast by Starling, the
+              crowd model the paper also tests, wherever Flock knows the venue's
+              weekly pattern. A venue without one gets an estimate from what is
+              typical for its kind. The second, a sensor that counts the people
+              actually there, has only been tested on research footage so far.
             </p>
 
             <div className="rs-paper">
@@ -212,14 +228,14 @@ export default function ResearchPage() {
               usLabel="Flock"
               themLabel="Chart"
               rows={FORECAST}
-              note="Share of the same 119,939 live readings, one hour ahead, every one the forecast was served for at 1,754 venues in Philadelphia, the Lehigh Valley and Miami from 9 September to 8 October 2026. None of them was used to set the forecast as it was served then. Higher is better."
+              note="Share of the same 119,939 live readings at 1,754 venues in Philadelphia, the Lehigh Valley and Miami, 9 September to 8 October 2026, each scored one hour ahead. Flock here is the forecast served from 26 September to mid-October, each venue's weekly pattern moved by its own latest live readings. It was replayed on every reading, and its settings were fixed before the first of them. Higher is better."
             />
             <Chart
               title="Owl against the heat rule it replaced"
               usLabel="Owl"
               themLabel="Rule"
               rows={COUNTER}
-              note="Frames counted exactly, on six benchmark sets that no model trained on. The sealed tests, including the sets where the rule did better, are in the paper."
+              note="Frames counted exactly by owl-4.9, the Owl that Flux ran until 3 November, on six benchmark sets that no model trained on. The paper has the rest, including owl-5.1, which Flux runs now, and the sets where the rule did better."
             />
           </div>
         </section>

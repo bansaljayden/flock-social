@@ -610,7 +610,7 @@ describe('the hourly caption comes from the bars drawn, before the current score
     mount({ intel: { model: null, todayHourly: patternDay } });
     const caption = await screen.findByText(/^Today hour by hour, our estimate from /);
     expect(caption.textContent).toBe(
-      "Today hour by hour, our estimate from this venue's usual pattern, with this venue's recent live readings in some hours, and in hours not measured here yet, what is typical for a venue like yours."
+      "Today hour by hour, our estimate from this venue's usual pattern, with this venue's live readings from the last four weeks in some hours, and in hours not measured here yet, what is typical for a venue like yours."
     );
     expect(document.body.textContent).not.toMatch(/Flock rule engine/);
   });

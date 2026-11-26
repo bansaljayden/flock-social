@@ -469,7 +469,7 @@ export default function LandingPage() {
         <HeroReel shots={REEL} />
       </section>
 
-      {/* ---------------- crowd levels, live ----------------
+      {/* ---------------- crowd levels and the demo ----------------
           The one thing on the page a generator cannot fake, so it comes second,
           straight after the hero. #crowds stays on the section and #try on the
           demo, so the footer link and the menu link each land somewhere. */}
@@ -477,22 +477,42 @@ export default function LandingPage() {
         <div className="lp-wrap">
           <div className="lp-live-top">
           <div className="lp-live-head">
-            <h2 id="lp-h-crowds">See how busy it is before anyone leaves.</h2>
-            {/* What crowdEngine and the forecast actually do: a venue's usual
-                pattern for the hour, moved by its newest live readings where
-                Flock has them, and an estimate from places like it everywhere
-                else. The quieter pick is the venue card's own suggestion. */}
+            <h2 id="lp-h-crowds">See how busy it will be before anyone leaves.</h2>
+            {/* What the number is since 2026-11-01 (CROWD_SERVE_MODE=model;
+                research paper 5.1 and 5.2): where a venue has a weekly curve,
+                that curve plus Starling's forecast of how far the hour departs
+                from it (v2.6.0-starling, a delta model whose inputs include the
+                weather and the venues around it, paper Table 3). A venue with
+                no curve gets the category table or the rule engine, what is
+                typical for its kind of place (lib/crowd.js), never the model.
+                No live reading has come in since 2026-11-25 15:59 UTC (the
+                provider's subscription was cancelled at 11:08 EST, 16:08 UTC,
+                that day), so the copy names none; the trailing offset from
+                earlier readings still enters at weight 0.5 until its 28-day
+                window empties, about 2026-12-23
+                (mlPredictor.js OFFSET_WINDOW_HOURS). "Will be": every number is
+                a forecast. The quieter pick is the venue card's own suggestion. */}
             <p className="lp-lead">
-              Search any place below. Flock starts from how busy it usually gets at
-              this hour and adjusts with live readings when it has them. Packed?
-              It suggests a quieter spot nearby.
+              Search any place below. Where Flock knows a place’s usual week,
+              Starling, its crowd model, forecasts how far each hour will run
+              above or below that week, from things like the weather and the
+              venues around it. Anywhere else, Flock goes by what is typical for
+              that kind of place. Packed? It suggests a quieter spot nearby.
             </p>
             {/* crowdEngine.js needs MIN_CALIBRATION_REPORTERS (3) distinct
-                verified reporters in the same weekly day-and-hour bucket before
-                reports move anything; below that the model's answer stands.
+                verified reporters for the same hour of the week, give or take
+                an hour (routes/crowd.js feedbackWindow), filed in the last 28
+                days, before reports move anything; below that the model's
+                answer stands. Only verified reports count (routes/crowd.js
+                reads venue_feedback.verified = true), so the line says
+                "Verified". That flag does not prove anyone was in the
+                building (crowdEngine.js says why), so the line says when the
+                reports are from and never that people there made the number.
                 Check-ins do not feed the number at all. */}
             <p className="lp-live-note">
-              Three reports from people at a venue move its score for that night and hour.
+              Verified reports from three different people for the same time of
+              week, filed in the last four weeks, move a venue’s score for that
+              hour.
             </p>
             {/* The two pages behind this number, as one line: /ai for the
                 models (it says plainly what the card serves today), /flux for
@@ -515,7 +535,7 @@ export default function LandingPage() {
           </div>
           {/* 800px of lead: the demo is loading and drawing before it reaches
               the screen. The holder is the demo's own height, so nothing shifts
-              when it mounts. It is #try, the menu's "Try it live". */}
+              when it mounts. It is #try, the menu's "Try the demo". */}
           <WhenNear id="try" className="lpd-hold" margin="300px" settle>
             <Suspense fallback={null}><LiveDemo /></Suspense>
           </WhenNear>

@@ -4,7 +4,7 @@
   "short_name": "Flock",
   "lang": "en-US",
   "dir": "ltr",
-  "description": "Plan nights out with friends. Vote on where to go, see how busy it is, and split the bill.",
+  "description": "Plan nights out with friends. Vote on where to go, see how busy it will be, and split the bill.",
   "start_url": "/app",
   "scope": "/",
   "display": "standalone",

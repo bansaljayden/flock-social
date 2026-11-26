@@ -22,6 +22,11 @@ import { shareThisPage } from './shareCard';
 //   Roost's forecast and advisor sit behind the venue plan    routes/advisor.js, GET /intelligence (requirePro)
 // The four AI lines began as the video's own description and were rewritten
 // in plain sentences on 2026-10-21 (the maintainer's ask), with the same facts.
+// Starling's line changed on 2026-11-26 to say what the model predicts, how
+// far an hour moves from the venue's usual week (model_metadata.json
+// label_type delta). Its 800 trees describe v2.6.0, the version serving
+// today, and the next version is sized differently (RETRAIN.md 2026-11-26).
+// The held-out cities are model_metadata.json evaluation.holdout_cities.
 
 // The app's three-minute video (2:57), the Congressional App Challenge entry.
 const VIDEO_ID = 'zpujGx88coU';
@@ -31,6 +36,15 @@ const VIDEO_TITLE = 'Flock: Nurturing friendship, one flock at a time';
 // longer do, so the footer every page shares stopped crediting Google, and
 // this page credits its video in its own footer, where that line used to be.
 const VIDEO_PHOTO_CREDIT = 'Venue photos in the video: Google Maps and its contributors.';
+// The video, dated under the player. Its narration at 1:56-2:17 says Flock
+// adds readings every hour and that each place's number updates with every
+// reading. Live collection ran hourly from 2026-09-03 to 2026-11-25 (newest
+// reading 15:59 UTC; the research paper's section 7.2). The video is the
+// entry as it was submitted, so the caption carries the dates instead of a
+// new cut. It says the hourly collection ran, not that every hour has a
+// reading: the provider returned almost none from 12 to 23 October (paper
+// 7.2), and curve rebuilds cost six sweeps on 18 and 19 November (paper 4.2).
+const VIDEO_NOTE = 'Made for the Congressional App Challenge in October 2026. Flock’s hourly collection of live busyness readings ran from September 3 to November 25, 2026.';
 
 // The video's own chapter list, from its YouTube description; each button
 // starts the player at its time.
@@ -68,6 +82,7 @@ function PitchVideo() {
         <a className="hw-watch" href={`https://www.youtube.com/watch?v=${VIDEO_ID}`} target="_blank" rel="noopener noreferrer">
           Watch on YouTube: {VIDEO_TITLE}
         </a>
+        <figcaption className="lp-fig-cap">{VIDEO_NOTE}</figcaption>
       </figure>
     );
   }
@@ -110,6 +125,7 @@ function PitchVideo() {
           </button>
         ))}
       </div>
+      <figcaption className="lp-fig-cap">{VIDEO_NOTE}</figcaption>
     </figure>
   );
 }
@@ -143,7 +159,7 @@ const STEPS = [
     art: { name: 'spot-hop', src: '/art/spot-hop-240.webp', srcSet: '/art/spot-hop-240.webp 240w, /art/spot-hop-480.webp 480w', width: 240, height: 230 },
     title: 'Pick the place together',
     body: [
-      'Anyone in the flock can add places. Each card shows how busy the place usually gets at that hour, plus any deal or event a verified venue has posted. Then everyone votes, so nobody gets stuck deciding.',
+      'Anyone in the flock can add places. Each card shows how busy the place will be at that hour, plus any deal or event a verified venue has posted. Then everyone votes, so nobody gets stuck deciding.',
       'Out of ideas? Ask Birdie for spots near you that fit the group. Birdie is AI, built on Google’s Gemini, and it asks before it does anything for you.',
     ],
     shot: {
@@ -172,7 +188,7 @@ const STEPS = [
     art: { name: 'spot-flap', src: '/art/spot-flap-240.webp', srcSet: '/art/spot-flap-240.webp 240w, /art/spot-flap-480.webp 480w', width: 240, height: 308 },
     title: 'On the night',
     body: [
-      'Before a deadline, the chat asks “Still in?” and counts the yeses, so you know who’s actually coming. Check how busy the place is before you leave.',
+      'Before a deadline, the chat asks “Still in?” and counts the yeses, so you know who’s actually coming. Check how busy the place will be before you leave.',
       'You can share your live location with the group while the plan is on, if you want. If something goes wrong, two taps on SOS send where you are to the people you picked.',
     ],
     shot: {
@@ -199,7 +215,7 @@ const STEPS = [
 ];
 
 const AIS = [
-  { name: 'Starling', what: 'The crowd forecast. It’s 800 small decision trees, and we tested it on three cities it never trained on.' },
+  { name: 'Starling', what: 'The crowd forecast. It predicts how far each hour at a place will move from its usual week, and we tested it on three cities it never trained on.' },
   { name: 'Birdie', what: 'Built on Google’s Gemini. Ask it where to go and it suggests places that fit the group. It checks with you before it does anything.' },
   { name: 'Owl', what: 'A small neural network that counts people from body heat, on the Raspberry Pi inside Flux. Its counts leave the box and the heat frames never do: the people in view and, on a unit set up for tables, how many are at each table. So far it’s been tested on research footage.' },
   { name: 'Roost’s advisor', what: 'Helps a venue owner make more money: a short answer, a few points, and the sources at the end. Its advice builds on a playbook of tested moves from the trade, and numbers about the venue come from its measured data and are checked before the owner sees them.' },
@@ -344,7 +360,7 @@ export default function HowItWorksPage() {
                   billing went on (2026-11-10), and this asked a venue to write
                   in early until 2026-11-18. It now says where Roost is sold,
                   in the homepage venue card's words. No venue is charged yet,
-                  as the homepage and /about also say. */}
+                  as the homepage also says. */}
               <p>
                 Roost, the paid plan, adds your own hour-by-hour forecast and the
                 advisor above. It is sold in the venue dashboard. No venue is

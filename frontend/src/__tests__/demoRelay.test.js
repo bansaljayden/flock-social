@@ -109,7 +109,7 @@ test('only the two demo paths go through, and only as GET', async () => {
 test('the backend answer passes through unchanged, and is never cached at the edge by default', async () => {
   global.fetch = jest.fn(async () => upstreamResponse({
     status: 429,
-    body: '{"error":"The live demo is taking a breather. The full thing is in the app."}',
+    body: '{"error":"The demo cannot answer right now. The full thing is in the app."}',
     headers: { 'content-type': 'application/json; charset=utf-8', 'retry-after': '60' },
   }));
   const res = fakeRes();
@@ -117,7 +117,7 @@ test('the backend answer passes through unchanged, and is never cached at the ed
   expect(res.statusCode).toBe(429);
   expect(res.headers['retry-after']).toBe('60');
   expect(res.headers['cache-control']).toBe('private, no-store');
-  expect(JSON.parse(res.body.toString()).error).toMatch(/breather/);
+  expect(JSON.parse(res.body.toString()).error).toMatch(/cannot answer right now/);
 
   global.fetch = jest.fn(async () => upstreamResponse({ headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=30' } }));
   const cached = fakeRes();
@@ -125,13 +125,14 @@ test('the backend answer passes through unchanged, and is never cached at the ed
   expect(cached.headers['cache-control']).toBe('public, max-age=30');
 });
 
-test('a failed or slow backend reads as the demo resting, never as an address in the log', async () => {
+test('a failed or slow backend reads as the backend\'s own busy sentence, never as an address in the log', async () => {
   const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   global.fetch = jest.fn(async () => { const e = new Error('connect ECONNREFUSED 203.0.113.7'); e.name = 'TypeError'; throw e; });
   const res = fakeRes();
   await relay(req('/api/demo-relay?path=demo/venues&lat=1&lng=2'), res);
   expect(res.statusCode).toBe(502);
-  expect(JSON.parse(res.body).error).toMatch(/breather/);
+  // The same words as routes/publicCrowd.js DEMO_BUSY_MSG, and no "live".
+  expect(JSON.parse(res.body).error).toBe('The demo cannot answer right now. The full thing is in the app.');
 
   global.fetch = jest.fn(async () => { const e = new Error('aborted'); e.name = 'AbortError'; throw e; });
   const slow = fakeRes();

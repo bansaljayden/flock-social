@@ -194,7 +194,7 @@ function demoError(message, { retry = true } = {}) {
 function httpError(status, data) {
   const fromServer = typeof data?.error === 'string' && data.error.trim() ? data.error.trim() : null;
   if (status === 429 || status === 503) {
-    return demoError(fromServer || 'The live demo cannot answer right now. The full thing is in the app.', { retry: false });
+    return demoError(fromServer || 'The demo cannot answer right now. The full thing is in the app.', { retry: false });
   }
   if (status === 404) return demoError("That spot is not in Google's index anymore. Pick another one.", { retry: false });
   if (status === 400) return demoError('That search did not come through. Try a different one.', { retry: false });
@@ -1004,7 +1004,7 @@ export default function LiveDemo() {
   const dialLabel = selected
     ? (shut
       ? `${venueName(selected)} is closed right now`
-      : `Crowd right now: ${score} percent, ${selected.label || crowdWord(score)}`)
+      : `Crowd this hour: ${score} percent, ${selected.label || crowdWord(score)}`)
     : '';
   // Age is measured from the server's own stamp for the part that happened
   // before the response left, plus the time since it landed here. Subtracting a

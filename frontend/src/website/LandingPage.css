@@ -867,7 +867,7 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-sec { padding: clamp(56px, 8vw, 96px) 0; scroll-margin-top: 76px; }
 /* The two anchor targets that are NOT .lp-sec, and both are linked from the
    page's own chrome: #get is the get-the-app band (old links still land on
-   it), and #try is the menu's "Try it live". Without this they
+   it), and #try is the menu's "Try the demo". Without this they
    scrolled to a point 64px under an opaque sticky navbar, so the line you
    jumped for was the one thing you could not see. */
 .lp-cta, #try { scroll-margin-top: 76px; }

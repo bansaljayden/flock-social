@@ -90,8 +90,9 @@
 //      is pinned to the source pages.
 //   4. No fabricated popularity. No ratings, counts, reviews, or invented
 //      third-party mentions, in the copy or in the JSON-LD (DESIGN-STANDARD
-//      section M). The only credibility claim is the DECA award, which /about
-//      shows under Honors in the same words (aboutCompetitions.test.js).
+//      section M). The credibility claims are the honors /about lists under
+//      Honors, served here in the same words; the JSON-LD `award` repeats the
+//      DECA one (aboutCompetitions.test.js).
 //
 // TO REGENERATE PAGE_BLOCKS after a copy change in src/website:
 //   cd frontend && CI=true npx react-scripts test --watchAll=false \
@@ -148,9 +149,9 @@ const PAGE_BLOCKS = {
     ["p", "Flock is an app that helps a group of friends finalize plans by integrating artificial intelligence & industry-leading features while providing venues with insights into consumer demand."],
     ["p", "Now on the App Store. Released November 4, 2026"],
     ["p", "Want to know the code?"],
-    ["h2", "See how busy it is before anyone leaves."],
-    ["p", "Search any place below. Flock starts from how busy it usually gets at this hour and adjusts with live readings when it has them. Packed? It suggests a quieter spot nearby."],
-    ["p", "Three reports from people at a venue move its score for that night and hour."],
+    ["h2", "See how busy it will be before anyone leaves."],
+    ["p", "Search any place below. Where Flock knows a place’s usual week, Starling, its crowd model, forecasts how far each hour will run above or below that week, from things like the weather and the venues around it. Anywhere else, Flock goes by what is typical for that kind of place. Packed? It suggests a quieter spot nearby."],
+    ["p", "Verified reports from three different people for the same time of week, filed in the last four weeks, move a venue’s score for that hour."],
     ["p", "We’re building Flux, a box that counts the people in a venue and never sends Flock a picture. The four models in Flock are on How the AI works."],
     ["h2", "Everyone said yes. Then the chat went quiet."],
     ["p", "The same Friday in Flock takes five steps, and nobody has to carry it."],
@@ -301,8 +302,8 @@ const PAGE_BLOCKS = {
     ["p", "Accepted into the Innovation Stage, October 2026"],
     ["h2", "Where things stand"],
     ["p", "Flock is on the App Store for iPhone, and the web app is live at flockcorp.com."],
-    ["p", "Venues can make a free account; Roost, the paid plan for venues, isn’t charging anyone yet. There’s a paid plan for people too, Flock Pro, with more Birdie, more crowd forecasts and crowd alerts, on sale on this site since November 13, 2026. Buying it here unlocks it in the iPhone app too."],
-    ["p", "Flux has only been tested on research footage so far. A retrained crowd model gets scored in late November on days it never saw, and it ships only if it passes thresholds set in September."],
+    ["p", "Venues can make a free account, and Roost, the paid plan for venues, is sold in the venue dashboard. There’s a paid plan for people too, Flock Pro, with more Birdie, more crowd forecasts and crowd alerts, on sale on this site since November 13, 2026. Buying it here unlocks it in the iPhone app too."],
+    ["p", "Flux has only been tested on research footage so far. The next version of Starling isn’t trained yet. Once it is, it gets scored on the crowd readings of November 12 to 25, which it never saw, and it replaces the current one only if it passes thresholds set in September."],
     ["h2", "Get in touch"],
     ["p", "Email social@flockcorp.com about anything, venues included. The pitch and anything new go up on our YouTube channel."],
     ["p", "Flock Social LLC is not affiliated with Flock Safety or its license plate cameras."],
@@ -820,11 +821,18 @@ const PAGE_BLOCKS = {
   ],
 };
 
-// Every public page, so a crawler that lands on one document can discover the
-// rest. /guidelines and /delete-account have no bot rendering yet; the links
-// still resolve for the JS-rendering crawlers and for humans.
+// The pages sitemap.xml lists, so a crawler that lands on one document can
+// discover the rest; /pro is in neither, and the two lists change together.
+// /how-it-works, /ai, /flux and /research are prerendered HTML for every
+// visitor (scripts/build-cloudflare.js PRERENDER). /guidelines and
+// /delete-account have no bot rendering yet; the links still resolve for the
+// JS-rendering crawlers and for humans.
 const NAV_LINKS = [
   ['/', 'Home'],
+  ['/how-it-works', 'How it works: a plan step by step'],
+  ['/ai', 'How the AI works: the four models in Flock'],
+  ['/flux', 'Flux: the people counter for venues'],
+  ['/research', 'Research: how the crowd forecast and the people counter were tested'],
   ['/about', 'About: who makes Flock and where things stand'],
   ['/support', 'Support and common questions'],
   ['/privacy', 'Privacy Policy'],
