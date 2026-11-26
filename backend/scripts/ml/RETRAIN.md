@@ -640,6 +640,8 @@ gate, the served-baseline smoothing parity and the anchor weight switch.
 #    band gate replays (identical to the tracked files):
 mkdir -p models/incumbent
 cp models/crowd_model.onnx models/model_metadata.json models/incumbent/
+#    (If models/ ships crowd_model.onnx.gz instead, copy that: the band gate
+#    and quick_eval read either. See models/README.md.)
 
 # 1. Clear stale artifacts, the interrupted 2026-09-08 export included.
 cd train
@@ -697,6 +699,16 @@ node --test --test-timeout=120000
 node -e "const g=require('./scripts/ml/models/model_metadata.json').ship_gate;
          console.log(g.overall_pass, g.point_gate_pass, g.band_gate_status,
                      JSON.stringify(g.band_gate && g.band_gate.candidate))"
+
+# 9. Ship, on a pass. Step 6 wrote crowd_model.onnx AND crowd_model.onnx.gz.
+#    The 2,000-tree model is about 120-135 MB as a plain .onnx, over GitHub's
+#    100 MB per-file limit, so when the .onnx is over ~50 MB commit the .gz
+#    in its place (mlPredictor reads it when the .onnx is absent), from the
+#    repository root:
+#      git rm backend/scripts/ml/models/crowd_model.onnx
+#      git add backend/scripts/ml/models/crowd_model.onnx.gz backend/scripts/ml/models/model_metadata.json
+#      git ls-files backend/scripts/ml/models/    # the .gz and the .json, no .onnx
+#    Under ~50 MB, commit crowd_model.onnx + model_metadata.json as before.
 ```
 
 `run_training.sh` runs the same scripts in the same order, without this run's
@@ -1116,6 +1128,8 @@ node -e "const m=require('./scripts/ml/models/model_metadata.json');
 #    band_gate_status 'pass'.
 
 # ── 5. Commit crowd_model.onnx + model_metadata.json, push, Railway serves it.
+#    Over ~50 MB, commit crowd_model.onnx.gz in place of crowd_model.onnx
+#    (git rm the .onnx, git add the .gz; models/README.md has the commands).
 ```
 
 `evaluate_model.py` prints **corpus mean busyness by hour** before the
