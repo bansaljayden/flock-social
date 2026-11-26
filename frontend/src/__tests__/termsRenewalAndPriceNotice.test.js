@@ -80,10 +80,13 @@ describe('the price-change line is a condition, not a sender', () => {
     // website asks for a year of birth and the iPhone app asks for none
     // (App Review, 5.1.1(v)). October 29: section 5 names the You tab for
     // blocked accounts, and 7 says Roost lists its sources, with their dates,
-    // at the end of an answer. A later change to the words moves it again.
-    expect(TERMS).toContain("const EFFECTIVE_DATE = 'October 29, 2026';");
+    // at the end of an answer. November 26: 7 says the crowd model makes the
+    // number and busyness collection ended on November 25, and 14 says Flock
+    // is free to use instead of "free today". A later change to the words
+    // moves it again.
+    expect(TERMS).toContain("const EFFECTIVE_DATE = 'November 26, 2026';");
     const terms = MIRROR.slice(MIRROR.indexOf('  terms: ['));
-    expect(terms).toContain('["p", "Effective October 29, 2026"],');
+    expect(terms).toContain('["p", "Effective November 26, 2026"],');
   });
 });
 

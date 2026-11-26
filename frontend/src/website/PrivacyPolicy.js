@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'November 6, 2026';
+const EFFECTIVE_DATE = 'November 26, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR IS A REGISTERED COMPANY NOW, and this name is its legal name.
@@ -275,7 +275,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Bill splits:</strong> if your group splits a bill, we store the total, the tip, who paid, each person's share, and whether a share has been marked settled. The people in that flock see it. No money moves through Flock: paying someone back happens in Venmo, Cash App, or Zelle.</li>
                 <li><strong>Payment handles (optional):</strong> if you add them for bill-splitting, we store your Venmo username, Cash App cashtag, or Zelle identifier so flockmates can pay you back. These are usernames and handles only. Flock never collects or processes card, bank-account, or payment-card numbers.</li>
                 <li><strong>Venue owner details (optional):</strong> if you claim a venue, we store the business profile you fill in, the operating facts you tell us, and the promotions, events, occupancy readings and replies you post. That has its own section below, <a href="#venues">Venue owners and business data</a>.</li>
-                <li><strong>Waitlist email:</strong> if you entered your email on flockcorp.com before Flock launched, we stored that address, sent you one confirmation, and send one email to say Flock is on the App Store, which is what the waitlist was for. It is not linked to any Flock account, we do not sell it, every message carries an unsubscribe link, and we will delete it if you ask us at {mail}.</li>
+                <li><strong>Waitlist email:</strong> if you entered your email on flockcorp.com before Flock launched, we stored that address, sent you one confirmation, and on November 5, 2026, sent one email to say Flock is on the App Store, which is what the waitlist was for. It is not linked to any Flock account, we do not sell it, every message carries an unsubscribe link, and we will delete it if you ask us at {mail}.</li>
                 {/*
                   APPLE REVOCATION IS LIVE (promise restored 2026-08-18).
                   APPLE_TEAM_ID, APPLE_KEY_ID and APPLE_PRIVATE_KEY (plus
@@ -693,7 +693,7 @@ export default function PrivacyPolicy() {
 
               <h3>They receive nothing about anyone</h3>
               <ul>
-                <li><strong>BestTime</strong> is where the crowd model's training corpus comes from. Collection stopped in May 2026 and started again on 1 September 2026. It runs as a scheduled job that reads public busyness figures for venues, it sends nothing about you, and no part of the running product calls it.</li>
+                <li><strong>BestTime</strong> is where the crowd model's training corpus comes from. A scheduled job read its public busyness figures for venues from March to May 2026 and again from 1 September to 25 November 2026, when our subscription ended. The job sends BestTime nothing about you, and nothing you do in Flock calls it.</li>
                 <li><strong>SeatGeek</strong> is a second event source used only by offline training scripts. No server code reads it.</li>
                 {/* The paragraph above this list calls it "the whole list, taken
                     from the dependency inventory", so an entry in that inventory

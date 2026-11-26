@@ -7,8 +7,10 @@ import SiteFooter from './SiteFooter';
 // date does (DESIGN-STANDARD §Q4). October 6 covers 6, 7 and 9.4 as rewritten that
 // day, and 7 and 9.5 corrected later the same day: a venue's own reading
 // replaces the estimate rather than adjusting it, and the dashboard is built
-// from Flock's crowd numbers, not "our model".
-const EFFECTIVE_DATE = 'October 29, 2026';
+// from Flock's crowd numbers, not "our model". November 26 covers 7 saying the
+// crowd model makes the number and busyness collection ended on November 25,
+// and 14 dropping "Flock is free today" now that Flock Pro is sold.
+const EFFECTIVE_DATE = 'November 26, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 // THE COUNTERPARTY IS FLOCK SOCIAL LLC, a Pennsylvania limited liability
@@ -254,9 +256,11 @@ export default function TermsOfService() {
         <h2>7. Predictions, Birdie and Roost are estimates</h2>
         <p>
           <strong>Every number Flock shows you about how busy a place is, or will be, is an
-          estimate.</strong> It is worked out from the venue's usual pattern at that hour,
-          blended with or replaced by a recent live busyness reading when there is one. A
-          venue with no pattern yet gets an estimate from what is typical for its kind of
+          estimate.</strong> It is worked out by our crowd model from the venue's usual
+          pattern at that hour and the conditions around it, such as the weather and nearby
+          events. We stopped collecting busyness readings from our data provider on November
+          25, 2026, and a reading we collected can still adjust a venue's estimate for up to
+          four weeks after it was taken. A venue with no pattern yet gets an estimate from what is typical for its kind of
           place at that time, which can include the weather. For some venues, recent reports
           from people who were there adjust it. While a venue's own live reading stands, it
           is shown in place of our estimate and labelled as the venue's, unless enough users
@@ -630,8 +634,8 @@ export default function TermsOfService() {
         <p>
           To the maximum extent permitted by law, our total liability to you for all claims
           relating to Flock is limited to the greater of one hundred United States dollars or
-          the amount you actually paid us in the twelve months before the claim arose. Since
-          Flock is free today, for most people that figure is one hundred dollars.
+          the amount you actually paid us in the twelve months before the claim arose. Flock
+          is free to use, so for most people that figure is one hundred dollars.
         </p>
         <p>
           These limits do not apply to liability that cannot be excluded or limited by law,
