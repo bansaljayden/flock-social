@@ -12,7 +12,11 @@ value_counts tie broken by a different first appearance. The export built here
 holds each of those traps on purpose, across three 16,384-row parser chunks,
 and both preparations run on it: model_metadata.json and features_holdout.pkl
 must be byte-identical, and every key of features_train.pkl equal (X compared
-bit for bit, read through features_io.load_features).
+bit for bit, read through features_io.load_features). With X put back inline,
+features_train.pkl must be the in-memory bytes too, which holds only while every
+string column shares its str objects as the in-memory frame's do: pickle writes
+a string once per object, and one object per row would add tens of GB to
+loading a 90-million-row pickle.
 
 The traps: a weekly-only first parser chunk (observed_date, label_source and
 temperature all empty there, so float64 in that chunk and str or float in the
@@ -273,7 +277,14 @@ def compare(default: Path, streamed: Path) -> None:
     for k in (features_io.X_FILE_KEY, features_io.X_SHAPE_KEY, features_io.X_SHA_KEY):
         s.pop(k)
     same(d, s, 'features_train')
-    del X_d, X_s, d, s, raw
+    # The string columns share str objects exactly as main()'s do (pickle writes
+    # a str once per object), so with X put back inline the bytes are main()'s.
+    # X takes y's dtype object: in one pickle every float32 array shares one.
+    x_keys = (features_io.X_FILE_KEY, features_io.X_SHAPE_KEY, features_io.X_SHA_KEY)
+    rebuilt = {'X': X_s.view(raw['y'].dtype), **{k: v for k, v in raw.items() if k not in x_keys}}
+    assert pickle.dumps(rebuilt) == (default / 'features_train.pkl').read_bytes(), \
+        'features_train.pkl with X inline is not the in-memory bytes: the string columns share differently'
+    del X_d, X_s, d, s, raw, rebuilt
     gc.collect()
 
 
@@ -355,6 +366,24 @@ def test_median_of_counts_is_series_median():
         got, want = pf.median_of_counts(hist), v.median()
         assert got == want, (n, got, want)
     assert np.isnan(pf.median_of_counts({}))
+
+
+def test_string_columns_that_stopped_sharing_objects_are_made_to_share():
+    words = ['philly', 'nyc', 'lehigh']
+    # One str object per row (each join builds a new one), as a slice that built
+    # its own strings would leave.
+    rows = np.array([''.join(list(words[i % 3])) if i % 7 else np.nan for i in range(700)], dtype=object)
+    per_row = pd.array(rows, dtype='str')
+    assert len({id(v) for v in np.asarray(per_row, dtype=object) if isinstance(v, str)}) > 500
+    got = pf.shared_strings(per_row, 'cities')
+    assert type(got) is type(per_row) and got.dtype == per_row.dtype
+    same(list(np.asarray(per_row, dtype=object)), list(np.asarray(got, dtype=object)), 'values')
+    assert len({id(v) for v in np.asarray(got, dtype=object) if isinstance(v, str)}) == 3
+    shared = pd.array([words[i % 3] for i in range(700)], dtype='str')
+    assert pf.shared_strings(shared, 'cities') is shared
+    obj = np.array([''.join(list(words[i % 3])) for i in range(700)], dtype=object)
+    out = pf.shared_strings(obj, 'event_type')
+    assert out.dtype == object and list(out) == list(obj) and len({id(v) for v in out}) == 3
 
 
 def test_the_mode_is_chosen_by_row_count_unless_set():

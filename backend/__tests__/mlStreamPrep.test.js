@@ -10,9 +10,11 @@
 // change a number. This runs scripts/ml/train/test_stream_prep.py, which builds a
 // synthetic export holding every trap a slice can fall into (types inferred per
 // parser chunk, sums in another order, value_counts ties), prepares it both
-// ways and requires model_metadata.json and features_holdout.pkl byte-identical
-// and every key of features_train.pkl equal, X bit for bit. Skipped, not
-// failed, where Python with pandas is absent.
+// ways and requires model_metadata.json and features_holdout.pkl byte-identical,
+// every key of features_train.pkl equal (X bit for bit), and the string columns
+// sharing str objects as the in-memory pickle's do (with X put back inline the
+// pickle is the same bytes). Skipped, not failed, where Python with pandas is
+// absent.
 //
 // Run: node --test  (from backend/)
 // ---------------------------------------------------------------------------
@@ -39,5 +41,5 @@ test('test_stream_prep.py passes: the streamed preparation equals the in-memory 
     const summary = r.stdout.match(/(\d+)\/(\d+) passed/);
     assert.ok(summary, r.stdout);
     assert.equal(summary[1], summary[2]);
-    assert.ok(Number(summary[2]) >= 8, `only ${summary[2]} checks ran`);
+    assert.ok(Number(summary[2]) >= 9, `only ${summary[2]} checks ran`);
   });

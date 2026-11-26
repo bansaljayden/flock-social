@@ -4618,9 +4618,18 @@ class AlwaysZeroTally:
         return pd.MultiIndex.from_tuples(zero, names=ALWAYS_ZERO_KEYS) if zero else []
 
 
-def _filter_training_rows(frame: pd.DataFrame, from_date, always_zero, split: Dict = None) -> pd.DataFrame:
+def _filter_training_rows(frame: pd.DataFrame, from_date, always_zero, split: Dict = None,
+                          shared: Dict = None) -> pd.DataFrame:
     """main()'s row filters on one slice: the time split, null labels, always-zero
-    venues. `split`, when given, collects the split's record and the row counts."""
+    venues. `split`, when given, collects the split's record and the row counts.
+
+    `shared` (pass 3): main() drops the always-zero venues through set_index and
+    reset_index, which leaves every row of a city or venue_category on one str
+    object for the whole frame (shared_strings). Dropping them slice by slice
+    would leave one per slice, so the two columns are put back on one object
+    per value across all slices, the first one seen, as the whole frame's index
+    keeps the first one it meets.
+    """
     if from_date:
         held, live = time_holdout_masks(frame, from_date)
         if split is not None:
@@ -4634,7 +4643,19 @@ def _filter_training_rows(frame: pd.DataFrame, from_date, always_zero, split: Di
     if split is not None:
         split['after_null'] += len(frame)
     if len(always_zero) > 0:
+        if shared is not None:
+            for c in ('city', 'venue_category'):
+                table = shared.setdefault(c, {})
+                for u in pd.factorize(frame[c].to_numpy(dtype=object))[1]:
+                    table.setdefault(u, u)
         frame = drop_always_zero_venues(frame, always_zero)
+        if shared is not None:
+            for c in ('city', 'venue_category'):
+                values = frame[c].to_numpy(dtype=object)
+                codes, uniques = pd.factorize(values)
+                one = np.array([shared[c][u] for u in uniques], dtype=object)
+                values = np.where(codes >= 0, one[np.maximum(codes, 0)] if len(one) else values, values)
+                frame[c] = pd.Series(values, index=frame.index, dtype=frame[c].dtype)
     return frame
 
 
@@ -4979,6 +5000,37 @@ def _concat_parts(parts: List):
     return type(parts[0])._concat_same_type(parts)
 
 
+# STRINGS SHARE OBJECTS IN THE PICKLE (2026-11-25). pickle writes a str once per
+# object and refers back to it after, so a carried string column costs about 8 B
+# a row to load only while its rows share a handful of str objects. The whole
+# read gives them that: pandas' parser makes one object per distinct string per
+# parser chunk, every step after keeps those objects, and the streamed slices are
+# cut from the same parser chunks, so they share exactly as main()'s frame does
+# (on the registered export the pickle is the same bytes once X is put back
+# inline). shared_strings() checks it on every carried string column and, should
+# a column average fewer than SHARED_STRING_MIN_REUSE rows per object, maps
+# equal strings onto one object (values and dtype unchanged), because one object
+# per row would add some 25 GB to loading a 90-million-row pickle.
+SHARED_STRING_MIN_REUSE = 50
+
+
+def shared_strings(values, name: str):
+    """`values` (an object array or StringArray) with its str objects counted and,
+    if they are not shared, made shared."""
+    arr = np.asarray(values, dtype=object)
+    n_objects = len({id(v) for v in arr if isinstance(v, str)})
+    if n_objects * SHARED_STRING_MIN_REUSE <= len(arr):
+        logger.info('[stream] %s: %d rows share %d str objects.', name, len(arr), n_objects)
+        return values
+    one = {}
+    shared = np.array([one.setdefault(v, v) if isinstance(v, str) else v for v in arr], dtype=object)
+    logger.warning('[stream] %s: %d rows held %d str objects; equal strings now share one of %d.',
+                   name, len(arr), n_objects, len(one))
+    if isinstance(values, np.ndarray):
+        return shared
+    return type(values)._from_sequence(shared, dtype=values.dtype)
+
+
 def main_streamed(train_path: Path, why: str) -> None:
     """main() for a training export too large for one frame (the block above)."""
     import time
@@ -5133,7 +5185,7 @@ def main_streamed(train_path: Path, why: str) -> None:
     cells = CellStatsStream(LEAVE_OUT_COL)
     carried: Dict[str, List] = {}
     light: Dict[str, List] = {'is_realtime': [], 'label_provenance': [], 'live_run_length': []}
-    X = None
+    x_path = None
     feature_cols_all: List[str] = []
     feature_cols: List[str] = []
     missing: pd.Series = None
@@ -5141,11 +5193,12 @@ def main_streamed(train_path: Path, why: str) -> None:
     hi: Dict[str, object] = {}
     with_reading = imputed = served_rt = served_unknown = 0
     position = written = 0
+    one_object: Dict[str, Dict] = {}
     for frame, source in training_frames():
         if source == 'train':
             recover_weather_code_rows(frame)
             normalise_event_type_rows(frame)
-        frame = _filter_training_rows(frame, from_date, always_zero)
+        frame = _filter_training_rows(frame, from_date, always_zero, shared=one_object)
         p0, n = position, len(frame)
         position += n
         if n == 0:
@@ -5181,17 +5234,24 @@ def main_streamed(train_path: Path, why: str) -> None:
                 f'nothing has been written. {PREP_STREAM_ENV}=0 is the in-memory path.')
         if not len(frame):
             continue
-        if X is None:
+        if x_path is None:
             feature_cols_all = get_feature_columns(frame)
             feature_cols = [c for c in feature_cols_all if not (c == 'cold_outdoor' and cold_constant)]
-            X = features_io.open_x_memmap(pkl_path, n_rows, len(feature_cols))[1]
+            x_path, X = features_io.open_x_memmap(pkl_path, n_rows, len(feature_cols))
+            del X
             missing = pd.Series(0, index=feature_cols_all, dtype=np.int64)
         if 'cold_outdoor' in feature_cols_all and not np.array_equal(
                 frame['cold_outdoor'].to_numpy() == 1, cold_pred[p0:p0 + n][reached]):
             raise CorpusContractError(
                 f'cold_outdoor on rows {p0}..{p0 + n} is not what pass 2 predicted from the '
                 'temperatures, climate norms and weather codes; a bug in that repetition.')
+        # X is mapped for one slice at a time and flushed: a page written through a
+        # map stays in this process's working set while the map is open, so a map
+        # held across slices would hold all of X in RAM.
+        X = np.load(x_path, mmap_mode='r+')
         feature_matrix(frame, feature_cols, out=X[written:written + len(frame)])
+        X.flush()
+        del X
         written += len(frame)
         for c in feature_cols_all:
             column = frame[c]
@@ -5210,7 +5270,7 @@ def main_streamed(train_path: Path, why: str) -> None:
         raise CorpusContractError(
             f'the streamed preparation wrote {written} rows of X over {position} filtered rows; pass 2 '
             f'sized X at {n_rows} rows over {fits.n}. Nothing it wrote can be used.')
-    if X is None:
+    if x_path is None:
         raise CorpusContractError('no training row survives the filters; there is nothing to train on.')
 
     # The grid smoothed the training rows only; the holdout fits its own.
@@ -5231,8 +5291,13 @@ def main_streamed(train_path: Path, why: str) -> None:
                                   'env': UNKNOWN_PROVENANCE_ENV}
     holdout_df = align_holdout(holdout_df, feature_cols_all)
 
-    # One key at a time, each key's slices freed as it is joined.
-    columns = {k: _concat_parts(carried.pop(k)) for k in list(carried)}
+    # One key at a time, each key's slices freed as it is joined; the string
+    # columns checked for shared objects (shared_strings).
+    columns = {}
+    for k in list(carried):
+        columns[k] = _concat_parts(carried.pop(k))
+        if columns[k].dtype == object or isinstance(columns[k], pd.api.extensions.ExtensionArray):
+            columns[k] = shared_strings(columns[k], k)
     logger.info(f'Feature count: {len(feature_cols_all)}')
     logger.info(f'Features: {feature_cols_all}')
     delta = pd.Series(columns['y'], dtype=float)
@@ -5268,6 +5333,7 @@ def main_streamed(train_path: Path, why: str) -> None:
             f'({len(cell_stats["row_group"])} / {len(cell_stats["category"]["row_cell"])} vs {n_rows}).')
     category_baseline_fit = category_baseline_fit_record(cell_stats)
 
+    X = np.load(x_path, mmap_mode='r+')
     x_keys = features_io.finish_x(pkl_path, X)
     del X
     train_data = train_pickle_dict(columns, x_keys, train['sample_weight'].values, run_divisor,
