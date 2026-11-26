@@ -5005,9 +5005,13 @@ def _concat_parts(parts: List):
 # a row to load only while its rows share a handful of str objects. The whole
 # read gives them that: pandas' parser makes one object per distinct string per
 # parser chunk, every step after keeps those objects, and the streamed slices are
-# cut from the same parser chunks, so they share exactly as main()'s frame does
-# (on the registered export the pickle is the same bytes once X is put back
-# inline). shared_strings() checks it on every carried string column and, should
+# cut from the same parser chunks, so each carried column holds the same objects
+# as main()'s (on the registered export: 437, 1178, 797, 391 and 7811). The one
+# object main() picks differently is the str category_cell_stats['groups'] names
+# a city by: np.unique takes one of that city's equal objects, the stream the
+# first it sees, which moves a pickle memo reference and no value (3 bytes on
+# the registered export once X is put back inline; on the 2026-10-08 export the
+# bytes are main()'s). shared_strings() checks every carried string column and, should
 # a column average fewer than SHARED_STRING_MIN_REUSE rows per object, maps
 # equal strings onto one object (values and dtype unchanged), because one object
 # per row would add some 25 GB to loading a 90-million-row pickle.
