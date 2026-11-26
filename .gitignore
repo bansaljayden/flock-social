@@ -201,6 +201,8 @@ backend/scripts/ml/train/*
 !backend/scripts/ml/train/*.md
 !backend/scripts/ml/train/*.sh
 !backend/scripts/ml/train/requirements.txt
+# test_stream_prep.py's goldens: hashes of the pre-refactor outputs on its synthetic exports.
+!backend/scripts/ml/train/test_stream_prep_goldens.json
 
 # Private strategy notes excluded from version control and any repository copy.
 PAYMENTS-ROUTING.md

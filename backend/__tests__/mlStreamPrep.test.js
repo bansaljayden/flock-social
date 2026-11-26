@@ -13,7 +13,11 @@
 // ways and requires model_metadata.json and features_holdout.pkl byte-identical,
 // every key of features_train.pkl equal (X bit for bit), and the string columns
 // sharing str objects as the in-memory pickle's do (with X put back inline the
-// pickle is the same bytes). Skipped, not failed, where Python with pandas is
+// pickle is the same bytes). It also requires the time holdout's cutoff to count
+// a live reading that only a holdout city has, and the in-memory outputs to
+// match goldens written by the code from before the streamed path (a mismatch
+// under numpy or pandas versions other than the goldens' is reported as SKIP,
+// shown here as a diagnostic). Skipped, not failed, where Python with pandas is
 // absent.
 //
 // Run: node --test  (from backend/)
@@ -34,12 +38,22 @@ const PY = (() => {
   return null;
 })();
 
+// spawnSync blocks the event loop, so the test's own timeout cannot fire while
+// it runs: the child gets its own, and the test a minute more to report it.
+const RUN_MS = 600000;
+
 test('test_stream_prep.py passes: the streamed preparation equals the in-memory one',
-  { skip: PY ? false : 'python with pandas not available', timeout: 600000 }, () => {
-    const r = spawnSync(PY, ['test_stream_prep.py'], { cwd: TRAIN_DIR, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr.slice(-4000)}`);
-    const summary = r.stdout.match(/(\d+)\/(\d+) passed/);
-    assert.ok(summary, r.stdout);
+  { skip: PY ? false : 'python with pandas not available', timeout: RUN_MS + 60000 }, (t) => {
+    const r = spawnSync(PY, ['test_stream_prep.py'], {
+      cwd: TRAIN_DIR, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: RUN_MS,
+    });
+    const stdout = r.stdout || '';
+    assert.equal(r.status, 0, [
+      `status ${r.status}, signal ${r.signal}${r.error ? `, error ${r.error.message}` : ''}`,
+      stdout, (r.stderr || '').slice(-4000)].join('\n'));
+    for (const line of stdout.match(/^SKIP .*$/gm) || []) t.diagnostic(line);
+    const summary = stdout.match(/(\d+)\/(\d+) passed/);
+    assert.ok(summary, stdout);
     assert.equal(summary[1], summary[2]);
-    assert.ok(Number(summary[2]) >= 9, `only ${summary[2]} checks ran`);
+    assert.ok(Number(summary[2]) >= 10, `only ${summary[2]} checks ran`);
   });

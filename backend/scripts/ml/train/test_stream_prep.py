@@ -3,20 +3,20 @@
 WHY THIS FILE EXISTS. A training export of tens of millions of rows does not fit
 this project's training PC as one frame, so above FLOCK_PREP_STREAM_MIN_ROWS
 rows (or with FLOCK_PREP_STREAM=1) prepare_features.main() hands the run to
-main_streamed(), which reads the CSV in slices and writes X to a memory-mapped
-.npy beside features_train.pkl. Nothing about that may change a number. A slice
-can answer differently from the whole frame in three quiet ways: pandas infers
-a column's type per parser chunk (review_count int64 in one chunk and float64 in
-the next; a cell key '5' or '5.0'), a sum taken in a different order, and a
-value_counts tie broken by a different first appearance. The export built here
-holds each of those traps on purpose, across three 16,384-row parser chunks,
-and both preparations run on it: model_metadata.json and features_holdout.pkl
-must be byte-identical, and every key of features_train.pkl equal (X compared
-bit for bit, read through features_io.load_features). With X put back inline,
-features_train.pkl must be the in-memory bytes too, which holds only while every
-string column shares its str objects as the in-memory frame's do: pickle writes
-a string once per object, and one object per row would add tens of GB to
-loading a 90-million-row pickle.
+main_streamed(), which reads the CSV in slices of FLOCK_PREP_CHUNK_ROWS rows and
+writes X to a memory-mapped .npy beside features_train.pkl. Nothing about that
+may change a number. A slice can answer differently from the whole frame in
+three quiet ways: pandas infers a column's type per parser chunk (review_count
+int64 in one chunk and float64 in the next; a cell key '5' or '5.0'), a sum
+taken in a different order, and a value_counts tie broken by a different first
+appearance. The export built here holds each of those traps on purpose, across
+three 16,384-row parser chunks, and both preparations run on it:
+model_metadata.json and features_holdout.pkl must be byte-identical, and every
+key of features_train.pkl equal (X compared bit for bit, read through
+features_io.load_features). With X put back inline, features_train.pkl must be
+the in-memory bytes too, which holds only while every string column shares its
+str objects as the in-memory frame's do: pickle writes a string once per object,
+and one object per row would add tens of GB to loading a 90-million-row pickle.
 
 The traps: a weekly-only first parser chunk (observed_date, label_source and
 temperature all empty there, so float64 in that chunk and str or float in the
@@ -29,14 +29,34 @@ cross every slice boundary; realtime and weekly rows interleaved; live runs
 across slice boundaries; live dates on both sides of the time-holdout cutoff;
 an always-zero venue and one that is always zero only once its held-out row
 is cut. Each runs with slices smaller and larger than a parser chunk, as a
-final refit, and with cold_outdoor constant (dropped before X is written).
+final refit, and with cold_outdoor constant (dropped before X is written). A
+fourth export moves the newest live reading into a holdout city, where only a
+cutoff that reads the holdout too (main() reads both frames) keeps the training
+rows of the days between the two dates.
 
-Run: python test_stream_prep.py     (no pytest needed; under a minute)
+Both preparations share their per-row functions, so a change to one of those
+(a smoothing coefficient, say) would move both alike and pass every comparison
+above. The in-memory outputs are therefore also pinned to GOLDENS: a SHA-256 of
+every value, key by key (X's bytes, each array's dtype, shape and bytes, each
+string, the metadata JSON), written by the code from before the streamed path
+(prepare_features.py at 4b75d34d) on these same exports. A value that moves
+fails the check, naming the key, while numpy and pandas are the versions the
+goldens record. Under other versions a moved value is reported as SKIP, not
+FAIL, since a library can change a number without this code changing; rewrite
+the goldens from the pre-refactor code under the new versions to pin it again:
+
+    git show 4b75d34d:backend/scripts/ml/train/prepare_features.py > <dir>/pf_ref.py
+    python test_stream_prep.py --write-goldens <dir>/pf_ref.py
+
+Run: python test_stream_prep.py     (no pytest needed; about a minute)
 """
 import gc
+import hashlib
+import importlib.util
 import json
 import os
 import pickle
+import platform
 import shutil
 import sys
 import tempfile
@@ -57,7 +77,10 @@ import features_io  # noqa: E402
 import prepare_features as pf  # noqa: E402
 
 HERE = Path(__file__).parent
-DROPPED0, REASONS0 = set(pf.DROPPED_FEATURES), dict(pf.DROP_REASONS)
+GOLDENS = HERE / 'test_stream_prep_goldens.json'
+# Each module's DROPPED_FEATURES and DROP_REASONS as imported: main() adds to
+# both, so every run starts from these.
+INITIAL = {id(pf): (set(pf.DROPPED_FEATURES), dict(pf.DROP_REASONS))}
 TYPES = [f't{k:02d}' for k in range(36)]
 CITIES = {'philly': (39.95, -75.16), 'nyc': (40.73, -73.99), 'lehigh': (40.60, -75.47)}
 DESCRIPTIONS = ['clear sky', 'few clouds', 'light rain', 'overcast clouds', 'snow', 'mist', 'thunderstorm']
@@ -67,8 +90,9 @@ def _dow(d: date) -> int:
     return (d.weekday() + 1) % 7  # Sun=0
 
 
-def write_export(folder: Path, cold: bool = True) -> None:
-    """training_data.csv (40,000 rows), holdout_data.csv, sports_events.csv and holidays.json."""
+def write_export(folder: Path, cold: bool = True, late_holdout_live: date = None) -> None:
+    """training_data.csv (40,000 rows), holdout_data.csv, sports_events.csv and holidays.json.
+    With late_holdout_live, the holdout's last live row is moved to that date."""
     rng = np.random.default_rng(20261125)
     venues = []
     for vid in range(1, 121):
@@ -168,18 +192,23 @@ def write_export(folder: Path, cold: bool = True) -> None:
     (folder / 'training_data.csv').write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
     hold = [header]
+    sources = ['live'] * 12 + ['forecast'] * 3 + [''] * 5
+    last_live_j = max(j for j in range(2400) if j % 3 != 0 and sources[j % 20] == 'live')
     for j in range(2400):
         vid = 1001 + j % 12
         is_rt = j % 3 != 0
         d = start + timedelta(days=(j // 12) // 24)   # one row per (venue, date, hour)
+        if late_holdout_live and j == last_live_j:
+            d = late_holdout_live   # newer than any training reading: only the holdout has it
         hour = (j // 12) % 24
         dow = _dow(d) if is_rt else (j // 24) % 7
         base = (vid * 13 + hour * 5) % 80
         k = j % 20
-        source = (['live'] * 12 + ['forecast'] * 3 + [''] * 5)[k] if is_rt else ''
+        source = sources[k] if is_rt else ''
         values = dict(zip(pf.EXPORT_COLUMNS, [''] * len(pf.EXPORT_COLUMNS)))
         values.update({
-            'venue_id': vid, 'day_of_week': dow, 'hour': hour, 'month': 11, 'season': 'fall', 'is_holiday': 0,
+            'venue_id': vid, 'day_of_week': dow, 'hour': hour, 'month': d.month,
+            'season': 'winter' if d.month == 12 else 'fall', 'is_holiday': 0,
             'is_school_break': 0, 'venue_category': ['bar', 'cafe', 'karaoke'][vid % 3], 'price_level': 2,
             'rating': 4.1, 'review_count': '' if j % 5 == 0 else 300, 'temperature': '71.5' if is_rt else '',
             'humidity': '60' if is_rt else '', 'wind_speed': '3' if is_rt else '',
@@ -202,24 +231,26 @@ def write_export(folder: Path, cold: bool = True) -> None:
     shutil.copyfile(HERE.parent / 'holidays.json', folder.parent / 'holidays.json')
 
 
-def run(folder: Path, stream: bool, chunk_rows: int = 0, refit: Path = None) -> Path:
-    """One preparation of the export in `folder`; its outputs moved to a fresh folder."""
+def run(folder: Path, stream: bool, chunk_rows: int = 0, refit: Path = None, module=pf) -> Path:
+    """One preparation of the export in `folder` by `module` (this prepare_features
+    unless given); its outputs moved to a fresh folder."""
     models = folder.parent / 'models'
     models.mkdir(exist_ok=True)
     (models / 'model_metadata.json').unlink(missing_ok=True)
     for f in ('features_train.pkl', 'features_holdout.pkl', 'features_train.X.npy'):
         (folder / f).unlink(missing_ok=True)
-    pf.DROPPED_FEATURES.clear()
-    pf.DROPPED_FEATURES.update(DROPPED0)
-    pf.DROP_REASONS.clear()
-    pf.DROP_REASONS.update(REASONS0)
+    dropped0, reasons0 = INITIAL[id(module)]
+    module.DROPPED_FEATURES.clear()
+    module.DROPPED_FEATURES.update(dropped0)
+    module.DROP_REASONS.clear()
+    module.DROP_REASONS.update(reasons0)
     env = {'FLOCK_PREP_STREAM': '1' if stream else '0', 'FLOCK_PREP_CHUNK_ROWS': str(chunk_rows or 1),
            'FLOCK_WEEKLY_ANCHOR_WEIGHT': 'auto', 'FLOCK_FINAL_REFIT': str(refit) if refit else ''}
     saved = {k: os.environ.get(k) for k in env}
     os.environ.update(env)
-    pf.SCRIPT_DIR, pf.MODELS_DIR = folder, models
+    module.SCRIPT_DIR, module.MODELS_DIR = folder, models
     try:
-        pf.main()
+        module.main()
     finally:
         for k, v in saved.items():
             if v is None:
@@ -291,24 +322,127 @@ def compare(default: Path, streamed: Path) -> None:
 class Export:
     """One synthetic export in a temporary folder, removed when the run ends."""
 
-    def __init__(self, cold=True):
+    def __init__(self, **kwargs):
         self.root = Path(tempfile.mkdtemp(prefix='stream_prep_'))
         self.train = self.root / 'ml' / 'train'
         self.train.mkdir(parents=True)
-        write_export(self.train, cold=cold)
+        write_export(self.train, **kwargs)
 
     def close(self):
         gc.collect()
         shutil.rmtree(self.root, ignore_errors=True)
 
 
+# The exports (write_export's arguments), and the in-memory runs GOLDENS pins:
+# (export, a final refit?).
+VARIANTS = {'cold': {}, 'warm': {'cold': False}, 'late': {'late_holdout_live': date(2025, 12, 5)}}
+GOLDEN_RUNS = {'cold': ('cold', False), 'cold_refit': ('cold', True), 'warm': ('warm', False),
+               'late': ('late', False)}
 EXPORTS = {}
+IN_MEMORY = {}
 
 
-def export(cold=True) -> Export:
-    if cold not in EXPORTS:
-        EXPORTS[cold] = Export(cold)
-    return EXPORTS[cold]
+def export(variant='cold') -> Export:
+    if variant not in EXPORTS:
+        EXPORTS[variant] = Export(**VARIANTS[variant])
+    return EXPORTS[variant]
+
+
+def gated_metadata(e: Export) -> Path:
+    """The passed gated run a final refit names."""
+    gated = e.root / 'gated_metadata.json'
+    if not gated.exists():
+        gated.write_text(json.dumps({'ship_gate': {'overall_pass': True}, 'model_version': 'v-test'}))
+    return gated
+
+
+def in_memory(name: str, module=pf) -> Path:
+    """The in-memory outputs of GOLDEN_RUNS[name] by `module`, prepared once."""
+    key = (name, id(module))
+    if key not in IN_MEMORY:
+        variant, refit = GOLDEN_RUNS[name]
+        e = export(variant)
+        IN_MEMORY[key] = run(e.train, stream=False, refit=gated_metadata(e) if refit else None, module=module)
+    return IN_MEMORY[key]
+
+
+class Skip(Exception):
+    """A check that cannot decide here; main() reports it apart from passes and failures."""
+
+
+def _canon(v, h) -> None:
+    """Feed `v` to the hash `h` as type, dtype, shape and exact value, recursively."""
+    if isinstance(v, np.ndarray):
+        h.update(f'ndarray {v.dtype.str} {v.shape}|'.encode())
+        if v.dtype.kind == 'O':
+            for x in v.ravel(order='C'):
+                _canon(x, h)
+        else:
+            h.update(v.tobytes(order='C'))
+    elif isinstance(v, pd.api.extensions.ExtensionArray):
+        h.update(f'{type(v).__name__} {v.dtype!r} {len(v)}|'.encode())
+        for x in np.asarray(v, dtype=object):
+            _canon(x, h)
+    elif isinstance(v, dict):
+        h.update(f'dict {len(v)}|'.encode())
+        for k, x in v.items():
+            _canon(k, h)
+            _canon(x, h)
+    elif isinstance(v, (list, tuple)):
+        h.update(f'{type(v).__name__} {len(v)}|'.encode())
+        for x in v:
+            _canon(x, h)
+    elif isinstance(v, np.generic):
+        h.update(f'{v.dtype.str} {v.item()!r}|'.encode())
+    elif v is None or isinstance(v, (bool, int, float, str)):
+        h.update(f'{type(v).__name__} {v!r}|'.encode())
+    else:
+        raise TypeError(f'no fingerprint for {type(v).__module__}.{type(v).__name__}')
+
+
+def fingerprint(v) -> str:
+    h = hashlib.sha256()
+    _canon(v, h)
+    return h.hexdigest()
+
+
+def digest(out: Path) -> dict:
+    """{name: SHA-256} for model_metadata.json and every key of both pickles."""
+    meta = json.loads((out / 'model_metadata.json').read_text(encoding='utf-8'))
+    if 'final_refit' in meta:
+        meta['final_refit']['gated_metadata_path'] = '<gated_metadata.json>'   # a temporary folder
+    got = {'model_metadata.json': hashlib.sha256(json.dumps(meta, sort_keys=True).encode()).hexdigest()}
+    for f in ('features_train.pkl', 'features_holdout.pkl'):
+        data = features_io.load_features(out / f, mmap=False)
+        got.update({f'{f}:{k}': fingerprint(v) for k, v in data.items()})
+    return got
+
+
+def library_versions() -> dict:
+    return {'numpy': np.__version__, 'pandas': pd.__version__}
+
+
+def write_goldens(reference: Path) -> None:
+    """GOLDENS from the in-memory outputs of `reference`, the pre-refactor prepare_features.py."""
+    spec = importlib.util.spec_from_file_location('prepare_features_reference', reference)
+    ref = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ref)
+    assert not hasattr(ref, 'main_streamed'), f'{reference} already has the streamed path'
+    INITIAL[id(ref)] = (set(ref.DROPPED_FEATURES), dict(ref.DROP_REASONS))
+    try:
+        runs = {name: digest(in_memory(name, ref)) for name in GOLDEN_RUNS}
+    finally:
+        for e in EXPORTS.values():
+            e.close()
+    GOLDENS.write_text(json.dumps({
+        'about': 'test_stream_prep.py: SHA-256 of every value the in-memory preparation writes '
+                 'on each synthetic export, written by the code from before the streamed path.',
+        'made_with': {'prepare_features.py': 'git 4b75d34d',
+                      'prepare_features.py sha256': hashlib.sha256(reference.read_bytes()).hexdigest(),
+                      'python': platform.python_version(), **library_versions()},
+        'runs': runs,
+    }, indent=1, sort_keys=True) + '\n', encoding='utf-8', newline='\n')
+    print(f'wrote {GOLDENS.name}: {sum(len(v) for v in runs.values())} values over {len(runs)} runs')
 
 
 def test_the_synthetic_export_holds_the_traps():
@@ -403,7 +537,7 @@ def test_the_mode_is_chosen_by_row_count_unless_set():
 
 def test_streamed_equals_in_memory_in_slices_smaller_and_larger_than_a_parser_chunk():
     e = export()
-    default = run(e.train, stream=False)
+    default = in_memory('cold')
     meta = json.loads((default / 'model_metadata.json').read_text())
     assert meta['time_holdout']['realtime_rows_held_out'] > 0, 'the fixture must hold rows out'
     assert 'cold_outdoor' in meta['feature_names'], 'cold_outdoor should vary in this export'
@@ -414,28 +548,87 @@ def test_streamed_equals_in_memory_in_slices_smaller_and_larger_than_a_parser_ch
 
 def test_streamed_equals_in_memory_on_a_final_refit():
     e = export()
-    gated = e.root / 'gated_metadata.json'
-    gated.write_text(json.dumps({'ship_gate': {'overall_pass': True}, 'model_version': 'v-test'}))
-    default = run(e.train, stream=False, refit=gated)
+    default = in_memory('cold_refit')
     assert json.loads((default / 'model_metadata.json').read_text())['time_holdout']['policy'] == 'final_refit'
-    compare(default, run(e.train, stream=True, chunk_rows=4096, refit=gated))
+    compare(default, run(e.train, stream=True, chunk_rows=4096, refit=gated_metadata(e)))
 
 
 def test_streamed_equals_in_memory_when_cold_outdoor_is_constant_and_dropped():
-    e = export(cold=False)
-    default = run(e.train, stream=False)
+    e = export('warm')
+    default = in_memory('warm')
     assert 'cold_outdoor' not in json.loads((default / 'model_metadata.json').read_text())['feature_names']
     compare(default, run(e.train, stream=True, chunk_rows=7001))
 
 
+def test_the_cutoff_counts_a_live_reading_that_only_a_holdout_city_has():
+    # main() takes the time holdout's cutoff from the newest live reading of the
+    # training AND the holdout frame (resolve_time_holdout([train_df, holdout_df])),
+    # and so must the stream. Here the holdout's newest live reading (5 December)
+    # is five days past training's (30 November): the cutoff is 22 November, and
+    # the training rows of 17-21 November, which a cutoff from training's dates
+    # alone (17 November) would hold out, stay in training.
+    e = export('late')
+    cols = ['is_realtime', 'label_source', 'observed_date', 'city']
+    train = pd.read_csv(e.train / 'training_data.csv', usecols=cols, dtype=str)
+    hold = pd.read_csv(e.train / 'holdout_data.csv', usecols=cols, dtype=str)
+
+    def live(df):
+        return df.loc[(df['is_realtime'] == '1') & (df['label_source'] == 'live'), 'observed_date'].dropna()
+
+    assert live(train).max() == '2025-11-30' and live(hold).max() == '2025-12-05'
+    realtime = train[train['is_realtime'] == '1']
+    held = realtime[realtime['observed_date'] >= '2025-11-22']
+    want = {'policy': 'last_days', 'days': 14, 'from_date': '2025-11-22', 'last_live_date': '2025-12-05',
+            'realtime_rows_held_out': len(held), 'live_rows_held_out': int((held['label_source'] == 'live').sum()),
+            'held_out_by_city': {str(c): int(n) for c, n in held['city'].value_counts().items()},
+            'training_live_through': live(train[train['observed_date'].fillna('') < '2025-11-22']).max()}
+    assert want['training_live_through'] == '2025-11-21', want
+    default = in_memory('late')
+    streamed = run(e.train, stream=True, chunk_rows=5000)
+    for out in (default, streamed):
+        got = json.loads((out / 'model_metadata.json').read_text())['time_holdout']
+        assert got == want, f'{out.name}: {got} != {want}'
+    compare(default, streamed)
+    # The training rows kept: realtime rows run to the day before the cutoff, and
+    # each of 17-21 November is there.
+    kept = features_io.load_features(streamed / 'features_train.pkl', mmap=False)
+    dates = pd.Series(np.asarray(kept['observed_date'], dtype=object)).dropna()
+    per_day = dates[dates >= '2025-11-17'].value_counts().sort_index()
+    assert list(per_day.index) == [f'2025-11-{d}' for d in range(17, 22)] and per_day.min() > 100, per_day
+
+
+def test_the_in_memory_path_writes_what_the_pre_refactor_code_wrote():
+    goldens = json.loads(GOLDENS.read_text(encoding='utf-8'))
+    moved = {}
+    for name in GOLDEN_RUNS:
+        got, want = digest(in_memory(name)), goldens['runs'][name]
+        keys = sorted(k for k in set(got) | set(want) if got.get(k) != want.get(k))
+        if keys:
+            moved[name] = keys
+    if not moved:
+        return
+    made = {k: goldens['made_with'].get(k) for k in library_versions()}
+    if made != library_versions():
+        raise Skip(f'values moved {moved} under numpy/pandas {library_versions()}, but the goldens were '
+                   f'written under {made}: a library change cannot be told from a code change here. '
+                   'Rewrite the goldens from the pre-refactor code (see the docstring) and rerun.')
+    raise AssertionError(f'the in-memory outputs no longer match the pre-refactor code: {moved}')
+
+
 def main():
+    if sys.argv[1:2] == ['--write-goldens']:
+        write_goldens(Path(sys.argv[2]))
+        return 0
     tests = [(name, fn) for name, fn in sorted(globals().items()) if name.startswith('test_') and callable(fn)]
-    failed = 0
+    failed = skipped = 0
     try:
         for name, fn in tests:
             try:
                 fn()
                 print(f'PASS  {name}')
+            except Skip as why:
+                skipped += 1
+                print(f'SKIP  {name}: {why}')
             except Exception:  # noqa: BLE001 - report every failure, then exit non-zero
                 failed += 1
                 print(f'FAIL  {name}')
@@ -443,7 +636,8 @@ def main():
     finally:
         for e in EXPORTS.values():
             e.close()
-    print(f'\n{len(tests) - failed}/{len(tests)} passed')
+    ran = len(tests) - skipped
+    print(f'\n{ran - failed}/{ran} passed' + (f', {skipped} skipped' if skipped else ''))
     return 1 if failed else 0
 
 
