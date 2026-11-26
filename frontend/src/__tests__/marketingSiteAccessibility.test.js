@@ -1038,7 +1038,7 @@ describe('copy rules (DESIGN-STANDARD)', () => {
   test('/research limits the charted forecast to the venues and readings it was measured on', () => {
     const page = readJs('ResearchPage.js').replace(/\s+/g, ' ');
     expect(page).not.toMatch(/every venue card/);
-    expect(page).toContain("The chart below scores the one Flock served from 26 September to mid-October, each venue's weekly pattern moved by its own live readings. Since 1 November the number on a venue card has started from a forecast by Starling, the crowd model the paper also tests, wherever Flock knows the venue's weekly pattern. A venue without one gets an estimate from what is typical for its kind.");
+    expect(page).toContain("The chart below scores the forecast Flock served from 26 September to mid-October, which moved each venue's weekly pattern with its own live readings. Since 1 November, Starling, Flock's own crowd model and the one the paper tests, makes the forecast behind venue cards wherever Flock knows a place's weekly pattern; other places get what is typical for their kind.");
     expect(page).not.toMatch(/has come from Starling/);
     // The readings of 9 to 25 September came before the charted forecast
     // went live, so they were replayed, not served. Its weights were fitted

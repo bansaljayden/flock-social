@@ -153,13 +153,14 @@ export default function ResearchPage() {
                 behind every card. */}
             <p className="lp-lead rs-hero-lead">
               The first study is the crowd forecast. The chart below scores the
-              one Flock served from 26 September to mid-October, each venue's
-              weekly pattern moved by its own live readings. Since 1 November the
-              number on a venue card has started from a forecast by Starling, the
-              crowd model the paper also tests, wherever Flock knows the venue's
-              weekly pattern. A venue without one gets an estimate from what is
-              typical for its kind. The second, a sensor that counts the people
-              actually there, has only been tested on research footage so far.
+              forecast Flock served from 26 September to mid-October, which moved
+              each venue's weekly pattern with its own live readings. Since 1
+              November, Starling, Flock's own crowd model and the one the paper
+              tests, makes the forecast behind venue cards wherever Flock knows a
+              place's weekly pattern; other places get what is typical for their
+              kind. The second study is Flux, a sensor that counts the people in
+              a room, tested on six public benchmark sets it never trained on.
+              Testing in real venues comes next.
             </p>
 
             <div className="rs-paper">
