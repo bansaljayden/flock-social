@@ -31,6 +31,7 @@ from pathlib import Path
 import numpy as np
 
 from features_io import load_features
+from model_files import has_onnx
 from prepare_features import serving_population_mask
 # realtime_flags is re-exported: eval_two_head.py imports it from here.
 from prepare_features import realtime_flags  # noqa: F401
@@ -268,6 +269,7 @@ def compare_incumbent(gate_mask, hold_y_actual, challenger_pred, current_feature
             '  Before training, run:\n'
             '    mkdir -p models/incumbent\n'
             '    cp models/crowd_model.onnx models/model_metadata.json models/incumbent/\n'
+            '    (or models/crowd_model.onnx.gz, when that is the file models/ holds)\n'
             '    cp train/best_model.pkl train/features_holdout.pkl models/incumbent/\n'
             '  If this genuinely is the first model, set ML_ALLOW_NO_INCUMBENT=true.',
             model_path)
@@ -750,7 +752,8 @@ def main():
     # (measured on the local dry run: 395,464 rows against 240,657). The one
     # hatch, ML_ALLOW_APPROXIMATE_INCUMBENT, compares metrics on different rows.
     #
-    # The band gate replays models/incumbent/crowd_model.onnx through the
+    # The band gate replays models/incumbent/crowd_model.onnx (or its .gz, by
+    # the rule the serving code reads by: model_files.has_onnx) through the
     # serving code on the SAME live readings as the candidate, which is the
     # comparison this arm exists to make, done on identical rows. So when the
     # band gate is required and the incumbent artifact is there to replay, arms
@@ -760,7 +763,7 @@ def main():
         not ALLOW_NO_BAND_GATE
         and incumbent is not None
         and incumbent.get('status') == 'incomparable'
-        and (INCUMBENT_DIR / 'crowd_model.onnx').exists()
+        and has_onnx(INCUMBENT_DIR)
         and (INCUMBENT_DIR / 'model_metadata.json').exists())
     if incumbent_deferred:
         incumbent['deferred_to_band_gate'] = True

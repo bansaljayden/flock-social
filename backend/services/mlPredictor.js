@@ -5,6 +5,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const zlib = require('zlib');
 const crowdEngine = require('./crowdEngine');
 // Namespace require, not destructured: predictHourlyForecast reads
 // weatherService.getHourlyForecast at call time, which is also the seam
@@ -23,6 +24,9 @@ const { readingsExpiry } = require('../utils/liveReadingsClock');
 
 const MODEL_DIR = path.join(__dirname, '..', 'scripts', 'ml', 'models');
 const ONNX_PATH = path.join(MODEL_DIR, 'crowd_model.onnx');
+// The same graph, gzipped, for a model too big for GitHub's 100 MB file limit.
+// Read only when crowd_model.onnx is absent; see onnxSource below.
+const ONNX_GZ_PATH = `${ONNX_PATH}.gz`;
 const META_PATH = path.join(MODEL_DIR, 'model_metadata.json');
 
 let pool = null;
@@ -1149,7 +1153,7 @@ async function loadModel() {
   // A two-head artifact (see loadTwoHead) is model_metadata.json plus
   // profile.onnx and deviation.onnx; there is no crowd_model.onnx for it to
   // be missing. Every other artifact is checked exactly as before.
-  if (!metadataDeclaresTwoHead() && (!fs.existsSync(ONNX_PATH) || !fs.existsSync(META_PATH))) {
+  if (!metadataDeclaresTwoHead() && (!(fs.existsSync(ONNX_PATH) || fs.existsSync(ONNX_GZ_PATH)) || !fs.existsSync(META_PATH))) {
     console.log('[MLPredictor] Model files not found — using rule engine');
     return false;
   }
@@ -1210,7 +1214,7 @@ async function loadModel() {
       console.warn(`[MLPredictor] ML_SHIP_GATE_OVERRIDE=true — promoting v${version} despite a malformed served-accuracy slice (${served.reason}); predictions will fall back per request rather than publish it.`);
     }
 
-    const loaded = await ort.InferenceSession.create(ONNX_PATH);
+    const loaded = await ort.InferenceSession.create(onnxSource());
 
     // Round 17: artifact/metadata coherence. See verifyModelShape — a mismatch
     // is either an ML outage disguised as a working product or a silently
@@ -1239,6 +1243,27 @@ async function loadModel() {
     console.warn('[MLPredictor] Failed to load model:', err.message);
     return false;
   }
+}
+
+// What InferenceSession.create is handed for the single-head graph. While
+// crowd_model.onnx exists it is that path, exactly as before the .gz existed.
+// Without it, crowd_model.onnx.gz is read and gunzipped in memory and the bytes
+// are handed over instead (onnxruntime-node takes a Uint8Array, and a Buffer is
+// one): a 2,000-tree model is over GitHub's 100 MB per-file limit as a plain
+// .onnx and about 18 MB gzipped. gunzip checks the trailer's CRC-32 and length,
+// so a truncated or corrupt .gz throws here, inside loadModel's try, and the
+// load is refused with the reason in the log like any other broken artifact.
+function onnxSource() {
+  if (fs.existsSync(ONNX_PATH)) return ONNX_PATH;
+  const name = path.basename(ONNX_GZ_PATH);
+  let bytes;
+  try {
+    bytes = zlib.gunzipSync(fs.readFileSync(ONNX_GZ_PATH));
+  } catch (err) {
+    throw new Error(`${name} could not be decompressed (${err.message}); the artifact is corrupt or truncated`);
+  }
+  console.log(`[MLPredictor] ${path.basename(ONNX_PATH)} is absent; read ${name} and decompressed it in memory (${bytes.length} bytes)`);
+  return bytes;
 }
 
 function logServedAccuracy(version, served) {

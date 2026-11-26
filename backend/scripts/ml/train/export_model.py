@@ -43,17 +43,33 @@ predictions. A killed or failed export therefore leaves the PREVIOUS artifact
 pair intact and coherent, instead of a new .onnx beside old .json (widths that
 happen to match, a model that is not the one described) or a truncated
 metadata file.
+
+A GZIPPED COPY IS WRITTEN BESIDE THE GRAPH. crowd_model.onnx.gz holds the same
+bytes, compressed deterministically (model_files.gzip_bytes: level 9, mtime 0,
+no file name), checked to decompress back to the graph before anything is
+written, and replaced atomically like the other two. A 2,000-tree model is over
+GitHub's 100 MB per-file limit as a plain .onnx; models/README.md says when to
+commit the .gz instead, and mlPredictor.js reads it when the .onnx is absent.
+The metadata records both files' sha256 and size (onnx_sha256, onnx_bytes,
+onnx_gz_sha256, onnx_gz_bytes) so either can be checked against the export.
 """
 
 import json
 import logging
 import os
 import pickle
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+
+# model_files sits beside this file; the path is added for a caller that loads
+# this module by file path from elsewhere (mlExportContracts.test.js does).
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from model_files import GZ_NAME, gunzip_bytes, gzip_bytes, sha256_hex  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -343,6 +359,7 @@ def main():
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     meta_path = MODELS_DIR / 'model_metadata.json'
     onnx_path = MODELS_DIR / 'crowd_model.onnx'
+    gz_path = MODELS_DIR / GZ_NAME
 
     # ── Everything that can refuse, refuses BEFORE anything is written ───────
     metadata = load_metadata(meta_path)
@@ -394,13 +411,26 @@ def main():
         metadata['feedback_error_semantics'] = 'mapped'
         metadata['trained_at'] = datetime.now(timezone.utc).isoformat()
 
+        # The gzipped copy, proven to decompress to the verified graph before
+        # either is written, and both files' fingerprints in the metadata.
+        graph = staging.read_bytes()
+        gz = gzip_bytes(graph)
+        if gunzip_bytes(gz) != graph:
+            raise ExportContractError(f'{GZ_NAME} does not decompress to the verified graph.')
+        metadata['onnx_sha256'] = sha256_hex(graph)
+        metadata['onnx_bytes'] = len(graph)
+        metadata['onnx_gz_sha256'] = sha256_hex(gz)
+        metadata['onnx_gz_bytes'] = len(gz)
+
         payload = json.dumps(metadata, indent=2).encode('utf-8')
 
-        # Graph first, then metadata. Both are atomic replaces and the pair is
-        # already proven coherent, so the only window is between the two
-        # replaces — and in that window the metadata still describes the same
-        # feature set, because check_feature_order refused otherwise.
-        write_atomic(onnx_path, lambda f: f.write(staging.read_bytes()))
+        # Graph first, then its gzipped copy, then metadata. All are atomic
+        # replaces and the pair is already proven coherent, so the only window
+        # is between the replaces — and in that window the metadata still
+        # describes the same feature set, because check_feature_order refused
+        # otherwise.
+        write_atomic(onnx_path, lambda f: f.write(graph))
+        write_atomic(gz_path, lambda f: f.write(gz))
         write_atomic(meta_path, lambda f: f.write(payload))
     finally:
         staging.unlink(missing_ok=True)
@@ -409,8 +439,10 @@ def main():
     logger.info('Updated model_metadata.json with final info')
 
     onnx_size = onnx_path.stat().st_size / (1024 * 1024)
+    gz_size = gz_path.stat().st_size / (1024 * 1024)
     meta_size = meta_path.stat().st_size / 1024
     logger.info(f'ONNX model size: {onnx_size:.1f} MB')
+    logger.info(f'Saved {gz_path.name}: {gz_size:.1f} MB (sha256 {metadata["onnx_gz_sha256"]})')
     logger.info(f'Metadata size: {meta_size:.1f} KB')
     logger.info(f'Exported v{metadata["model_version"]} — {n_features} features, '
                 f'input "{input_name}", ship gate '

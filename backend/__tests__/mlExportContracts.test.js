@@ -961,6 +961,16 @@ test('export_model.py, run for real', { skip: PY ? false : 'python with onnxrunt
       assert.deepEqual(meta.delta_clamp_range, [-30, 30]);
       assert.equal(meta.feedback_error_semantics, 'mapped');
       assert.ok(fs.statSync(onnxPath).size > 0);
+      // The gzipped copy beside it decompresses to the same graph, and the
+      // metadata's fingerprints name both files as written.
+      const sha = (b) => require('node:crypto').createHash('sha256').update(b).digest('hex');
+      const graph = fs.readFileSync(onnxPath);
+      const gz = fs.readFileSync(`${onnxPath}.gz`);
+      assert.ok(require('node:zlib').gunzipSync(gz).equals(graph), 'crowd_model.onnx.gz must decompress to crowd_model.onnx');
+      assert.equal(meta.onnx_sha256, sha(graph));
+      assert.equal(meta.onnx_bytes, graph.length);
+      assert.equal(meta.onnx_gz_sha256, sha(gz));
+      assert.equal(meta.onnx_gz_bytes, gz.length);
       // The point of the whole file: what the export writes, the server loads.
       assert.deepEqual(
         mlPredictor._internals.verifyModelShape(

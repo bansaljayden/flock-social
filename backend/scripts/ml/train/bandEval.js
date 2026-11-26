@@ -527,6 +527,10 @@ const NOWCAST_WEIGHT_BY_AGE = { 1: 1.0, 2: 0.75 };
 // A fresh mlPredictor for one artifact directory. mlPredictor reads its two
 // files from a fixed path, so for the length of init() the fs and onnxruntime
 // calls that name those two paths are pointed at `dir`, and put back after.
+// The graph may be crowd_model.onnx or, for a model over GitHub's file limit,
+// only crowd_model.onnx.gz: both served names are pointed at `dir`, so the
+// serving code's own rule picks (the plain file when it exists, else the .gz
+// decompressed in memory) and the served directory's files are never read.
 // The metadata it is shown has overall_pass forced true, because the thing
 // being decided here is whether the artifact should pass; every other load
 // check (the quantile-map version refusal, the feature-coverage check, the
@@ -535,9 +539,10 @@ async function loadArtifact(dir) {
   isolateFromDatabases();
   const absDir = path.resolve(dir);
   const onnxPath = path.join(absDir, 'crowd_model.onnx');
+  const gzPath = `${onnxPath}.gz`;
   const metaPath = path.join(absDir, 'model_metadata.json');
-  if (!fs.existsSync(onnxPath) || !fs.existsSync(metaPath)) {
-    throw new Error(`${absDir} does not hold crowd_model.onnx and model_metadata.json.`);
+  if (!(fs.existsSync(onnxPath) || fs.existsSync(gzPath)) || !fs.existsSync(metaPath)) {
+    throw new Error(`${absDir} does not hold crowd_model.onnx (or crowd_model.onnx.gz) and model_metadata.json.`);
   }
   const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
   if (meta.label_type === 'two_head') {
@@ -549,6 +554,7 @@ async function loadArtifact(dir) {
   });
 
   const servedOnnx = path.join(DEFAULT_MODELS_DIR, 'crowd_model.onnx');
+  const servedGz = `${servedOnnx}.gz`;
   const servedMeta = path.join(DEFAULT_MODELS_DIR, 'model_metadata.json');
   const ort = require('onnxruntime-node');
   const originals = {
@@ -559,11 +565,13 @@ async function loadArtifact(dir) {
   const isPath = (p, target) => typeof p === 'string' && path.resolve(p) === target;
   fs.existsSync = function patchedExists(p, ...rest) {
     if (isPath(p, servedOnnx)) return originals.existsSync.call(fs, onnxPath);
+    if (isPath(p, servedGz)) return originals.existsSync.call(fs, gzPath);
     if (isPath(p, servedMeta)) return originals.existsSync.call(fs, metaPath);
     return originals.existsSync.call(fs, p, ...rest);
   };
   fs.readFileSync = function patchedRead(p, ...rest) {
     if (isPath(p, servedMeta)) return typeof rest[0] === 'string' || (rest[0] && rest[0].encoding) ? presented : Buffer.from(presented);
+    if (isPath(p, servedGz)) return originals.readFileSync.call(fs, gzPath, ...rest);
     return originals.readFileSync.call(fs, p, ...rest);
   };
   ort.InferenceSession.create = function patchedCreate(p, ...rest) {

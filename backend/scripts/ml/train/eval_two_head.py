@@ -69,6 +69,7 @@ from quick_eval import apply_score_qmap, realtime_flags  # noqa: E402
 from train_two_head import (BASELINE_FEATURE, PROFILE_FEATURE, build_matrix,  # noqa: E402
                             reconstruct_two_head)
 from export_model import write_atomic  # noqa: E402
+from model_files import onnx_file, session_source  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -149,8 +150,16 @@ def bootstrap_deltas(dates, y_true, cand, ship, n_resamples=BOOTSTRAP_RESAMPLES,
             'rows_with_date': int((dates != '').sum())}
 
 
+def shipped_onnx() -> Path:
+    """models/crowd_model.onnx, or its .gz when only that is there (model_files)."""
+    found = onnx_file(MODELS_DIR)
+    if found is None:
+        raise SystemExit(f'{MODELS_DIR} holds neither crowd_model.onnx nor crowd_model.onnx.gz')
+    return found
+
+
 def run_session(path: Path, M: np.ndarray, expect_width: int) -> tuple:
-    session = ort.InferenceSession(str(path))
+    session = ort.InferenceSession(session_source(path))
     inputs = session.get_inputs()
     if len(inputs) != 1:
         raise SystemExit(f'{path.name} takes {len(inputs)} inputs; the serving path feeds one')
@@ -257,7 +266,7 @@ def score_both(Xrows, feature_cols, baseline, ship_meta, cand_meta, rebuilt=None
     """Shipped raw delta and candidate (profile, deviation) on one row set."""
     ship_names = list(ship_meta['feature_names'])
     Ms = select_by_name(ship_names, Xrows, feature_cols, rebuilt=rebuilt, zero_filled=zero_filled)
-    ship_raw, _ = run_session(MODELS_DIR / 'crowd_model.onnx', Ms, len(ship_names))
+    ship_raw, _ = run_session(shipped_onnx(), Ms, len(ship_names))
     del Ms
     th = cand_meta['two_head']
     p_names = list(th['profile']['feature_names'])
@@ -386,7 +395,7 @@ def main():
     if zero_filled:
         logger.warning('shipped features %s are absent from the holdout pickle and could not be '
                        'rebuilt; zero-filled for the shipped model', zero_filled)
-    ship_raw, _ = run_session(MODELS_DIR / 'crowd_model.onnx', Ms, len(ship_names))
+    ship_raw, _ = run_session(shipped_onnx(), Ms, len(ship_names))
     del Ms
     ship_scores = gate_reconstruct(ship_raw, b)
     if ship_scores.dtype != np.float64:

@@ -332,7 +332,9 @@ test('quick_eval leaves the verdict pending the band gate, and defers only what 
   const block = q.slice(q.indexOf('incumbent_deferred = bool('), q.indexOf('if incumbent_deferred:'));
   assert.match(block, /not ALLOW_NO_BAND_GATE/);
   assert.match(block, /incumbent\.get\('status'\) == 'incomparable'/);
-  assert.match(block, /INCUMBENT_DIR \/ 'crowd_model\.onnx'\)\.exists\(\)/);
+  // The artifact may be crowd_model.onnx or, for a model over GitHub's file
+  // limit, crowd_model.onnx.gz alone; has_onnx (model_files.py) takes either.
+  assert.match(block, /has_onnx\(INCUMBENT_DIR\)/);
   assert.match(block, /INCUMBENT_DIR \/ 'model_metadata\.json'\)\.exists\(\)/);
   assert.ok(!/'absent'/.test(block), 'an absent incumbent is a failure, never a deferral');
   assert.match(q, /'incumbent_deferred_to_band_gate': incumbent_deferred/);
@@ -612,7 +614,10 @@ test('the gate scores the candidate as --candidate-serve says, records it, and t
   // tracked files are never written.
   const cand = path.join(dir, 'candidate');
   fs.mkdirSync(cand);
-  fs.copyFileSync(path.join(MODELS_DIR, 'crowd_model.onnx'), path.join(cand, 'crowd_model.onnx'));
+  // The graph in whichever form models/ ships it (a model over GitHub's file
+  // limit is tracked as crowd_model.onnx.gz only; loadArtifact reads either).
+  const graph = fs.existsSync(path.join(MODELS_DIR, 'crowd_model.onnx')) ? 'crowd_model.onnx' : 'crowd_model.onnx.gz';
+  fs.copyFileSync(path.join(MODELS_DIR, graph), path.join(cand, graph));
   const meta = JSON.parse(fs.readFileSync(path.join(MODELS_DIR, 'model_metadata.json'), 'utf8'));
   meta.time_holdout = { ...(meta.time_holdout || {}), from_date: FX.DATES[0] };
   meta.ship_gate = { ...(meta.ship_gate || {}), point_gate_pass: true, band_gate_required: true, overall_pass: false, verdict: 'pending_band_gate' };
