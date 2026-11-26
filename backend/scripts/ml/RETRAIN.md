@@ -137,6 +137,48 @@ table, the ship switch and rollback. What a readiness audit of every step on
   offset would sit at their no-reading values. Only the cancellation moves:
   the export still waits for the end of the current cycle.
 
+**2026-11-26: the November model is depth 10 with 2,000 trees, chosen on
+training cities.** The November runbook fixed the rule on 2026-11-25, before
+the export: grow the model at depths 8, 10 and 12 to 5,000 trees on the
+registered November features, every other setting as registered, and score it
+on the trainer's own early-stopping split, which holds out whole training
+cities (here Amsterdam, Austin, Bangkok, Beijing, Berlin, Boston and Buenos
+Aires: 533,204 rows, 137,791 of them served; the fits used the other
+3,000,276). Miami, Tokyo, Barcelona and the time holdout were never read. The
+lowest served MAE wins if it is at least 2% below the registered setting's and
+no worse on all rows; among settings within 0.5% of the best, the smaller is
+taken.
+
+| Served MAE (all-rows MAE) | 800 trees | 1,600 | 2,000 | 3,000 | 5,000 |
+|---|---|---|---|---|---|
+| depth 8 | 4.7941 (2.7742) | 4.7541 (2.7477) | 4.7461 (2.7421) | 4.7344 (2.7342) | 4.7216 (2.7233) |
+| depth 10 | 4.7218 (2.7022) | 4.7001 (2.6848) | 4.6967 (2.6812) | 4.6938 (2.6771) | 4.6962 (2.6834) |
+| depth 12 | 4.6891 (2.6534) | 4.6826 (2.6446) | 4.6815 (2.6425) | 4.6850 (2.6456) | 4.7015 (2.6603) |
+
+- The best is depth 12 at 2,000 trees, 2.35% below the registered 800 trees
+  at depth 8 on served rows and 4.75% below on all rows, so the size changes.
+  Depth 8 never gets within 0.5% of it, even at 5,000 trees.
+- Within 0.5% (served MAE up to 4.7049): depth 10 from 1,600 trees and
+  depth 12 from 800. Smaller means fewer learned values at the setting's
+  limit, trees x (3 x 2^depth - 2): 6.14 million for depth 10 at 2,000 trees,
+  9.83 million for depth 12 at 800, against 612,800 for the registered size.
+- Depth 10 at 1,600 trees is smaller still (4.91 million), but its served MAE
+  is only 1.96% below the registered setting's, under the 2% a replacement
+  must clear. The setting taken has to pass every part of the rule, so it is
+  depth 10 at 2,000 trees: served MAE 4.6967 (2.03% lower), all rows 2.6812
+  (3.35% lower), 89.72% of served readings within 10 points against 89.29%.
+  Read with the bar on the best alone, the rule would take the 1,600 trees,
+  0.07% worse on served rows.
+- Every candidate and the final refit train at this size:
+  `FLOCK_MAX_DEPTH=10 FLOCK_N_ESTIMATORS=2000` as a prefix on the
+  `train_model.py` command alone, never exported: the runbook's go/no-go
+  check and the within-city, two-head and sports experiments refuse the
+  switches, and `node --test` fails with them in the shell. They are recorded
+  in `metadata.hyperparameters.size_switches`, and the final refit must match
+  the gated run's `best_params`. The gate judges this size; no threshold,
+  criterion or comparator changes. The experiments keep the registered 800
+  trees at depth 8, so their numbers describe that size.
+
 **2026-11-13: the retrain is gated and served alone, the model making every
 number. This supersedes the 2026-11-05 mix below, before the export.**
 
@@ -627,8 +669,10 @@ python test_fold_category_baselines.py && python test_time_holdout.py
 #    live rows carry weather now), decide each one in EXPECTED_SPARSE_FEATURES
 #    or drop it. Do not set FLOCK_DEAD_SLOT_POLICY=warn for a release.
 
-# 4. Train, CPU-pinned so the artifact reproduces, then the diagnostics.
-FLOCK_TRAIN_DEVICE=cpu FLOCK_TRAIN_THREADS=12 python train_model.py
+# 4. Train, CPU-pinned so the artifact reproduces, then the diagnostics. The
+#    size is the capacity probe's choice (2026-11-26, above), recorded in
+#    metadata.hyperparameters.size_switches.
+FLOCK_TRAIN_DEVICE=cpu FLOCK_TRAIN_THREADS=12 FLOCK_MAX_DEPTH=10 FLOCK_N_ESTIMATORS=2000 python train_model.py
 python evaluate_model.py
 
 # 5. Point gate, without the 2.6.0 quantile map.
