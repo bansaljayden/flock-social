@@ -4326,9 +4326,12 @@ def main():
 #     grid, the always-zero test) is kept as integers, and pass 2 refuses a
 #     label or baseline that is not a whole number instead of summing it in a
 #     different order.
-#   * ties: value_counts breaks a tie by first appearance, so the tallies
-#     behind the Google types and the metadata counts (ValueTally) keep first
-#     appearance across slices and sort as value_counts sorts.
+#   * ties: the order value_counts gives equal counts depends on the pandas
+#     installed (pandas 3 sorts stably, so ties keep first appearance; pandas 2
+#     uses numpy's quicksort, whose order among ties depends on the counts
+#     around them). The tallies behind the Google types and the metadata counts
+#     (ValueTally) keep first appearance across slices and leave the final
+#     order to the installed value_counts itself (see ValueTally.value_counts).
 # Pass 3 also checks every slice against what pass 2 predicted (which rows
 # reach X, and cold_outdoor on each) and stops at the first difference.
 # test_stream_prep.py runs both preparations on one synthetic export holding
@@ -4339,6 +4342,25 @@ PREP_STREAM_MIN_ROWS_ENV = 'FLOCK_PREP_STREAM_MIN_ROWS'
 PREP_CHUNK_ROWS_ENV = 'FLOCK_PREP_CHUNK_ROWS'
 DEFAULT_PREP_STREAM_MIN_ROWS = 15_000_000
 DEFAULT_PREP_CHUNK_ROWS = 2_000_000
+# The pandas versions under which test_stream_prep.py and the registered
+# export's runs have shown the streamed outputs equal to main()'s. How
+# pd.read_csv types a column from its parser chunks, which TrainingCsv
+# reproduces, is the version's own: under pandas 2.2.3 a True/False column that
+# is empty in the other chunks reads whole as object holding bools, where
+# TrainingCsv gives floats. Another version is refused until it passes there
+# (requirements.txt pins this one).
+PREP_STREAM_PROVEN_PANDAS = ('3.0.1',)
+
+
+def require_proven_pandas(version: str) -> None:
+    if version not in PREP_STREAM_PROVEN_PANDAS:
+        raise CorpusContractError(
+            f'the streamed preparation is shown to write what main() writes under pandas '
+            f'{", ".join(PREP_STREAM_PROVEN_PANDAS)} only, and this is pandas {version}: how a '
+            'column is typed from its parser chunks differs between versions. Install the pinned '
+            'pandas (requirements.txt), or run test_stream_prep.py and the registered export\'s '
+            'comparison under this one and add it to PREP_STREAM_PROVEN_PANDAS once both pass, or '
+            f'set {PREP_STREAM_ENV}=0 on a machine that can hold the frame.')
 
 
 def _env_count(name: str, default: int, env=os.environ) -> int:
@@ -4495,9 +4517,15 @@ def _unify_with(frame: pd.DataFrame, other_head: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([frame, other_head], ignore_index=True).iloc[:len(frame)]
 
 
+# The most rows ValueTally.value_counts() hands value_counts() as a stand-in:
+# K values with K different counts need K(K+1)/2 (36 Google types: 666).
+VALUE_COUNTS_STANDIN_MAX_ROWS = 50_000_000
+
+
 class ValueTally:
     """Row counts per value in order of first appearance across everything added,
-    which is what value_counts() of the concatenation counts and how it breaks ties."""
+    which is what value_counts() of the concatenation counts, in the order the
+    hashtable behind it first meets each value."""
 
     def __init__(self):
         self.counts: Dict = {}
@@ -4511,10 +4539,37 @@ class ValueTally:
             self.counts[k] = self.counts.get(k, 0) + v
 
     def value_counts(self) -> pd.Series:
-        """value_counts() of everything added: by count, ties by first appearance."""
-        s = pd.Series(list(self.counts.values()), index=pd.Index(list(self.counts.keys()), dtype=object),
-                      dtype=np.int64)
-        return s.sort_values(ascending=False, kind='stable')
+        """value_counts() of everything added, in the order the installed pandas gives.
+
+        The counts are exact; the order of equal counts is the installed
+        value_counts' own (pandas 3 sorts stably, pandas 2 with numpy's
+        quicksort), so this does not sort them itself. value_counts() is handed
+        a stand-in column in which each value, in order of first appearance,
+        occurs as often as its count's rank among the distinct counts (1 for
+        the smallest). Its hashtable meets the values in the same order, and a
+        comparison sort orders the ranks exactly as it orders the counts, since
+        it only ever compares them, so the stand-in comes back in the order the
+        real column's value_counts() would give, whatever the version sorts with."""
+        keys = np.empty(len(self.counts), dtype=object)
+        keys[:] = list(self.counts)
+        counts = np.fromiter(self.counts.values(), dtype=np.int64, count=len(keys))
+        order = np.arange(len(keys))
+        if len(keys) > 1:
+            rank = np.unique(counts, return_inverse=True)[1].reshape(-1) + 1
+            if int(rank.sum()) > VALUE_COUNTS_STANDIN_MAX_ROWS:
+                raise CorpusContractError(
+                    f'{len(keys)} distinct values with {int(rank.max())} different counts: ordering them '
+                    f'as value_counts() does would take a stand-in of {int(rank.sum())} rows (the cap is '
+                    f'{VALUE_COUNTS_STANDIN_MAX_ROWS}). Set {PREP_STREAM_ENV}=0 on a machine that can '
+                    'hold the frame.')
+            standin = pd.Series(np.repeat(keys, rank)).value_counts()
+            at = {k: i for i, k in enumerate(keys.tolist())}
+            order = np.fromiter((at[k] for k in standin.index), dtype=np.int64, count=len(standin))
+            if len(order) != len(keys) or not np.array_equal(rank[order], standin.to_numpy()):
+                raise CorpusContractError('value_counts() returned the stand-in column with other counts '
+                                          'or values than it holds; this pandas is not the one the '
+                                          'streamed preparation was written against.')
+        return pd.Series(counts[order], index=pd.Index(keys[order], dtype=object), dtype=np.int64)
 
     def as_dict(self) -> Dict:
         return {str(k): int(v) for k, v in self.value_counts().items()}
@@ -5040,6 +5095,7 @@ def main_streamed(train_path: Path, why: str) -> None:
     import time
     import features_io
 
+    require_proven_pandas(pd.__version__)
     chunk_rows = _env_count(PREP_CHUNK_ROWS_ENV, DEFAULT_PREP_CHUNK_ROWS)
     pkl_path = SCRIPT_DIR / 'features_train.pkl'
     logger.info('Feature preparation STREAMED (%s): training_data.csv in three passes of %d-row '

@@ -1,4 +1,6 @@
-pandas
+# Pinned: prepare_features.py's streamed preparation refuses any pandas outside
+# PREP_STREAM_PROVEN_PANDAS (the outputs are shown equal to the in-memory path's under it).
+pandas==3.0.1
 numpy
 scikit-learn
 xgboost

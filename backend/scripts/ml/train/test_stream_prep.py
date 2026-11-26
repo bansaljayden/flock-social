@@ -48,6 +48,14 @@ the goldens from the pre-refactor code under the new versions to pin it again:
     git show 4b75d34d:backend/scripts/ml/train/prepare_features.py > <dir>/pf_ref.py
     python test_stream_prep.py --write-goldens <dir>/pf_ref.py
 
+The streamed mode runs only under a pandas in PREP_STREAM_PROVEN_PANDAS
+(requirements.txt pins it): this suite is the proof for a version, so it must
+pass under it before the version is added. Under pandas 2.2.3 it does not
+(TrainingCsv types a True/False column differently from read_csv). The order of
+tied counts is the one part checked against both: pandas 3 sorts value_counts()
+stably and pandas 2 does not, and ValueTally must give the running version's
+order at the top-30 boundary of the Google types.
+
 Run: python test_stream_prep.py     (no pytest needed; about a minute)
 """
 import gc
@@ -475,20 +483,57 @@ def test_parser_chunks_cast_as_the_whole_read_hold_every_value_of_it():
             same(list(want[c].to_numpy(dtype=object)), list(got[c].to_numpy(dtype=object)), c)
 
 
+def _tally_in_slices(values: pd.Series, rows: int) -> pd.Series:
+    tally = pf.ValueTally()
+    for a in range(0, len(values), rows):
+        tally.add(values.iloc[a:a + rows])
+    return tally.value_counts()
+
+
 def test_value_tally_counts_and_breaks_ties_as_value_counts_does():
     rng = np.random.default_rng(3)
     values = pd.Series(rng.choice(['a', 'b', 'c', 'd', 'e', 'f'], size=600).tolist())
-    tally = pf.ValueTally()
-    for a in range(0, 600, 97):
-        tally.add(values.iloc[a:a + 97])
-    want = values.value_counts()
-    got = tally.value_counts()
+    want, got = values.value_counts(), _tally_in_slices(values, 97)
     assert list(want.index) == list(got.index) and list(want) == list(got)
     tie = pd.Series(['x', 'y', 'y', 'x', 'z'])
     t = pf.ValueTally()
     t.add(tie.iloc[:2])
     t.add(tie.iloc[2:])
     assert list(t.value_counts().index) == list(tie.value_counts().index) == ['x', 'y', 'z']
+
+
+def test_value_tally_orders_ties_at_the_top_30_boundary_as_this_pandas_value_counts_does():
+    # pandas 3 sorts value_counts() stably, pandas 2 with numpy's quicksort, and
+    # the two disagree on which tied type makes the top 30. One case: 36 types
+    # first seen t00..t35 with counts default_rng(0).integers(1, 5, 36), where
+    # pandas 2.2.3 keeps t08 and a stable sort t05. The tally must give this
+    # pandas' order, on the rows the in-memory path counts (a Series built from
+    # a list, as fit_venue_features builds it, and a column as read), in slices.
+    def rows_for(keys, counts, rng):
+        first = list(keys)   # each value's first appearance, in this order
+        rest = [k for k, c in zip(keys, counts) for _ in range(int(c) - 1)]
+        return first + [rest[i] for i in rng.permutation(len(rest))]
+
+    cases = [([f't{k:02d}' for k in range(36)], np.random.default_rng(0).integers(1, 5, 36))]
+    rng = np.random.default_rng(11)
+    for n in (17, 31, 36, 64, 300):
+        cases.append(([f'g{k:03d}' for k in rng.permutation(n)], rng.integers(1, 4, n)))
+    checked = 0
+    for keys, counts in cases:
+        rows = rows_for(keys, counts, rng)
+        for values in (pd.Series(rows), pd.Series(np.array(rows, dtype=object), dtype=object)):
+            want = values.value_counts()
+            for slice_rows in (7, 100, len(rows)):
+                got = _tally_in_slices(values, slice_rows)
+                assert list(got.index) == list(want.index) and list(got) == list(want), \
+                    (len(keys), slice_rows, list(got.index[:32]), list(want.index[:32]))
+                assert got.head(30).index.tolist() == want.head(30).index.tolist()
+                checked += 1
+    keys, counts = cases[0]
+    stable = pd.Series(counts, index=keys).sort_values(ascending=False, kind='stable').head(30).index
+    real = pd.Series(rows_for(keys, counts, rng)).value_counts().head(30).index
+    print(f'      {checked} tallies in the order pandas {pd.__version__} value_counts() gives; on the '
+          f'36-type case its top 30 {"is" if list(real) == list(stable) else "is not"} a stable sort\'s')
 
 
 def test_median_of_counts_is_series_median():
@@ -533,6 +578,31 @@ def test_the_mode_is_chosen_by_row_count_unless_set():
     except pf.CorpusContractError:
         return
     raise AssertionError('a stray FLOCK_PREP_STREAM value was accepted')
+
+
+def test_the_streamed_mode_refuses_a_pandas_it_has_not_been_proven_under():
+    # This suite is the proof, so it must itself run under a proven pandas.
+    pf.require_proven_pandas(pd.__version__)
+    for version in ('2.2.3', '3.1.0'):
+        try:
+            pf.require_proven_pandas(version)
+        except pf.CorpusContractError:
+            continue
+        raise AssertionError(f'pandas {version} was accepted')
+    e = export()
+    proven = pf.PREP_STREAM_PROVEN_PANDAS
+    pf.PREP_STREAM_PROVEN_PANDAS = ()
+    try:
+        run(e.train, stream=True, chunk_rows=5000)
+    except pf.CorpusContractError as err:
+        assert 'PREP_STREAM_PROVEN_PANDAS' in str(err), err
+    else:
+        raise AssertionError('main() streamed under a pandas it has not been proven under')
+    finally:
+        pf.PREP_STREAM_PROVEN_PANDAS = proven
+    written = [f for f in ('features_train.pkl', 'features_train.X.npy', 'features_holdout.pkl')
+               if (e.train / f).exists()]
+    assert not written and not (e.root / 'ml' / 'models' / 'model_metadata.json').exists(), written
 
 
 def test_streamed_equals_in_memory_in_slices_smaller_and_larger_than_a_parser_chunk():

@@ -55,5 +55,5 @@ test('test_stream_prep.py passes: the streamed preparation equals the in-memory 
     const summary = stdout.match(/(\d+)\/(\d+) passed/);
     assert.ok(summary, stdout);
     assert.equal(summary[1], summary[2]);
-    assert.ok(Number(summary[2]) >= 10, `only ${summary[2]} checks ran`);
+    assert.ok(Number(summary[2]) >= 12, `only ${summary[2]} checks ran`);
   });
