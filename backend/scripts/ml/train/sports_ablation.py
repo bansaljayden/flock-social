@@ -50,8 +50,9 @@ from features_io import load_features, x_is_external  # noqa: E402
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# The fixed hyperparameters every shipped model since v2.3.0 has carried
-# (model_metadata.json hyperparameters.params, source fixed_from_v2.3.0_search).
+# The registered recipe, train_model.FIXED_PARAMS (source fixed_from_v2.3.0_search),
+# which every shipped model from v2.3.0 to v2.6.0 carried. The size switches do not
+# reach this script (main() refuses them), so its numbers describe this size.
 PARAMS = {
     'n_estimators': 800, 'max_depth': 8, 'learning_rate': 0.01,
     'subsample': 0.9, 'colsample_bytree': 0.8, 'min_child_weight': 7,

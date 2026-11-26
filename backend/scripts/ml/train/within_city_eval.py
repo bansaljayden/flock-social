@@ -129,8 +129,9 @@ if DEVICE != 'cpu':
     raise SystemExit('within_city_eval.py refuses to run on anything but cpu: the '
                      'refits must be reproducible. Unset FLOCK_TRAIN_DEVICE.')
 
-# Shipped recipe, copied from train_model.FIXED_PARAMS. Copied rather than
-# imported because importing train_model runs its module-level device probe.
+# The registered recipe, copied from train_model.FIXED_PARAMS (the size switches
+# do not reach this script). Copied rather than imported because importing
+# train_model runs its module-level device probe.
 FIXED_PARAMS = {
     'subsample': 0.9, 'reg_lambda': 1.0, 'reg_alpha': 0.5,
     'n_estimators': 800, 'min_child_weight': 7, 'max_depth': 8,

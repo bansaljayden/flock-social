@@ -84,6 +84,7 @@ def test_unset_is_the_registered_size():
     model, params, hp_info = fit()
     assert params == tm.FIXED_PARAMS, params
     assert hp_info['size_switches'] == {}, hp_info
+    assert 'size switches' not in hp_info['note'], hp_info['note']
     assert model.get_booster().num_boosted_rounds() == tm.FIXED_PARAMS['n_estimators']
 
 
@@ -98,6 +99,9 @@ def test_switches_change_only_depth_and_tree_count():
     model, params, hp_info = fit(FLOCK_MAX_DEPTH='3', FLOCK_N_ESTIMATORS='7')
     assert params == {**tm.FIXED_PARAMS, 'max_depth': 3, 'n_estimators': 7}, params
     assert hp_info['size_switches'] == {'FLOCK_MAX_DEPTH': 3, 'FLOCK_N_ESTIMATORS': 7}, hp_info
+    # The note says which values are not the v2.3.0 search's.
+    assert hp_info['note'].endswith(
+        " The size switches set max_depth and n_estimators (size_switches); every other value is the v2.3.0 search's."), hp_info['note']
     assert model.get_params()['max_depth'] == 3
     assert model.get_booster().num_boosted_rounds() == 7
 
@@ -107,6 +111,7 @@ def test_one_switch_alone_moves_one_setting():
     assert params['max_depth'] == tm.FIXED_PARAMS['max_depth']
     assert params['n_estimators'] == 5
     assert hp_info['size_switches'] == {'FLOCK_N_ESTIMATORS': 5}, hp_info
+    assert hp_info['note'].endswith(" The size switches set n_estimators (size_switches); every other value is the v2.3.0 search's."), hp_info['note']
 
 
 def test_a_bad_value_is_refused_not_rounded():

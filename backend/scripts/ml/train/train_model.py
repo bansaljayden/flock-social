@@ -1491,6 +1491,11 @@ def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, cl
                      'RandomizedSearchCV object, never fitted it, and wrote this same '
                      'dict into metadata.best_params as if it were the search result.'),
         }
+        if sizes:
+            # Only the size moved, so the note names what is not the v2.3.0 search's.
+            hp_info['note'] += (' The size switches set ' + ' and '.join(sorted(sizes)) +
+                                ' (size_switches); every other value is the v2.3.0 '
+                                "search's.")
     # Which switch set the size, by variable name; {} means FIXED_PARAMS' size.
     hp_info['size_switches'] = {var: sizes[param] for var, (param, _, _) in SIZE_SWITCHES.items()
                                 if param in sizes}

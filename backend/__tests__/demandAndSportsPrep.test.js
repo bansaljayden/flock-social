@@ -144,18 +144,33 @@ test('the feature builder derives game nights with three honest zero cases', () 
     'the gate exists for the geo-leak reason, and the comment says so');
 });
 
-test('the ablation is one feature build compared against itself, params pinned to the shipped model', () => {
+test('the ablation is one feature build compared against itself, at the registered recipe', () => {
   const ABL = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'train', 'sports_ablation.py'), 'utf8');
   assert.match(ABL, /os\.environ\['CROWD_QMAP_ENABLED'\] = 'false'/,
     'the map was fitted on the incumbent; applying it to fresh fits measures the map, not the features');
   assert.match(ABL, /never across two/,
     'both fits come from ONE pickle generation, so rows and split are identical by construction');
-  // The fixed hyperparameters must be the shipped model's own, so the
-  // ablation measures the features, not a config drift.
+  // The fixed hyperparameters are the registered recipe, train_model.py's
+  // FIXED_PARAMS, so the ablation measures the features, not a config drift.
+  const TRAIN = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'train', 'train_model.py'), 'utf8');
+  const fixed = TRAIN.replace(/\r\n/g, '\n').match(/^FIXED_PARAMS = \{\n([\s\S]*?)\n\}/m);
+  assert.ok(fixed, 'train_model.py lost FIXED_PARAMS');
+  const pairs = [...fixed[1].matchAll(/'(\w+)': ([\d.]+)/g)];
+  assert.equal(pairs.length, 8, 'FIXED_PARAMS no longer reads as eight numbers');
+  for (const [, k, v] of pairs) {
+    assert.match(ABL, new RegExp(`'${k}': ${v.replace('.', '\\.')}[,\\n]`), `ablation params must carry the registered ${k}=${v}`);
+  }
+  // The ablation refuses the size switches, so a model shipped at another size
+  // (hyperparameters.size_switches) differs from it in that size alone.
   const META = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'models', 'model_metadata.json'), 'utf8'));
+  const SIZE_PARAM = { FLOCK_MAX_DEPTH: 'max_depth', FLOCK_N_ESTIMATORS: 'n_estimators' };
+  const sized = new Set(Object.keys(META.hyperparameters.size_switches || {}).map((s) => SIZE_PARAM[s]));
+  assert.ok(!sized.has(undefined), 'size_switches names a switch this test does not know');
   for (const [k, v] of Object.entries(META.hyperparameters.params)) {
-    const re = new RegExp(`'${k}': ${String(v).replace('.', '\.')}`);
-    assert.match(ABL, re, `ablation params must carry the shipped ${k}=${v}`);
+    if (sized.has(k)) continue;
+    const registered = pairs.find(([, name]) => name === k);
+    assert.ok(registered, `the shipped model carries ${k}, which FIXED_PARAMS does not set`);
+    assert.equal(Number(registered[2]), v, `the shipped ${k}=${v} is not the registered ${registered[2]}`);
   }
 });
 

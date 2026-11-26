@@ -908,9 +908,9 @@ def main():
         'training_cities': sorted(np.unique(cities).tolist()),
         'training_city_rows': {c: int((cities == c).sum()) for c in np.unique(cities)},
         'hyperparameters': {
-            'source': 'fixed_from_v2.3.0_search, the same FIXED_PARAMS train_model.py fits '
-                      'the shipped model with, applied to both heads; the objective is '
-                      'per head and is the one deliberate departure',
+            'source': 'fixed_from_v2.3.0_search, the registered FIXED_PARAMS of '
+                      'train_model.py (no size switch reaches this script), applied to both '
+                      'heads; the objective is per head and is the one deliberate departure',
             'searched_this_run': False,
             'params': dict(FIXED_PARAMS),
             'objectives': {'profile': PROFILE_OBJECTIVE, 'deviation': DEVIATION_OBJECTIVE},
