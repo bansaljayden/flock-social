@@ -2041,6 +2041,21 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
   })));
   assert.equal(awayAbsent.result.exitCode, 0, awayAbsent.out);
   assert.deepEqual([awayAbsent.result.venues, awayAbsent.result.absentElsewhere], [1, 1]);
+  // Out of scope on its first row (lehigh, far outside the tiles) and in
+  // scope on the rows after it: every row is judged, in scope wins, and
+  // every row of the venue is counted.
+  const mixed = [...lines];
+  const [firstOfTwo] = linesOf(two.id);
+  const away = I.parseCsv(mixed[firstOfTwo])[0];
+  away[col('city')] = 'lehigh';
+  away[col('latitude')] = '40.6023';
+  away[col('longitude')] = '-75.4714';
+  mixed[firstOfTwo] = away.join(',');
+  const mixedAbsent = await absentFor(writeLines('rerated_mixed.csv', mixed));
+  assert.equal(mixedAbsent.result.exitCode, 1, mixedAbsent.out);
+  assert.deepEqual(mixedAbsent.result.absentFromSnapshot.map((v) => [v.id, v.city, v.rows]),
+    [[two.id, 'philly', linesOf(two.id).length]]);
+  assert.match(mixedAbsent.out, /the export holds 1 venues of philly or inside the run's tiles that the snapshot lacks, and 0 it lacks elsewhere/);
 
   // Another pass wrote NEW2, from its own answers (another review count),
   // before this folder's first answer: left out, never a mismatch.

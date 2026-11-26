@@ -232,8 +232,9 @@
 // go_no_go.txt only the date), so the export side is checked by what it
 // holds: every venue id of an export row that is of the run's cities, lies
 // inside the run's tiles or has no coordinates must be in the snapshot,
-// judged on every row before any is skipped, and one that is not refuses
-// the proof. The November snapshot was taken 2026-11-25T19:31:05.168Z, after
+// judged on every row before any is skipped (a venue whose first rows are
+// out of scope is judged again on each next one, and any row in scope
+// holds it), and one that is not refuses the proof. The November snapshot was taken 2026-11-25T19:31:05.168Z, after
 // every bound and after training_data.csv was last written (19:27:58Z by
 // its file time, which nothing checks). What
 // created_at alone cannot show: a row another writer (the other pass, a venue
@@ -2271,10 +2272,13 @@ async function runParity(opts, { log }) {
   // An export venue the snapshot lacks, of the run's cities, inside its
   // tiles or with no coordinates to place it: the export saw a row the
   // snapshot did not, so a write of the window may be missing from it.
-  // Judged on every row, before any is skipped; by venue id, once.
+  // Judged on every row, before any is skipped: a venue whose rows so far
+  // were all out of scope is judged again on each next row, and one row in
+  // scope holds it (in scope always wins). `absentElsewhere` counts the rows
+  // of a venue none of whose rows has been in scope.
   const inSnapshot = new Set(snapshot.list.map((row) => row.id));
   const absent = new Map();
-  const absentElsewhere = new Set();
+  const absentElsewhere = new Map();
   for await (const text of exportRecords(opts.exportCsv)) {
     if (!headerSeen) {
       if (text !== HEADER) {
@@ -2287,18 +2291,21 @@ async function runParity(opts, { log }) {
     const comma = text.indexOf(',');
     const id = Number(text.slice(0, comma));
     if (!inSnapshot.has(id)) {
-      if (!absent.has(id) && !absentElsewhere.has(id)) {
-        const f = parseCsv(text)[0];
-        const lat = f[EXPORT_COLUMNS.latitude] === '' ? NaN : Number(f[EXPORT_COLUMNS.latitude]);
-        const lng = f[EXPORT_COLUMNS.longitude] === '' ? NaN : Number(f[EXPORT_COLUMNS.longitude]);
-        const placed = Number.isFinite(lat) && Number.isFinite(lng);
-        if (opts.cities.includes(f[CITY_COLUMN]) || !placed || r.tileBoxes.some((t) => inTileBox(lat, lng, t))) {
-          absent.set(id, { id, city: f[CITY_COLUMN], latitude: placed ? lat : null, longitude: placed ? lng : null, rows: 0 });
-        } else {
-          absentElsewhere.add(id);
-        }
+      const held = absent.get(id);
+      if (held) { held.rows++; continue; }
+      const f = parseCsv(text)[0];
+      const lat = f[EXPORT_COLUMNS.latitude] === '' ? NaN : Number(f[EXPORT_COLUMNS.latitude]);
+      const lng = f[EXPORT_COLUMNS.longitude] === '' ? NaN : Number(f[EXPORT_COLUMNS.longitude]);
+      const placed = Number.isFinite(lat) && Number.isFinite(lng);
+      const before = absentElsewhere.get(id) || 0;
+      if (opts.cities.includes(f[CITY_COLUMN]) || !placed || r.tileBoxes.some((t) => inTileBox(lat, lng, t))) {
+        absent.set(id, {
+          id, city: f[CITY_COLUMN], latitude: placed ? lat : null, longitude: placed ? lng : null, rows: before + 1,
+        });
+        absentElsewhere.delete(id);
+      } else {
+        absentElsewhere.set(id, before + 1);
       }
-      if (absent.has(id)) absent.get(id).rows++;
       continue;
     }
     const exp = expected.get(id);
