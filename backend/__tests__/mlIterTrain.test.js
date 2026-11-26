@@ -11,8 +11,9 @@
 // cities, and requires the same booster bytes, parameters, metrics, out-of-fold
 // predictions and fold shifts, every probe and fold booster too, with and without
 // early stopping. It also runs test_features_io.py, which refuses an X file whose
-// hash, shape, dtype or layout disagrees with its pickle. Skipped, not failed,
-// where Python with pandas, scikit-learn and xgboost is absent.
+// hash, shape, dtype or layout disagrees with its pickle, and requires the
+// within_city_eval refusals in test_within_city_rebuild.py to have run and passed.
+// Skipped, not failed, where Python with pandas, scikit-learn and xgboost is absent.
 //
 // Run: node --test  (from backend/)
 // ---------------------------------------------------------------------------
@@ -106,11 +107,23 @@ test('the chunked fits keep the weights, the fold maps and the reads through fea
     assert.match(read(name), /if x_is_external\((tr|data)\):\s*\n(\s*#[^\n]*\n)*\s*raise SystemExit/,
       `${name} fits in memory and must refuse an X kept beside the pickle`);
   }
-  // within_city_eval rebuilds the whole frame and copies X in memory, so it refuses
-  // an X kept beside the pickle BEFORE the rebuild, not after it.
-  const wce = read('within_city_eval.py');
-  const main = wce.slice(wce.indexOf('def main():'));
-  const refusal = main.search(/if x_file_for\(features_path\)\.exists\(\) and x_is_external\(load_features\(features_path\)\):\s*\n\s*raise SystemExit/);
-  assert.ok(refusal > 0 && refusal < main.indexOf('rebuild_training_frame()'),
-    'within_city_eval must refuse an X kept beside the pickle before rebuild_training_frame()');
 });
+
+// within_city_eval rebuilds the whole frame and copies X in memory, so it must
+// refuse an X kept beside the pickle BEFORE the rebuild, decided from the pickle
+// itself (any X_file name, or one that is missing), not from a file name. That
+// is behaviour, checked by running main() with the rebuild as a tripwire in
+// test_within_city_rebuild.py; each of these must have run and passed.
+test('within_city_eval refuses an X beside the pickle before its rebuild, whatever the file is called',
+  { skip: PY_TRAIN ? false : 'python with pandas, scikit-learn and xgboost not available' }, () => {
+    const env = { ...process.env, FLOCK_TRAIN_DEVICE: 'cpu' };
+    for (const k of ['FLOCK_MAX_DEPTH', 'FLOCK_N_ESTIMATORS', 'FLOCK_RUN_LENGTH_WEIGHTS',
+      'FLOCK_WEEKLY_ANCHOR_WEIGHT', 'ML_ALLOW_UNKNOWN_PROVENANCE']) delete env[k];
+    const r = spawnSync(PY_TRAIN, ['test_within_city_rebuild.py'], { cwd: TRAIN_DIR, encoding: 'utf8', env, timeout: 300000 });
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+    for (const name of ['test_an_x_file_under_another_name_is_refused_before_the_rebuild',
+      'test_a_pickle_naming_a_missing_x_file_is_refused_before_the_rebuild',
+      'test_an_x_in_the_pickle_goes_on_to_the_rebuild_with_its_columns']) {
+      assert.match(r.stdout, new RegExp(`^PASS  ${name}$`, 'm'), `${name} did not run and pass`);
+    }
+  });

@@ -218,6 +218,84 @@ def test_the_time_holdout_is_cut_as_main_cuts_it_over_both_frames():
                 os.environ[k] = v
 
 
+# --- An X kept beside the pickle (features_io) is refused BEFORE the rebuild.
+# within_city_eval rebuilds the whole frame and copies X in memory, so at the
+# third candidate's size the rebuild itself is what must not start. main() runs
+# on a scratch features_train.pkl with rebuild_training_frame replaced by a
+# tripwire; reaching it means the check came too late, or not at all.
+
+class _RebuildReached(Exception):
+    pass
+
+
+def _run_main_on(write_pickle):
+    """within_city_eval.main() over a scratch folder: ('refused', message) or
+    ('rebuilt', the feature_cols the rebuild was handed)."""
+    import gc
+    import tempfile
+
+    def tripwire(feature_cols=None):
+        raise _RebuildReached(feature_cols)
+
+    saved = (wce.SCRIPT_DIR, wce.rebuild_training_frame)
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
+        write_pickle(Path(d))
+        wce.SCRIPT_DIR, wce.rebuild_training_frame = Path(d), tripwire
+        try:
+            wce.main()
+        except SystemExit as err:
+            return 'refused', str(err)
+        except _RebuildReached as reached:
+            return 'rebuilt', reached.args[0]
+        finally:
+            wce.SCRIPT_DIR, wce.rebuild_training_frame = saved
+            gc.collect()  # Windows keeps a mapped file locked until the map is gone
+    raise AssertionError('main() returned without rebuilding or refusing')
+
+
+def _x():
+    return np.asfortranarray(np.arange(24, dtype=np.float32).reshape(8, 3))
+
+
+def _write_external(folder, x_name, write_file=True):
+    import pickle
+    import features_io as fio
+    x_path = folder / x_name
+    keys = {fio.X_FILE_KEY: x_name, fio.X_SHAPE_KEY: [8, 3], fio.X_SHA_KEY: '0' * 64}
+    if write_file:
+        arr = np.lib.format.open_memmap(x_path, mode='w+', dtype=np.float32, shape=(8, 3),
+                                        fortran_order=True)
+        arr[:] = _x()
+        arr.flush()
+        del arr
+        keys[fio.X_SHA_KEY] = fio.sha256_file(x_path)
+    with open(folder / 'features_train.pkl', 'wb') as f:
+        pickle.dump({'feature_cols': ['a', 'b', 'c'], 'y': np.zeros(8, np.float32), **keys}, f)
+
+
+def test_an_x_file_under_another_name_is_refused_before_the_rebuild():
+    # load_features accepts any X_file name beside the pickle; the default
+    # features_train.X.npy does not exist here, and the refusal must not need it.
+    outcome, said = _run_main_on(lambda d: _write_external(d, 'registered.X.npy'))
+    assert outcome == 'refused' and 'keeps X beside it (registered.X.npy)' in said, (outcome, said)
+
+
+def test_a_pickle_naming_a_missing_x_file_is_refused_before_the_rebuild():
+    outcome, said = _run_main_on(lambda d: _write_external(d, 'features_train.X.npy', write_file=False))
+    assert outcome == 'refused' and 'not beside it' in said, (outcome, said)
+
+
+def test_an_x_in_the_pickle_goes_on_to_the_rebuild_with_its_columns():
+    import pickle
+
+    def inline(d):
+        with open(d / 'features_train.pkl', 'wb') as f:
+            pickle.dump({'X': _x(), 'feature_cols': ['a', 'b', 'c'], 'y': np.zeros(8, np.float32)}, f)
+
+    outcome, cols = _run_main_on(inline)
+    assert outcome == 'rebuilt' and cols == ['a', 'b', 'c'], (outcome, cols)
+
+
 def main():
     tests = [(name, fn) for name, fn in sorted(globals().items()) if name.startswith('test_') and callable(fn)]
     failed = 0

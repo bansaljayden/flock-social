@@ -111,7 +111,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 import prepare_features as pf  # noqa: E402
 from prepare_features import serving_population_mask  # noqa: E402
-from features_io import load_features, x_file_for, x_is_external  # noqa: E402
+from features_io import X_FILE_KEY, load_features, x_is_external  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -314,7 +314,31 @@ def rebuild_cache_key() -> dict:
     }
 
 
-def rebuild_training_frame() -> pd.DataFrame:
+def load_reference_pickle() -> dict:
+    """features_train.pkl, read once, before anything is rebuilt.
+
+    This script rebuilds the whole training frame in memory and makes whole copies
+    of X from it, so a frame whose X had to live beside the pickle (features_io) is
+    the size it cannot hold. The pickle itself decides (its X_file key, whatever the
+    file beside it is called), and the refusal comes before the rebuild; so does the
+    failure for a pickle that names an X file that is not there. An X held in the
+    pickle is loaded here and nowhere else: the dict goes on to verify_rebuild.
+    """
+    path = SCRIPT_DIR / 'features_train.pkl'
+    try:
+        ref = load_features(path)  # an X beside the pickle is mapped here, never read
+    except (FileNotFoundError, ValueError) as err:
+        raise SystemExit(f'{path.name} cannot be read: {err}') from err
+    if x_is_external(ref):
+        name = ref.get(X_FILE_KEY)
+        del ref
+        raise SystemExit(f'{path.name} keeps X beside it ({name}): within_city_eval.py rebuilds '
+                         'the frame and copies X in memory and does not support that layout. '
+                         'Run it on a frame that keeps X in the pickle.')
+    return ref
+
+
+def rebuild_training_frame(feature_cols=None) -> pd.DataFrame:
     apply_live_feature_policy()
     cached = None
     if FRAME_CACHE.exists():
@@ -331,7 +355,8 @@ def rebuild_training_frame() -> pd.DataFrame:
         if not cached.attrs.get('feature_cols'):
             # DataFrame.attrs does not survive every pandas pickle round-trip.
             cached.attrs['feature_cols'] = list(
-                load_features(SCRIPT_DIR / 'features_train.pkl')['feature_cols'])
+                feature_cols if feature_cols is not None
+                else load_features(SCRIPT_DIR / 'features_train.pkl')['feature_cols'])
         return cached
 
     logger.info('Rebuilding the training frame from training_data.csv '
@@ -409,7 +434,7 @@ def rebuild_training_frame() -> pd.DataFrame:
     return train_df
 
 
-def verify_rebuild(frame: pd.DataFrame) -> dict:
+def verify_rebuild(frame: pd.DataFrame, ref=None) -> dict:
     """Prove the rebuilt frame is the SAME frame features_train.pkl was cut from.
 
     Without this the whole script is a different measurement of a different
@@ -417,8 +442,8 @@ def verify_rebuild(frame: pd.DataFrame) -> dict:
     venue_id / observed_date columns are aligned to X row for row.
     """
     logger.info('Verifying the rebuild against features_train.pkl...')
-    # main() has already refused an X kept beside the pickle (features_io).
-    ref = load_features(SCRIPT_DIR / 'features_train.pkl')
+    if ref is None:
+        ref = load_reference_pickle()
     feature_cols = frame.attrs['feature_cols']
     checks = {}
     checks['row_count_matches'] = (len(frame) == len(ref['y_actual']))
@@ -817,19 +842,13 @@ def main():
         if var in os.environ:
             raise SystemExit(f'{var} is set, but {os.path.basename(__file__)} fits the '
                              'registered size only (800 trees, depth 8). Unset it to run.')
-    # This script rebuilds the whole training frame in memory and makes whole
-    # copies of X from it, so a frame whose X had to live beside the pickle
-    # (features_io) is the size it cannot hold. Refused before the rebuild. Only a
-    # pickle with an X file beside it is opened to check.
-    features_path = SCRIPT_DIR / 'features_train.pkl'
-    if x_file_for(features_path).exists() and x_is_external(load_features(features_path)):
-        raise SystemExit(f'features_train.pkl keeps X beside it ({x_file_for(features_path).name}): '
-                         'within_city_eval.py rebuilds the frame and copies X in memory and '
-                         'does not support that layout. Run it on a frame that keeps X in the pickle.')
+    # Read once, before the rebuild: an X kept beside the pickle is refused here.
+    ref = load_reference_pickle()
     t0 = time.time()
-    frame = rebuild_training_frame()
+    frame = rebuild_training_frame(ref['feature_cols'])
     feature_cols = frame.attrs['feature_cols']
-    verification = verify_rebuild(frame)
+    verification = verify_rebuild(frame, ref)
+    del ref
 
     X_base = frame[feature_cols].values.astype(np.float32)
     y = frame['delta_label'].values.astype(np.float32)
