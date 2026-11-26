@@ -29,7 +29,7 @@ product invariant (see below, including what it does not cover).
 |---|---|
 | Planning | Flocks, invites, RSVP, venue voting, group chat with venue cards, plans calendar |
 | Money | Anonymous budget matching (aggregate ceiling only), bill splitting with Venmo and Cash App deep links, Zelle by instructions (it has no shared URL scheme to open) |
-| Crowd intelligence | Each venue's own weekly curve, moved by its newest live readings (see below). Flock's own trained model (XGBoost v2.6.0, run in-process as ONNX) is ship-gated and serves again only when a retrain beats that. A rule engine covers venues with no baseline yet, and the response says which one answered |
+| Crowd intelligence | Starling, Flock's own trained model (XGBoost v2.6.0, run in-process as ONNX), has made the number since 1 November 2026: each venue's weekly curve plus Starling's predicted departure from it (see below). A venue with no curve gets its category's typical week (200 or more Google reviews) or the rule engine, and the response says which one answered |
 | Birdie | AI assistant for venue ideas ("somewhere quiet and cheap nearby") |
 | Venue sensor | Flux: a Raspberry Pi with a thermal camera, a doorway counter and a sound sensor (the case is built around a decibel meter, bought and not yet plugged in; until it is, the working unit uses a microphone for a rough louder-or-quieter level). Counts people on the device with Owl, Flock's own trained vision model (see below), and sends counts only. A unit set up for tables also sends, per table, the head count and whether it is free, seated, waiting for a server or waiting to be cleared, which the venue sees on the Tables tab of its dashboard |
 | Safety | Live location inside a flock (off by default, never background), two-tap SOS to trusted contacts, report + block, account deletion in-app (with re-authentication) |
@@ -61,17 +61,20 @@ get there? The answer is a number from 0 to 100 and one of five words: Quiet,
 Not Busy, Steady, Busy, Packed. Getting that word right is the whole job.
 
 Map apps usually answer with a popular-times chart, the venue's typical level
-for that weekday and hour. Flock starts from the same weekly pattern and
-corrects it with the venue's own live readings. A collector reads the venues it
-tracks in Philadelphia and the Lehigh Valley every hour, and those readings
-build the corpus every future model learns from.
+for that weekday and hour. Flock starts from the same weekly pattern, and
+Starling, its trained model, predicts how far each hour will move from it.
+From 1 September (hourly from 3 September) to 25 November 2026 a collector read
+the venues Flock tracked and kept 2,762,440 verified live readings. The next
+model will learn from 1,467,881 of them, taken through 11 November, and be
+tested on 1,218,939 taken from 12 to 25 November.
 
-**Over a month of live readings, Flock named the exact crowd level 54.9% of the
-time. The popular-times chart, scored on the same readings, managed 30.2%.** The
-test ran from 9 September to 8 October 2026 and covered 119,939 live readings at
-1,754 venues. Both were measured against a commercial provider's live busyness
-estimates, and the weights served during the test were fitted on earlier days,
-so none of these readings informed them.
+**Over a month of live readings, the forecast Flock served from 26 September
+named the exact crowd level 54.9% of the time. The popular-times chart, scored
+on the same readings, managed 30.2%.** The test replayed the serving code on
+119,939 live readings at 1,754 venues from 9 September to 8 October 2026. Both
+were measured against a commercial provider's live busyness estimates, and the
+forecast's weights were fitted on earlier days, so none of these readings
+informed them.
 
 | 119,939 live readings, 9 Sep to 8 Oct 2026 | popular-times chart | **Flock** |
 |---|---|---|
@@ -87,40 +90,57 @@ week, Friday and Saturday included.
 **The freshest reading is where the gain comes from.** On the 48.3% of readings
 where the venue had also been read in the hour before, the served number named
 the exact level 77.0% of the time and landed within one level 88.6% of the time.
-Since 13 October production has used that finding as its rule: when the venue
-was read in the past hour, the card shows that reading as it stands, and
-otherwise it shows the curve plus the venue's offset, how far its recent live
-readings have run above or below it.
+From 13 October to 1 November production used that finding as its rule, rule
+(b): when the venue had been read in the past hour, the card showed that
+reading as it stood, and otherwise the curve plus the venue's offset, how far
+its recent live readings had run above or below it. Since 1 November the card
+has served Starling (below), and live collection ended on 25 November 2026.
 
-The pre-registered retrain, set for early November, will test whether a trained
-model can beat that number, under a decision rule fixed before its data existed.
+The pre-registered retrain will test whether a new model beats rule (b) on the
+last 14 days of live readings, 12 to 25 November 2026, under a decision rule
+fixed before its data existed. Its export ran on 25 November and its size was
+chosen on 26 November; it has not been trained yet.
 
 ### How the served number is built
 
-Production runs `CROWD_SERVE_MODE=curve_offset` with `CROWD_NOWCAST_ENABLED=true`.
-The base is the venue's own weekly curve plus 0.85 times its trailing offset: the
-median gap between its newest live readings and that curve, counted only from
-readings taken before the hour being scored. The nowcast then serves a reading
-from the hour before at full weight (`NOWCAST_WEIGHTS` in
-`backend/services/mlPredictor.js`). During the month above it also carried a
-reading two hours old at 0.85 and one three hours old at 0.25. On the month's
-14,778 two-hour readings that weight cost 2.73 points of MAE against the curve
-plus offset alone, and the three-hour weight was a wash, so both went to zero on
-13 October. On the same month the new rule scores about the same as the old one
-(54.7% exact, MAE 17.68), but it was chosen on those readings, so they are no
-test of it; the pre-registered retrain scores it next.
+Production has run `CROWD_SERVE_MODE=model` with `CROWD_NOWCAST_ENABLED=true`
+since the evening of 1 November 2026. The base is the venue's own weekly curve
+plus Starling's predicted departure from it, clamped to ±50, plus 0.5 times its
+trailing offset: the median gap between its newest live readings and that
+curve, counted only from readings taken before the hour being scored. Until
+live collection ended, the nowcast then carried the venue's latest earlier
+reading at weight 1.0 when it was an hour old, 0.9 at two hours and 0.3 at
+three (`NOWCAST_WEIGHTS.model` in `backend/services/mlPredictor.js`, fitted on
+v2.6.0's own output; `model_qmap` while the quantile map was on, to 10
+November). Since 23 November two switches change model mode for v2.6.0:
+outside March to May, its training months, the model's part of the number is
+its mean over those three months (`CROWD_MONTH_SUPPORT`), and an hour whose
+curve is 0 gets the model at a curve of 0 plus the offset, without the
+nowcast, instead of the rule engine (`CROWD_ZERO_CURVE_MODEL`).
 
-When the live feed goes quiet, the nowcast has no reading from the hour before
-to serve, and the card shows the curve plus the offset. The offset keeps working
-through the silence: it is the median gap between the curve and the venue's
-newest 20 readings from the 28 days before the hour shown
-(`trailingOffsetBefore`), so each reading ages
-out on its own clock and the offset rests on fewer, older readings as the
-silence goes on. Once fewer than two remain, 28 days after the venue's last
-reading at the latest, the card shows the weekly curve alone. An earlier version
-also dropped every offset seven days after the last collector run that wrote a
-live reading; replayed over 28 earlier outages, that cost 3.75 points of exact
-level on days 7 to 13 of a silence, so it was removed.
+From 26 September to 1 November production ran `CROWD_SERVE_MODE=curve_offset`:
+the curve plus 0.85 times the offset, with the nowcast serving a reading from
+the hour before at full weight (`NOWCAST_WEIGHTS.curve_offset`). During the
+month above it also carried a reading two hours old at 0.85 and one three hours
+old at 0.25. On the month's 14,778 two-hour readings that weight cost 2.73
+points of MAE against the curve plus offset alone, and the three-hour weight
+was a wash, so both went to zero on 13 October. On the same month the new rule
+scores about the same as the old one (54.7% exact, MAE 17.68), but it was
+chosen on those readings, so they are no test of it; the pre-registered
+retrain scores it next.
+
+Live collection ended on 25 November 2026 (newest reading 15:59 UTC), and the
+nowcast has moved no number since about 19:00 UTC that day. The offset keeps
+working through the silence: it is the median gap between the curve and the
+venue's newest 20 readings from the 28 days before the hour shown
+(`trailingOffsetBefore`), so each reading ages out on its own clock and the
+offset rests on fewer, older readings as the silence goes on. Once fewer than
+two remain, 28 days after the venue's last reading at the latest (23 December
+2026 for a venue read on 25 November), the card shows the curve plus
+Starling's departure alone. An earlier version also dropped every offset seven
+days after the last collector run that wrote a live reading; replayed over 28
+earlier outages, that cost 3.75 points of exact level on days 7 to 13 of a
+silence, so it was removed.
 
 The labels are relative: the provider scales each venue's busyness from 0 to 100
 within that venue, and the readings do not count people. The exact level leads
@@ -129,24 +149,27 @@ venue-hours bunch up at Quiet and Packed, so a constant answer of Not Busy lands
 within one level 75.2% of the time while naming the exact level only 14.8% of
 the time.
 
-The arithmetic went live on 26 September, after a first test of three days
-(4,183 readings, 6 to 8 September); the month above holds 29 times as many
-readings. The measurements are recorded in `backend/scripts/ml/MODEL-METRICS.md`
+The curve-offset arithmetic went live on 26 September, after a first test of
+three days (4,183 readings, 6 to 8 September); the month above holds 29 times
+as many readings. The measurements are recorded in `backend/scripts/ml/MODEL-METRICS.md`
 and `backend/services/servedAccuracy.json`, and they reproduce with
 `backend/scripts/ml/train/bandEval.js`.
 
-A venue with no weekly curve yet is answered by the rule engine in
-`crowdEngine.js` and tagged `predictionMethod: 'rule_engine'`, so every response
-names the engine behind it and no rule-engine answer is ever presented as a
-model output.
+A venue with no weekly curve yet is answered from its category's typical week
+when it has 200 or more Google reviews (`predictionMethod:
+'rule_engine_category_table'`, since 14 October 2026), and otherwise by the
+rule engine in `crowdEngine.js` (`predictionMethod: 'rule_engine'`), so every
+response names the engine behind it and no rule-engine answer is ever
+presented as a model output.
 
 ### The trained model
 
-**Flock's own trained model beats the popular-times chart on every measure the
-card is scored on.** It served the card until 26 September. Here it is against
-the chart on 67,249 realtime crowd readings from the spring, the kind of reading
-the card is judged against, in three cities the model never trained on (Miami,
-Tokyo, Barcelona):
+**On spring readings in three cities it never trained on, Flock's own trained
+model beats the popular-times chart on every measure the card is scored on.**
+It served the card until 26 September, and again since 1 November 2026. Here it
+is against the chart on 67,249 realtime rows from the spring, whose source (a
+live reading or the provider's forecast) was not recorded, in three cities the
+model never trained on (Miami, Tokyo, Barcelona):
 
 | 67,249 readings in three held-out cities | popular-times chart | **Flock's model** |
 |---|---|---|
@@ -166,10 +189,10 @@ hourly visits from the previous 24 hours of visits at every venue in a city.
 Against a historical-average baseline its authors liken to Google Maps' popular
 times graph, its MAE is 40% to 54% lower across five cities, and against last
 week's value at the same hour it is 14% to 19% lower. Flock's model reaches its
-6.5% with no recent reading of the venue in its feature set. The hourly
-collector now asks for that reading for the venues it can poll in Philadelphia
-and the Lehigh Valley, served venues first, and stores it when the vendor has
-one, which makes it the next input the model gets.
+6.5% with no recent reading of the venue in its feature set. From 3 September
+to 25 November 2026 the hourly collector stored that reading for the venues it
+polled, and the next model, not trained yet, will learn from 1,467,881 of
+them, taken through 11 November.
 
 **It is above zero at a granularity where the field often falls below it.** R²,
 the coefficient of determination, is positive when a model's predictions carry
@@ -192,29 +215,47 @@ above the previous shipped model's, measured on the same rows in the same run
 (20.7% against 19.3%), and no MAE regression against that model (29.42 against
 30.77). Candidate and incumbent are scored on identical rows with identical
 features, so the floor rises whenever the incumbent improves. Since late
-September a second gate stands behind the first: the candidate and the number
-production serves are replayed through the serving code on a 14-day window of
-live readings held out of the candidate's training. The candidate loads only if
-it beats the served number on within one level, gives up no more than a point to
-it on within 10 or MAE, beats the popular-times chart, and keeps every city with
-300 or more readings within 2 points.
+September a second gate stands behind the first: the candidate and rule (b),
+the rule production served from 13 October to 1 November, are replayed through
+the serving code on a 14-day window of live readings held out of the
+candidate's training. For the November model that window is 12 to 25 November
+2026, 1,218,939 readings, and the verdict is taken on the 705,642 of them in
+the six cities read every hour. The candidate loads only if, on at least 1,000
+readings over 5 or more dates that neither it nor rule (b) was fitted on, it
+beats rule (b) on within one level, gives up no more than a point to it on
+within 10 or MAE, beats the weekly curve on within one level with band MAE no
+worse, does no worse than the rule engine, and keeps each of the six cities
+with 300 or more readings within 2 points of rule (b).
 
-**How it works.** In model mode (`CROWD_SERVE_MODE=model`),
-`backend/services/mlPredictor.js` serves an XGBoost model (800 gradient-boosted
-trees at depth 8, exported to ONNX and run in-process by `onnxruntime-node`,
-**v2.6.0 "Starling"**). Production runs `curve_offset` today, and a retrain has
-to beat the served number above before model mode serves again. The corpus is
-Flock's own: **3.9 million rows across 34 cities**, collected by Flock's
-pipeline. After holding out three whole cities and keeping the rows with a
-usable baseline, that is **1.93 million training rows across 30 cities**. The
-model reads **106 features**: time patterns, weather, nearby events, holiday
-calendars, venue category and popularity, and the typical level for that kind
-of venue and for its neighbors at that hour. It predicts a *delta*, how far a
-venue will sit from its own typical value for that hour, and in model mode the
-served score is the baseline plus that delta, clamped and clipped to 0 to 100.
-Training runs on CPU with pinned threads and is **bit-reproducible**: given the
-same data and seed, two runs produce identical predictions, so the artifact can
-be regenerated by anyone holding the corpus.
+**How it works.** Starling predicts a *delta*: how far a venue will sit from
+its own typical value for that hour. It learns that from **106 features**: time
+patterns, weather, nearby events, holiday calendars, venue category and
+popularity, and the typical level for that kind of venue and for its neighbors
+at that hour. The served score is the baseline plus that delta, clamped and
+clipped to 0 to 100. Production has served it in model mode
+(`CROWD_SERVE_MODE=model`) since 1 November 2026:
+`backend/services/mlPredictor.js` runs it in-process, exported to ONNX, with
+`onnxruntime-node`. The version serving, **v2.6.0 "Starling"**, is 800
+gradient-boosted trees, each up to 8 splits deep, trained on Flock's own spring
+corpus: **3.9 million rows across 34 cities**, collected by Flock's pipeline
+from 10 March to 18 May 2026. After holding out three whole cities and keeping
+the rows with a usable baseline, that is **1.93 million training rows across
+30 cities**. Training runs on CPU with pinned threads and is
+**bit-reproducible**: given the same data and seed, two runs produce identical
+predictions, so the artifact can be regenerated by anyone holding the corpus.
+
+**The next version.** The November retrain is sized and gated but not trained
+yet. It keeps v2.6.0's learning rate, sampling and regularisation and grows to
+2,000 trees, each up to 10 splits deep, a size chosen on 26 November by a test
+on held-out training cities (`backend/scripts/ml/RETRAIN.md`). It learns from
+3,533,480 training rows of 104 features from the 25 November export, among
+them 1,467,881 verified live readings taken through 11 November, which carry
+most of the training weight. It also reads a venue's earlier live readings as
+inputs, and with collection ended those inputs get no new readings once it
+serves. Two larger candidates, which add the typical weeks of venues Flock
+never read live, replace it only if they pass every test and beat it. It ships
+only if it passes all eight band-gate tests against rule (b) on the live
+readings of 12 to 25 November.
 
 **It transfers to cities it has never seen.** The train/holdout split is by
 whole city, cross-validation is leave-one-city-out across the 30 training
@@ -224,15 +265,17 @@ in Barcelona and 1.72 in Tokyo. Those three cities have been the holdout since
 March and every version from v2.2 on was gated on them, so they serve as a
 validation set; the pre-registered retrain adds a time holdout.
 
-**How collection works.** A collector runs on an hourly cron across the served
-geography, Philadelphia and the Lehigh Valley. Each run asks the vendor about
-the active venues open at that hour, served venues first within a fifty-minute
-budget, and stores the live readings it gets back: a few thousand
+**How collection worked.** From 3 September to 25 November 2026 a collector ran
+on an hourly cron: Philadelphia and the Lehigh Valley every hour and Miami at
+two fixed hours a day at first, then six cities every hour from 27 October and
+24 more in the time left from 30 October. Each run asked the vendor about the
+active venues open at that hour, served venues first within a fifty-minute
+budget, and stored the live readings it got back: a few thousand
 provenance-verified readings a day over the month of the test. Every row it
-writes records whether its label is a live reading or the vendor's forecast,
+wrote records whether its label is a live reading or the vendor's forecast,
 with the vendor's forecast for the same moment kept beside it, and each run
-reads back what it wrote and refuses to exit clean if any row it committed is
-unlabelled.
+read back what it wrote and refused to exit clean if any row it committed was
+unlabelled. Collection ended with the vendor subscription on 25 November 2026.
 
 **Where the next gain comes from.** The binding input is evidence density: the
 spring corpus holds about 25 realtime readings per venue across 168 weekly
@@ -240,9 +283,9 @@ slots, so the model reads a kind of venue on a Tuesday at 9pm better than it
 reads one particular venue departing from its own pattern. The month-long test
 points the same way: a venue's latest reading is worth more than any correction
 to its curve, so how often a venue is read matters more than how long its
-history is. The pre-registered retrain is the first on live rows that all carry
-verified provenance with measured event and weather features, and an autumn
-month in the climate table.
+history is. The pre-registered retrain will be the first on live rows that all
+carry verified provenance with measured event and weather features, and an
+autumn month in the climate table.
 
 > **The trained model is not distributed with this source.** `crowd_model.onnx`
 > and `model_metadata.json` are Flock's own artifacts, built from Flock's own
