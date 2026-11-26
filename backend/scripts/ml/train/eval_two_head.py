@@ -339,8 +339,9 @@ HEADER = (f'{"candidate":52s} {"band ex":>8s} {"off-by-1":>9s} {"band MAE":>8s} 
 
 def main():
     logger.info('corpus: %s', CORPUS_LABEL)
-    # The holdout is small: an X kept beside it (features_io) is read into memory.
-    hold = load_features(SCRIPT_DIR / 'features_holdout.pkl', mmap=False)
+    # The holdout is small: an X kept beside it (features_io) is read into memory,
+    # after its SHA-256 is checked against the pickle.
+    hold = load_features(SCRIPT_DIR / 'features_holdout.pkl', mmap=False, verify=True)
     X = hold['X']
     feature_cols = list(hold['feature_cols'])
     y_actual = np.asarray(hold['y_actual'], dtype=np.float64)

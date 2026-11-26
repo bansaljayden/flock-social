@@ -95,7 +95,7 @@ def main():
         raise SystemExit(f'features_train.pkl keeps X beside it ({tr.get("X_file")}): '
                          'sports_ablation.py fits in memory and does not support that '
                          'layout. Run it on a frame that keeps X in the pickle.')
-    ho = load_features(os.path.join(SCRIPT_DIR, 'features_holdout.pkl'), mmap=False)
+    ho = load_features(os.path.join(SCRIPT_DIR, 'features_holdout.pkl'), mmap=False, verify=True)
 
     cols = list(tr['feature_cols'])
     missing = [c for c in SPORTS_COLS if c not in cols]

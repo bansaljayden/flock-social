@@ -92,6 +92,34 @@ def test_a_changed_file_or_a_wrong_shape_is_refused():
         raise AssertionError('a changed X file passed verify')
 
 
+def test_a_wrong_dtype_or_a_c_order_file_is_refused_even_with_its_own_hash():
+    """The hash says the file is the one the pickle names; only the dtype and layout
+    check refuses a file that is not float32 in Fortran order. Each case records the
+    file's real SHA-256 and shape, so nothing else can be what refuses it."""
+    X, rest = sample()
+    cases = (('float64', np.asfortranarray(X.astype(np.float64))),
+             ('C order', np.ascontiguousarray(X)))
+    for name, arr in cases:
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / 'features_train.pkl'
+            path = fio.x_file_for(p)
+            np.save(path, arr)
+            keys = {fio.X_FILE_KEY: path.name, fio.X_SHAPE_KEY: list(arr.shape),
+                    fio.X_SHA_KEY: fio.sha256_file(path)}
+            with open(p, 'wb') as f:
+                pickle.dump({**rest, **keys}, f)
+            refused = []
+            for mmap in (True, False):
+                for verify in (False, True):
+                    try:
+                        fio.load_features(p, mmap=mmap, verify=verify)
+                    except ValueError as err:
+                        assert 'float32 in Fortran order' in str(err), err
+                        refused.append((mmap, verify))
+            gc.collect()  # Windows keeps a mapped file locked until the map is gone
+            assert len(refused) == 4, f'a {name} X file was accepted: refused only {refused}'
+
+
 def test_x_both_inline_and_external_is_refused():
     X, rest = sample()
     with tempfile.TemporaryDirectory() as d:

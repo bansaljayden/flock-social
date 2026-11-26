@@ -401,8 +401,9 @@ def main():
     if holdout_path.exists():
         logger.info('\n=== Holdout Set Evaluation (Geographic Generalization) ===')
         # The holdout cities are a few hundred thousand rows: an X kept beside
-        # this pickle is read into memory, as an X inside it always was.
-        holdout_data = load_features(holdout_path, mmap=False)
+        # this pickle is read into memory, as an X inside it always was, after its
+        # SHA-256 is checked against the pickle.
+        holdout_data = load_features(holdout_path, mmap=False, verify=True)
         X_hold, y_hold = holdout_data['X'], holdout_data['y']
         hold_cities = holdout_data.get('cities', None)
         hold_baseline = holdout_data.get('baseline')

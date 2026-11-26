@@ -111,7 +111,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 import prepare_features as pf  # noqa: E402
 from prepare_features import serving_population_mask  # noqa: E402
-from features_io import load_features  # noqa: E402
+from features_io import load_features, x_file_for, x_is_external  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -417,7 +417,7 @@ def verify_rebuild(frame: pd.DataFrame) -> dict:
     venue_id / observed_date columns are aligned to X row for row.
     """
     logger.info('Verifying the rebuild against features_train.pkl...')
-    # An X kept beside the pickle (features_io) is compared through its memory map.
+    # main() has already refused an X kept beside the pickle (features_io).
     ref = load_features(SCRIPT_DIR / 'features_train.pkl')
     feature_cols = frame.attrs['feature_cols']
     checks = {}
@@ -817,6 +817,15 @@ def main():
         if var in os.environ:
             raise SystemExit(f'{var} is set, but {os.path.basename(__file__)} fits the '
                              'registered size only (800 trees, depth 8). Unset it to run.')
+    # This script rebuilds the whole training frame in memory and makes whole
+    # copies of X from it, so a frame whose X had to live beside the pickle
+    # (features_io) is the size it cannot hold. Refused before the rebuild. Only a
+    # pickle with an X file beside it is opened to check.
+    features_path = SCRIPT_DIR / 'features_train.pkl'
+    if x_file_for(features_path).exists() and x_is_external(load_features(features_path)):
+        raise SystemExit(f'features_train.pkl keeps X beside it ({x_file_for(features_path).name}): '
+                         'within_city_eval.py rebuilds the frame and copies X in memory and '
+                         'does not support that layout. Run it on a frame that keeps X in the pickle.')
     t0 = time.time()
     frame = rebuild_training_frame()
     feature_cols = frame.attrs['feature_cols']

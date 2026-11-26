@@ -122,8 +122,9 @@ def load_and_reproduce():
         if not p.exists():
             sys.exit(f'MISSING: {p}')
 
-    # The holdout is small: an X kept beside it (features_io) is read into memory.
-    hold = load_features(hp, mmap=False)
+    # The holdout is small: an X kept beside it (features_io) is read into memory,
+    # after its SHA-256 is checked against the pickle.
+    hold = load_features(hp, mmap=False, verify=True)
     with open(mp, 'rb') as f:
         bundle = pickle.load(f)
 

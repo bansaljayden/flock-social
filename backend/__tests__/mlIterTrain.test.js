@@ -9,8 +9,10 @@
 // scripts/ml/train/test_iter_train.py, which fits train_model.train_xgboost on
 // one fixture with X in memory and beside a pickle, at chunk sizes that split
 // cities, and requires the same booster bytes, parameters, metrics, out-of-fold
-// predictions and fold shifts, with and without early stopping. Skipped, not
-// failed, where Python with pandas, scikit-learn and xgboost is absent.
+// predictions and fold shifts, every probe and fold booster too, with and without
+// early stopping. It also runs test_features_io.py, which refuses an X file whose
+// hash, shape, dtype or layout disagrees with its pickle. Skipped, not failed,
+// where Python with pandas, scikit-learn and xgboost is absent.
 //
 // Run: node --test  (from backend/)
 // ---------------------------------------------------------------------------
@@ -44,6 +46,16 @@ test('test_iter_train.py passes: row chunks fit the booster the whole matrix fit
     assert.ok(Number(summary[2]) >= 9, `only ${summary[2]} checks ran`);
   });
 
+test('test_features_io.py passes: an X beside the pickle loads only when its hash, shape, dtype and layout agree',
+  { skip: PY_TRAIN ? false : 'python with pandas, scikit-learn and xgboost not available' }, () => {
+    const r = spawnSync(PY_TRAIN, ['test_features_io.py'], { cwd: TRAIN_DIR, encoding: 'utf8', timeout: 120000 });
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+    const summary = r.stdout.match(/(\d+)\/(\d+) passed/);
+    assert.ok(summary, r.stdout);
+    assert.equal(summary[1], summary[2]);
+    assert.ok(Number(summary[2]) >= 5, `only ${summary[2]} checks ran`);
+  });
+
 test('the chunked fits keep the weights, the fold maps and the reads through features_io', () => {
   const src = read('train_model.py');
   assert.match(src, /data = load_features\(features_path, verify=True\)/,
@@ -69,7 +81,19 @@ test('the chunked fits keep the weights, the fold maps and the reads through fea
   const gate = read('quick_eval.py');
   assert.match(gate, /train_data = load_features\(SCRIPT_DIR \/ 'features_train\.pkl'\)\n/,
     'the gate reads only baseline, y_actual and feature_cols, so an X beside the pickle stays mapped');
-  assert.match(gate, /hold_data = load_features\(SCRIPT_DIR \/ 'features_holdout\.pkl', mmap=False\)/);
+  // Every X that feeds a fit or a prediction is checked against the SHA-256 its
+  // pickle records: a .npy from another run with the same shape would pass every
+  // other check and pair the wrong features with the pickle's labels.
+  for (const [name, re] of [
+    ['quick_eval.py', /hold_data = load_features\(SCRIPT_DIR \/ 'features_holdout\.pkl', mmap=False, verify=True\)/],
+    ['quick_eval.py', /inc_hold = load_features\(inc_hold_path, mmap=False, verify=True\)/],
+    ['evaluate_model.py', /holdout_data = load_features\(holdout_path, mmap=False, verify=True\)/],
+    ['eval_two_head.py', /hold = load_features\(SCRIPT_DIR \/ 'features_holdout\.pkl', mmap=False, verify=True\)/],
+    ['hour_ranking_eval.py', /hold = load_features\(hp, mmap=False, verify=True\)/],
+    ['sports_ablation.py', /ho = load_features\(os\.path\.join\(SCRIPT_DIR, 'features_holdout\.pkl'\), mmap=False, verify=True\)/],
+  ]) {
+    assert.match(read(name), re, `${name} reads a holdout X that feeds predictions without verify=True`);
+  }
 
   for (const name of ['train_model.py', 'evaluate_model.py', 'quick_eval.py', 'sports_ablation.py',
     'train_two_head.py', 'within_city_eval.py', 'eval_two_head.py', 'hour_ranking_eval.py']) {
@@ -82,4 +106,11 @@ test('the chunked fits keep the weights, the fold maps and the reads through fea
     assert.match(read(name), /if x_is_external\((tr|data)\):\s*\n(\s*#[^\n]*\n)*\s*raise SystemExit/,
       `${name} fits in memory and must refuse an X kept beside the pickle`);
   }
+  // within_city_eval rebuilds the whole frame and copies X in memory, so it refuses
+  // an X kept beside the pickle BEFORE the rebuild, not after it.
+  const wce = read('within_city_eval.py');
+  const main = wce.slice(wce.indexOf('def main():'));
+  const refusal = main.search(/if x_file_for\(features_path\)\.exists\(\) and x_is_external\(load_features\(features_path\)\):\s*\n\s*raise SystemExit/);
+  assert.ok(refusal > 0 && refusal < main.indexOf('rebuild_training_frame()'),
+    'within_city_eval must refuse an X kept beside the pickle before rebuild_training_frame()');
 });

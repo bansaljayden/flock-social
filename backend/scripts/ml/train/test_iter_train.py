@@ -80,7 +80,11 @@ def make_frame(seed=11):
                         if not served:
                             level -= 25
                         rt = int((hour + dow + venue) % 3 == 0)
-                        busy = level + rng.normal(0, 8 if rt else 2)
+                        # A delta the clock features can learn in every city, so the
+                        # early-stopping probe keeps improving on held-out cities for
+                        # many rounds instead of stopping at its first tree.
+                        signal = 9 * np.sin(hour / 2.5) + 6 * (dow >= 5) - 4 * (dow == 0)
+                        busy = level + signal + rng.normal(0, 8 if rt else 2)
                         rows.append({
                             'city': city,
                             'venue_id': f'{city}-{cat}-{venue}',
@@ -140,20 +144,49 @@ class external_x:
         self.dir.cleanup()
 
 
+class recording_fits:
+    """Every XGBRegressor fit made inside the block, in order: its booster bytes and
+    its evaluation history. train_xgboost makes the early-stopping probe's fit (when
+    on), the shipped fit and one fit per fold, so a fold or probe booster that
+    differs is caught even where its predictions happen to agree."""
+
+    def __enter__(self):
+        self.owner = next(k for k in tm.XGBRegressor.__mro__ if 'fit' in vars(k))
+        self.original = vars(self.owner)['fit']
+        fits, original = [], self.original
+
+        def fit(est, *args, **kwargs):
+            out = original(est, *args, **kwargs)
+            history = getattr(est, 'evals_result_', None)
+            fits.append({'booster': bytes(est.get_booster().save_raw('ubj')),
+                         'evals': {k: {m: list(v) for m, v in d.items()} for k, d in history.items()}
+                         if history else None})
+            return out
+
+        setattr(self.owner, 'fit', fit)
+        return fits
+
+    def __exit__(self, *exc):
+        setattr(self.owner, 'fit', self.original)
+
+
 def train(f, X, chunk_rows=None, **switch_values):
     fold_cats = tm.FoldCategoryBaselines(f['stats'], f['cities'], FEATURES, f['y_actual'])
     assert fold_cats.active and fold_cats.verify_reproduces_shipped(X) == 0.0
     cv = GroupKFold(n_splits=len(CITIES))
     folds = tm.assert_group_disjoint(cv, X, f['y'], f['cities'])
-    with switches(**switch_values):
+    with switches(**switch_values), recording_fits() as fits:
         out = tm.train_xgboost(X, f['y'], cv, folds, f['cities'], f['baseline'], f['y_actual'],
                                f['sample_weight'], tm.DEFAULT_DELTA_CLAMP, 'cpu', THREADS,
                                fold_cats=fold_cats, chunk_rows=chunk_rows)
     model, metrics, absolute, per_city, params, hp_info, es_info, _elapsed, shifts = out
+    early = es_info.get('enabled', False)
+    assert len(fits) == len(folds) + 1 + early, f'{len(fits)} fits for {len(folds)} folds'
     return {'booster': bytes(model.get_booster().save_raw('ubj')),
             'model_params': model.get_params(), 'metrics': metrics, 'absolute': absolute,
             'per_city': per_city, 'params': params, 'hp_info': hp_info, 'es_info': es_info,
-            'shifts': shifts, 'model': model, 'fold_cats': fold_cats, 'folds': folds}
+            'shifts': shifts, 'model': model, 'fold_cats': fold_cats, 'folds': folds,
+            'fits': fits}
 
 
 def raw_oof(f, X, model, fold_cats, folds, chunk_rows=None):
@@ -177,6 +210,10 @@ def same_params(a, b):
 
 def assert_same_run(want, got, label):
     assert got['booster'] == want['booster'], f'{label}: booster bytes differ'
+    assert len(got['fits']) == len(want['fits']), f'{label}: {len(got["fits"])} fits vs {len(want["fits"])}'
+    for i, (g, w) in enumerate(zip(got['fits'], want['fits'])):
+        assert g['booster'] == w['booster'], f'{label}: fit {i} (probe, shipped fit, then folds) booster differs'
+        assert g['evals'] == w['evals'], f'{label}: fit {i} evaluation history differs'
     assert same_params(got['model_params'], want['model_params']), f'{label}: model params differ'
     for key in ('metrics', 'per_city', 'params', 'hp_info', 'es_info', 'shifts'):
         if key == 'per_city':
@@ -206,13 +243,21 @@ def test_chunked_fit_equals_the_in_memory_fit_at_every_chunk_size():
 
 def test_early_stopping_from_chunks_stops_at_the_same_round():
     f = fixture()
-    es = {'FLOCK_MAX_DEPTH': '3', 'FLOCK_N_ESTIMATORS': '40', 'FLOCK_EARLY_STOPPING_ROUNDS': '3'}
+    es = {'FLOCK_MAX_DEPTH': '6', 'FLOCK_N_ESTIMATORS': '400', 'FLOCK_EARLY_STOPPING_ROUNDS': '5'}
     want = train(f, f['X'], **es)
-    assert want['es_info']['enabled'], want['es_info']
+    info = want['es_info']
+    # The stop must be a real one: many trees kept, and fewer than the cap.
+    assert info['enabled'] and 1 < info['best_iteration'] < info['n_estimators_requested'], info
+    history = want['fits'][0]['evals']['validation_0']['gate_mae']
+    assert len(history) == info['best_iteration'] + 5, (len(history), info)
+    oof_want = raw_oof(f, f['X'], want['model'], want['fold_cats'], want['folds'])
     with external_x(f['X']) as Xm:
         for k in (7, 500):
             got = train(f, Xm, chunk_rows=k, **es)
             assert_same_run(want, got, f'early stopping, chunk_rows={k}')
+            oof_got = raw_oof(f, Xm, got['model'], got['fold_cats'], got['folds'], chunk_rows=k)
+            assert np.array_equal(oof_got, oof_want), \
+                f'early stopping, chunk_rows={k}: raw out-of-fold predictions differ'
             del got
 
 

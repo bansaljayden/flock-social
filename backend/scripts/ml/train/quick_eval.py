@@ -312,7 +312,7 @@ def compare_incumbent(gate_mask, hold_y_actual, challenger_pred, current_feature
                     'challenger_feature_count': len(current_feature_cols),
                     'incumbent_version': inc_version}, False
 
-        inc_hold = load_features(inc_hold_path, mmap=False)
+        inc_hold = load_features(inc_hold_path, mmap=False, verify=True)
         inc_y_actual = np.asarray(inc_hold['y_actual'], dtype=float)
         inc_baseline = np.asarray(inc_hold['baseline'], dtype=float)
         if len(inc_y_actual) != len(hold_y_actual):
@@ -513,8 +513,9 @@ def main():
 
     logger.info('Loading holdout features + trained model...')
     # The holdout cities are a few hundred thousand rows: an X kept beside this
-    # pickle is read into memory, as an X inside it always was.
-    hold_data = load_features(SCRIPT_DIR / 'features_holdout.pkl', mmap=False)
+    # pickle is read into memory, as an X inside it always was, after its SHA-256 is
+    # checked against the pickle (a stale .npy of the same shape would pass the rest).
+    hold_data = load_features(SCRIPT_DIR / 'features_holdout.pkl', mmap=False, verify=True)
     X_hold = hold_data['X']
     # The model consumes X BY POSITION. If the two pickles were written by
     # different runs, a position means something else and every holdout number
