@@ -153,26 +153,54 @@ test('the ablation is one feature build compared against itself, at the register
   // The fixed hyperparameters are the registered recipe, train_model.py's
   // FIXED_PARAMS, so the ablation measures the features, not a config drift.
   const TRAIN = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'train', 'train_model.py'), 'utf8');
-  const fixed = TRAIN.replace(/\r\n/g, '\n').match(/^FIXED_PARAMS = \{\n([\s\S]*?)\n\}/m);
-  assert.ok(fixed, 'train_model.py lost FIXED_PARAMS');
-  const pairs = [...fixed[1].matchAll(/'(\w+)': ([\d.]+)/g)];
-  assert.equal(pairs.length, 8, 'FIXED_PARAMS no longer reads as eight numbers');
-  for (const [, k, v] of pairs) {
-    assert.match(ABL, new RegExp(`'${k}': ${v.replace('.', '\\.')}[,\\n]`), `ablation params must carry the registered ${k}=${v}`);
-  }
+  const REGISTERED = plainNumbers(TRAIN, 'FIXED_PARAMS');
+  assert.equal(Object.keys(REGISTERED).length, 8, 'FIXED_PARAMS no longer reads as eight numbers');
+  assert.deepEqual(plainNumbers(ABL, 'PARAMS'), REGISTERED, 'the ablation must fit the registered recipe');
   // The ablation refuses the size switches, so a model shipped at another size
-  // (hyperparameters.size_switches) differs from it in that size alone.
+  // differs from it in that size alone, and only as hyperparameters.size_switches
+  // records it.
   const META = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'models', 'model_metadata.json'), 'utf8'));
-  const SIZE_PARAM = { FLOCK_MAX_DEPTH: 'max_depth', FLOCK_N_ESTIMATORS: 'n_estimators' };
-  const sized = new Set(Object.keys(META.hyperparameters.size_switches || {}).map((s) => SIZE_PARAM[s]));
-  assert.ok(!sized.has(undefined), 'size_switches names a switch this test does not know');
-  for (const [k, v] of Object.entries(META.hyperparameters.params)) {
-    if (sized.has(k)) continue;
-    const registered = pairs.find(([, name]) => name === k);
-    assert.ok(registered, `the shipped model carries ${k}, which FIXED_PARAMS does not set`);
-    assert.equal(Number(registered[2]), v, `the shipped ${k}=${v} is not the registered ${registered[2]}`);
+  const hp = META.hyperparameters;
+  assert.deepEqual(Object.keys(hp.params).sort(), Object.keys(REGISTERED).sort(),
+    'the shipped params are not the registered eight');
+  const SIZE = new Map([['FLOCK_MAX_DEPTH', ['max_depth', 1, 16]], ['FLOCK_N_ESTIMATORS', ['n_estimators', 1, 20000]]]);
+  const switched = new Map();
+  for (const [name, value] of Object.entries(hp.size_switches || {})) {
+    assert.ok(SIZE.has(name), `size_switches names ${name}, which is not a size switch`);
+    const [param, lo, hi] = SIZE.get(name);
+    assert.ok(Number.isInteger(value) && value >= lo && value <= hi,
+      `size_switches.${name}=${value} is not a whole number from ${lo} to ${hi}`);
+    switched.set(param, value);
+  }
+  const es = META.early_stopping || { enabled: false };
+  for (const [k, v] of Object.entries(hp.params)) {
+    const asked = switched.has(k) ? switched.get(k) : REGISTERED[k];
+    if (k === 'n_estimators' && es.enabled) {
+      // Early stopping picks the round, under the tree count asked for.
+      assert.equal(es.n_estimators_requested, asked, 'early stopping was not capped at the size asked for');
+      assert.ok(Number.isInteger(v) && v >= 1 && v <= asked && v === es.best_iteration,
+        `the shipped n_estimators=${v} is not early stopping's round under ${asked}`);
+      continue;
+    }
+    assert.equal(v, asked, `the shipped ${k}=${v} is neither the registered value nor a recorded switch's`);
   }
 });
+
+// A Python dict literal of plain numbers, `NAME = {\n...\n}`, as {key: number}. Any
+// entry that is not 'key': number (an expression, a name) is refused, not read
+// as its numeric prefix.
+function plainNumbers(src, name) {
+  const block = src.replace(/\r\n/g, '\n').match(new RegExp(`^${name} = \\{\\n([\\s\\S]*?)\\n\\}`, 'm'));
+  assert.ok(block, `${name} = {...} not found`);
+  const out = new Map();
+  for (const entry of block[1].split(',').map((s) => s.trim()).filter(Boolean)) {
+    const m = entry.match(/^'(\w+)'\s*:\s*(-?\d+(?:\.\d+)?)$/);
+    assert.ok(m, `${name} entry ${JSON.stringify(entry)} is not a plain number`);
+    assert.ok(!out.has(m[1]), `${name} sets ${m[1]} twice`);
+    out.set(m[1], Number(m[2]));
+  }
+  return Object.fromEntries(out);
+}
 
 test('the exporter bridges database to file and touches no external API', () => {
   const EXP = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'train', 'exportSportsEvents.js'), 'utf8');

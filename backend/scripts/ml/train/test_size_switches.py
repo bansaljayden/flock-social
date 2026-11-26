@@ -147,6 +147,24 @@ def test_early_stopping_through_the_trainer_caps_at_the_switched_size():
     assert params['max_depth'] == 2 and model.get_params()['max_depth'] == 2
     assert model.get_booster().num_boosted_rounds() == params['n_estimators']
     assert hp_info['size_switches'] == {'FLOCK_MAX_DEPTH': 2, 'FLOCK_N_ESTIMATORS': 6}, hp_info
+    # The tree count is early stopping's, under the switched cap, and the note says so.
+    assert hp_info['note'].endswith(
+        ' The size switches set max_depth and n_estimators (size_switches); early stopping '
+        "chose n_estimators (early_stopping); every other value is the v2.3.0 search's."), hp_info['note']
+
+
+def test_the_note_names_early_stopping_without_a_switch():
+    X, y, cities, baseline, y_actual, sw = fixture()
+    cv = GroupKFold(n_splits=3)
+    folds = tm.assert_group_disjoint(cv, X, y, cities)
+    with switches(FLOCK_EARLY_STOPPING_ROUNDS='50'):
+        out = tm.train_xgboost(X, y, cv, folds, cities, baseline, y_actual, sw,
+                               tm.DEFAULT_DELTA_CLAMP, 'cpu', 1)
+    hp_info, es_info = out[5], out[6]
+    assert es_info['enabled'] and hp_info['size_switches'] == {}, (hp_info, es_info)
+    assert hp_info['note'].endswith(
+        " Early stopping chose n_estimators (early_stopping); every other value is the v2.3.0 search's."), \
+        hp_info['note']
 
 
 def test_the_experiments_that_keep_the_registered_size_refuse_a_switch():
