@@ -25,7 +25,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import model_files as mf  # noqa: E402
 
-TRACKED = Path(__file__).parent.parent / 'models' / mf.ONNX_NAME
+MODELS = Path(__file__).parent.parent / 'models'
+# The tracked graph in whichever form models/ ships it: the plain .onnx today,
+# the .gz alone once a model is over GitHub's file limit.
+TRACKED = mf.onnx_file(MODELS)
 SAMPLE = bytes(range(256)) * 4096 + b'flock' * 1000
 
 
@@ -81,7 +84,10 @@ def test_onnx_file_prefers_the_plain_file():
 
 
 def test_the_tracked_model_round_trips_and_scores_the_same():
+    assert TRACKED is not None, 'models/ holds neither crowd_model.onnx nor its .gz'
     raw = TRACKED.read_bytes()
+    if TRACKED.name == mf.GZ_NAME:
+        raw = mf.gunzip_bytes(raw)
     gz = mf.gzip_bytes(raw)
     assert gz == mf.gzip_bytes(raw), 'not deterministic on the real model'
     assert mf.gunzip_bytes(gz) == raw
@@ -94,7 +100,9 @@ def test_the_tracked_model_round_trips_and_scores_the_same():
     d = Path(tempfile.mkdtemp(prefix='flock-onnx-gz-'))
     try:
         (d / mf.GZ_NAME).write_bytes(gz)
-        plain = ort.InferenceSession(mf.session_source(TRACKED))
+        (d / 'plain').mkdir()
+        (d / 'plain' / mf.ONNX_NAME).write_bytes(raw)
+        plain = ort.InferenceSession(str(d / 'plain' / mf.ONNX_NAME))
         packed = ort.InferenceSession(mf.session_source(mf.onnx_file(d)))
         inp = plain.get_inputs()[0]
         width = inp.shape[-1]
