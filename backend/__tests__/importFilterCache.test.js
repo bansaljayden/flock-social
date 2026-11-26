@@ -1697,19 +1697,26 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
   }
   const csv = (v) => (v === null || v === undefined ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
   // `extra` adds rows after the table's, as if they were in it; `set`
-  // rewrites a venue's other columns ({ btId: { city: ..., latitude: ... } }).
-  const snapshot = (name, { createdAt = {}, columns = 'all', meta = true, extra = [], set = {} } = {}) => {
+  // rewrites a venue's other columns ({ btId: { city: ..., latitude: ... } });
+  // `omit` leaves venues out, as if written after it was taken; `takenAt` is
+  // the meta's snapshotAt, by default the default bound itself.
+  const snapshot = (name, {
+    createdAt = {}, columns = 'all', meta = true, extra = [], set = {}, omit = [], takenAt = '2026-11-26T00:00:00.000Z',
+  } = {}) => {
     const file = path.join(outDir, name);
     const head = ['id', 'besttime_venue_id', 'google_place_id', 'name', 'latitude', 'longitude', 'city',
       ...(columns === 'all' ? ['besttime_status', 'created_at'] : [])];
-    fs.writeFileSync(file, `${[head.join(','), ...[...rows, ...extra].map((r) => head.map((h) => {
+    const kept = [...rows, ...extra].filter((r) => !omit.includes(r.besttime_venue_id));
+    assert.ok(table.n + extra.length - kept.length === omit.length, 'an omitted venue is not in the table');
+    fs.writeFileSync(file, `${[head.join(','), ...kept.map((r) => head.map((h) => {
       if (h === 'created_at') return createdAt[r.besttime_venue_id] || r.created_at;
       const changed = set[r.besttime_venue_id];
       return csv(changed && h in changed ? changed[h] : r[h]);
     }).join(','))].join('\n')}\n`);
+    // The table as it stood when taken: these rows, whole.
     if (meta) {
       writeSnapshotMeta(file, {
-        tableCount: table.n + extra.length, tableMinId: table.lo, tableMaxId: extra.length ? extra[extra.length - 1].id : table.hi,
+        tableCount: kept.length, tableMinId: kept[0].id, tableMaxId: kept[kept.length - 1].id, snapshotAt: takenAt,
       });
     }
     return file;
@@ -1979,6 +1986,61 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
   assert.deepEqual([dup.result.rowsEqual, dup.result.missing, dup.result.extra], [dup.result.rowsCompared, 0, 0]);
   assert.match(dup.out, /duplicateExportRow 1/);
   assert.match(dup.out, /PARITY FAIL/);
+
+  // A snapshot taken between two writes, the review's case: NEW1 written at
+  // 13:00, the table snapshotted whole at 13:30, NEW2 written at 14:00, the
+  // next writer at 15:00, and the export holding both, NEW2's rows with
+  // another rating. NEW2 is in no row of the snapshot, so it would be left
+  // out as never written and NEW1's rows compared alone: refused, the
+  // snapshot being older than --written-before.
+  const withExport = (rewrite) => {
+    const out = [...lines];
+    for (const i of linesOf(two.id)) {
+      const g = I.parseCsv(out[i])[0];
+      rewrite(g);
+      out[i] = g.join(',');
+    }
+    return out;
+  };
+  const rerated = writeLines('rerated.csv', withExport((g) => { g[col('rating')] = '3.1'; }));
+  const atThree = { bound: '2026-11-24T15:00:00Z' };
+  const stale = await parity(rerated, {
+    ...atThree, snapFile: snapshot('stale.csv', { omit: [NEW2.id], takenAt: '2026-11-24T13:30:00.000Z' }),
+  });
+  assert.equal(stale.result.exitCode, 1, stale.out);
+  assert.match(stale.out, /PARITY REFUSED: the snapshot was taken at 2026-11-24T13:30:00\.000Z, before --written-before 2026-11-24T15:00:00\.000Z/);
+  // Taken before the bound, even holding every venue: refused the same way.
+  const staleWhole = await parity(exported.trainPath, { ...atThree, snapFile: snapshot('stale_whole.csv', { takenAt: '2026-11-24T13:30:00.000Z' }) });
+  assert.equal(staleWhole.result.exitCode, 1);
+  assert.match(staleWhole.out, /PARITY REFUSED: the snapshot was taken at 2026-11-24T13:30:00\.000Z, before --written-before/);
+  // A meta that dates the same rows 15:00: the export holds NEW2 and the
+  // snapshot does not, so the proof is refused before any row is skipped.
+  // Under another label inside philly's tiles, or with no coordinates, the
+  // same; under another label far outside them it is another city's matter.
+  const lacking = snapshot('lacking.csv', { omit: [NEW2.id], takenAt: '2026-11-24T15:00:00.000Z' });
+  const absentFor = async (exportCsv) => parity(exportCsv, { ...atThree, snapFile: lacking });
+  const absent = await absentFor(rerated);
+  assert.equal(absent.result.exitCode, 1, absent.out);
+  assert.deepEqual(absent.result.absentFromSnapshot.map((v) => [v.id, v.city, v.rows]), [[two.id, 'philly', linesOf(two.id).length]]);
+  assert.match(absent.out, new RegExp(`PARITY REFUSED: the export holds 1 venues of philly or inside the run's tiles that the `
+    + `snapshot \\(taken 2026-11-24T15:00:00\\.000Z\\) lacks: ${two.id} philly `));
+  const relabelledAbsent = await absentFor(writeLines('rerated_lehigh.csv', withExport((g) => { g[col('city')] = 'lehigh'; })));
+  assert.equal(relabelledAbsent.result.exitCode, 1, relabelledAbsent.out);
+  assert.deepEqual(relabelledAbsent.result.absentFromSnapshot.map((v) => [v.id, v.city]), [[two.id, 'lehigh']]);
+  const unplacedAbsent = await absentFor(writeLines('rerated_unplaced.csv', withExport((g) => {
+    g[col('city')] = 'lehigh';
+    g[col('latitude')] = '';
+    g[col('longitude')] = '';
+  })));
+  assert.equal(unplacedAbsent.result.exitCode, 1, unplacedAbsent.out);
+  assert.deepEqual(unplacedAbsent.result.absentFromSnapshot.map((v) => [v.id, v.latitude]), [[two.id, null]]);
+  const awayAbsent = await absentFor(writeLines('rerated_away.csv', withExport((g) => {
+    g[col('city')] = 'lehigh';
+    g[col('latitude')] = '40.6023';
+    g[col('longitude')] = '-75.4714';
+  })));
+  assert.equal(awayAbsent.result.exitCode, 0, awayAbsent.out);
+  assert.deepEqual([awayAbsent.result.venues, awayAbsent.result.absentElsewhere], [1, 1]);
 
   // Another pass wrote NEW2, from its own answers (another review count),
   // before this folder's first answer: left out, never a mismatch.

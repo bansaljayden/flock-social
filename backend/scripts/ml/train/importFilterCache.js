@@ -224,7 +224,18 @@
 // duplicateExportRow, and only its first row is compared. Exit 0 only when
 // every compared row matches, no cell is held twice, neither side has a
 // weekly row the other lacks, and nothing is inconclusive. The snapshot
-// needs its meta here too. What
+// needs its meta here too, and the meta proves the table whole at its
+// snapshotAt only, so the snapshot must be taken at or after
+// --written-before: a row written after snapshotAt is in no row of it, and
+// a write it lacks would be neither compared nor censused. The export
+// records no time of its own (training_data.csv carries none, and
+// go_no_go.txt only the date), so the export side is checked by what it
+// holds: every venue id of an export row that is of the run's cities, lies
+// inside the run's tiles or has no coordinates must be in the snapshot,
+// judged on every row before any is skipped, and one that is not refuses
+// the proof. The November snapshot was taken 2026-11-25T19:31:05.168Z, after
+// every bound and after training_data.csv was last written (19:27:58Z by
+// its file time, which nothing checks). What
 // created_at alone cannot show: a row another writer (the other pass, a venue
 // search) created after this folder's last answer for the venue. So
 // --written-before=<instant> (required) bounds it: a venue is compared only
@@ -2183,6 +2194,14 @@ async function runParity(opts, { log }) {
     log(`${TAG} PARITY REFUSED: ${unproven}`);
     return { exitCode: 1, refused: unproven };
   }
+  // The meta proves the table whole at snapshotAt only: a write after it is
+  // in no row here, so it must cover every write the window can hold.
+  if (!(Date.parse(snapshot.meta.snapshotAt) >= opts.writtenBefore)) {
+    const why = `the snapshot was taken at ${snapshot.meta.snapshotAt}, before --written-before `
+      + `${new Date(opts.writtenBefore).toISOString()}: a row written after it would be missing from it, unseen.`;
+    log(`${TAG} PARITY REFUSED: ${why}`);
+    return { exitCode: 1, refused: why };
+  }
   const r = await replayFolder({ dir: opts.cacheDir, cities: opts.cities, radiusKm: opts.radiusKm, venueAnswered: true });
   log(`${TAG} PARITY: replayed ${opts.cities.join(' + ')} within ${opts.radiusKm} km from ${opts.cacheDir}: files `
     + `${r.filesRead}/${r.filesHeld} read, ${r.misses} misses${opts.expectMisses === null ? '' : ` (expected ${opts.expectMisses})`}, `
@@ -2249,6 +2268,13 @@ async function runParity(opts, { log }) {
   let extra = 0;
   let nonWeeklySkipped = 0;
   let headerSeen = false;
+  // An export venue the snapshot lacks, of the run's cities, inside its
+  // tiles or with no coordinates to place it: the export saw a row the
+  // snapshot did not, so a write of the window may be missing from it.
+  // Judged on every row, before any is skipped; by venue id, once.
+  const inSnapshot = new Set(snapshot.list.map((row) => row.id));
+  const absent = new Map();
+  const absentElsewhere = new Set();
   for await (const text of exportRecords(opts.exportCsv)) {
     if (!headerSeen) {
       if (text !== HEADER) {
@@ -2260,6 +2286,21 @@ async function runParity(opts, { log }) {
     }
     const comma = text.indexOf(',');
     const id = Number(text.slice(0, comma));
+    if (!inSnapshot.has(id)) {
+      if (!absent.has(id) && !absentElsewhere.has(id)) {
+        const f = parseCsv(text)[0];
+        const lat = f[EXPORT_COLUMNS.latitude] === '' ? NaN : Number(f[EXPORT_COLUMNS.latitude]);
+        const lng = f[EXPORT_COLUMNS.longitude] === '' ? NaN : Number(f[EXPORT_COLUMNS.longitude]);
+        const placed = Number.isFinite(lat) && Number.isFinite(lng);
+        if (opts.cities.includes(f[CITY_COLUMN]) || !placed || r.tileBoxes.some((t) => inTileBox(lat, lng, t))) {
+          absent.set(id, { id, city: f[CITY_COLUMN], latitude: placed ? lat : null, longitude: placed ? lng : null, rows: 0 });
+        } else {
+          absentElsewhere.add(id);
+        }
+      }
+      if (absent.has(id)) absent.get(id).rows++;
+      continue;
+    }
     const exp = expected.get(id);
     if (!exp) continue;
     const got = parseCsv(text)[0];
@@ -2292,6 +2333,18 @@ async function runParity(opts, { log }) {
     }
     if (same) rowsEqual++;
   }
+  log(`${TAG} PARITY: the export holds ${num(absent.size)} venues of ${opts.cities.join(', ')} or inside the run's tiles that `
+    + `the snapshot lacks, and ${num(absentElsewhere.size)} it lacks elsewhere.`);
+  if (absent.size > 0) {
+    const list = [...absent.values()];
+    const why = `the export holds ${num(list.length)} venues of ${opts.cities.join(', ')} or inside the run's tiles that the `
+      + `snapshot (taken ${snapshot.meta.snapshotAt}) lacks: ${list.slice(0, 10).map((v) => `${v.id} ${v.city} `
+        + `${v.latitude === null ? 'unplaced' : `${v.latitude},${v.longitude}`} (${v.rows} rows)`).join('; ')}`
+      + `${list.length > 10 ? '; ...' : ''}. The snapshot is older than the export or incomplete, and a write it lacks `
+      + 'would escape the census.';
+    log(`${TAG} PARITY REFUSED: ${why}`);
+    return { exitCode: 1, refused: why, absentFromSnapshot: list };
+  }
   let missing = 0;
   let venuesAbsent = 0;
   for (const exp of expected.values()) {
@@ -2311,7 +2364,7 @@ async function runParity(opts, { log }) {
     + 'cannot be reproduced)' : ''}.`);
   return {
     exitCode: pass ? 0 : 1, venues: expected.size, rowsCompared, rowsEqual, missing, extra, nonWeeklySkipped, mismatches,
-    examples, left, harvestedElsewhere, writes, inconclusive,
+    examples, left, harvestedElsewhere, writes, inconclusive, absentElsewhere: absentElsewhere.size,
   };
 }
 
