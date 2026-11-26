@@ -255,9 +255,16 @@
 //     naming no day, records without a 24-slot curve, curve slots no number
 //     from 0 to 100, boxes ended below their venues_n, boxes cut at the cap,
 //     unread files;
-//   * THE WRITES THE SNAPSHOT SHOWS: every row of the run's cities stored
-//     'harvested' and created from --run-started until --written-before,
-//     taken from the snapshot alone, must be compared. One the replay found
+//   * THE WRITES THE SNAPSHOT SHOWS: every row stored 'harvested' and
+//     created from --run-started until --written-before, taken from the
+//     snapshot alone, must be compared, whatever its city label says: one
+//     labelled with the run's cities, one under any label whose coordinates
+//     lie inside the run's tiles (every box the run asked lies in one, so
+//     every venue it could write does), and one with no coordinates to place
+//     it. A neighbouring writer's row inside the tiles is not excused: it
+//     fails the proof, named with its label. In the November windows every
+//     'harvested' row inside london's, nyc's and austin's tiles carries the
+//     run's own label, and none so labelled lies outside. One the replay found
 //     written before an answer here that lists it is counted inconclusive
 //     (above), never excused; any other is NOT REPRODUCED and fails the
 //     proof: a venue whose every answer is gone is in no answer here
@@ -735,6 +742,7 @@ async function replayFolder({ dir, cities, radiusKm, centroids = null, venueAnsw
   return {
     venues,
     tiles: tilePlan.length,
+    tileBoxes: tilePlan.map((p) => p.tile),
     leaves: ctx.city.leaves,
     filesHeld: held.length,
     filesRead: read.size,
@@ -2129,23 +2137,35 @@ function parityVenues(r, snapshot, cities, radiusKm, writtenBefore, runStarted) 
   return { expected, inconclusive, left, harvestedElsewhere, t0, whyLeft };
 }
 
+// Whether a point lies in a tile (milli-degrees, edges included, as the
+// filter's own box is), its longitude also tried a turn either way.
+const EDGE_MILLI = 1e-6;
+const inTileBox = (lat, lng, t) => lat * 1000 >= t.s - EDGE_MILLI && lat * 1000 <= t.n + EDGE_MILLI
+  && [lng, lng - 360, lng + 360].some((x) => x * 1000 >= t.w - EDGE_MILLI && x * 1000 <= t.e + EDGE_MILLI);
+
 // THE WRITES THE SNAPSHOT SHOWS (--parity in the header), from the snapshot
-// alone: every row of the run's cities stored 'harvested' and created from
-// --run-started until --written-before. Each must be compared. One the
-// replay found but cannot reproduce (`inconclusive`, from parityVenues) is
-// counted as that, and fails the proof there; anything else is a write the
-// replay does not reproduce.
-function unreproducedWrites(snapshot, cities, t0, writtenBefore, expected, whyLeft, inconclusive) {
-  const out = { candidates: 0, compared: 0, inconclusive: 0, unreproduced: [] };
+// alone: every row stored 'harvested', created from --run-started until
+// --written-before, and either labelled with one of the run's cities, or
+// under any label lying inside the run's tiles (`tiles`, every box the run
+// asked lies in one), or with no coordinates to place it. Each must be
+// compared. One the replay found but cannot reproduce (`inconclusive`, from
+// parityVenues) is counted as that, and fails the proof there; anything else
+// is a write the replay does not reproduce, named with its stored label.
+function unreproducedWrites(snapshot, cities, t0, writtenBefore, expected, whyLeft, inconclusive, tiles) {
+  const out = { candidates: 0, otherLabel: 0, compared: 0, inconclusive: 0, unreproduced: [] };
   const notReproducible = new Set(inconclusive.map((w) => w.id));
   for (const row of snapshot.list) {
-    if (!cities.includes(row.city) || row.besttime_status !== H.HARVEST_STATUS || row.createdAtMs === null) continue;
+    if (row.besttime_status !== H.HARVEST_STATUS || row.createdAtMs === null) continue;
     if (!(row.createdAtMs >= t0 && row.createdAtMs < writtenBefore)) continue;
+    const labelled = cities.includes(row.city);
+    const placed = Number.isFinite(row.latitude) && Number.isFinite(row.longitude);
+    if (!labelled && placed && !tiles.some((t) => inTileBox(row.latitude, row.longitude, t))) continue;
     out.candidates++;
+    if (!labelled) out.otherLabel++;
     if (expected.has(row.id)) { out.compared++; continue; }
     if (notReproducible.has(row.id)) { out.inconclusive++; continue; }
     const why = row.besttime_venue_id ? whyLeft.get(row.besttime_venue_id) : null;
-    out.unreproduced.push({ id: row.id, btId: row.besttime_venue_id, why: why || 'inNoAnswerHere' });
+    out.unreproduced.push({ id: row.id, btId: row.besttime_venue_id, city: row.city, why: why || 'inNoAnswerHere' });
   }
   return out;
 }
@@ -2211,12 +2231,14 @@ async function runParity(opts, { log }) {
     }
     if (inconclusive.length > 10) log(`  and ${num(inconclusive.length - 10)} more.`);
   }
-  const writes = unreproducedWrites(snapshot, opts.cities, t0, opts.writtenBefore, expected, whyLeft, inconclusive);
-  log(`${TAG} PARITY: the snapshot shows ${num(writes.candidates)} venues of ${opts.cities.join(', ')} stored 'harvested' and `
-    + `created from ${started} until ${new Date(opts.writtenBefore).toISOString()}: ${num(writes.compared)} compared, `
+  const writes = unreproducedWrites(snapshot, opts.cities, t0, opts.writtenBefore, expected, whyLeft, inconclusive,
+    r.tileBoxes);
+  log(`${TAG} PARITY: the snapshot shows ${num(writes.candidates)} venues stored 'harvested' and created from ${started} `
+    + `until ${new Date(opts.writtenBefore).toISOString()}, labelled ${opts.cities.join(', ')} or lying inside the run's `
+    + `${r.tileBoxes.length} tiles (${num(writes.otherLabel)} under another label): ${num(writes.compared)} compared, `
     + `${num(writes.inconclusive)} inconclusive, ${num(writes.unreproduced.length)} `
-    + `NOT REPRODUCED${writes.unreproduced.length ? ` (${writes.unreproduced.slice(0, 10).map((w) => `${w.id} ${w.btId} ${w.why}`)
-      .join('; ')}${writes.unreproduced.length > 10 ? '; ...' : ''})` : ''}.`);
+    + `NOT REPRODUCED${writes.unreproduced.length ? ` (${writes.unreproduced.slice(0, 10)
+      .map((w) => `${w.id} ${w.btId} ${w.city} ${w.why}`).join('; ')}${writes.unreproduced.length > 10 ? '; ...' : ''})` : ''}.`);
   const header = HEADER_FIELDS;
   // A column's count of rows that differ, and duplicateExportRow: a compared
   // venue's weekly cell the export holds more than once.

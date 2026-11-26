@@ -1696,14 +1696,16 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
     client.release();
   }
   const csv = (v) => (v === null || v === undefined ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
-  // `extra` adds rows after the table's, as if they were in it.
-  const snapshot = (name, { createdAt = {}, columns = 'all', meta = true, extra = [] } = {}) => {
+  // `extra` adds rows after the table's, as if they were in it; `set`
+  // rewrites a venue's other columns ({ btId: { city: ..., latitude: ... } }).
+  const snapshot = (name, { createdAt = {}, columns = 'all', meta = true, extra = [], set = {} } = {}) => {
     const file = path.join(outDir, name);
     const head = ['id', 'besttime_venue_id', 'google_place_id', 'name', 'latitude', 'longitude', 'city',
       ...(columns === 'all' ? ['besttime_status', 'created_at'] : [])];
     fs.writeFileSync(file, `${[head.join(','), ...[...rows, ...extra].map((r) => head.map((h) => {
       if (h === 'created_at') return createdAt[r.besttime_venue_id] || r.created_at;
-      return csv(r[h]);
+      const changed = set[r.besttime_venue_id];
+      return csv(changed && h in changed ? changed[h] : r[h]);
     }).join(','))].join('\n')}\n`);
     if (meta) {
       writeSnapshotMeta(file, {
@@ -1753,9 +1755,34 @@ test('--parity: every exported weekly row of the venues this folder wrote equals
   assert.equal(without.result.exitCode, 1, without.out);
   assert.equal(without.result.venues, 1);
   assert.equal(without.result.rowsEqual, without.result.rowsCompared);
-  assert.deepEqual(without.result.writes.unreproduced, [{ id: written2.id, btId: NEW2.id, why: 'inNoAnswerHere' }]);
-  assert.match(without.out, new RegExp(`1 NOT REPRODUCED \\(${written2.id} ${NEW2.id} inNoAnswerHere\\)`));
+  assert.deepEqual(without.result.writes.unreproduced, [{ id: written2.id, btId: NEW2.id, city: 'philly', why: 'inNoAnswerHere' }]);
+  assert.match(without.out, new RegExp(`1 NOT REPRODUCED \\(${written2.id} ${NEW2.id} philly inNoAnswerHere\\)`));
   assert.match(without.out, /PARITY FAIL/);
+  // The same write filed under another city's label: the census goes by
+  // where the venue is, not what its row says, so NEW2, inside philly's
+  // tiles, is still the run's write and still fails the proof, named with
+  // its label. So does one with no coordinates to place it. One filed under
+  // another label far outside the tiles is another writer's: no candidate.
+  const relabelled = await parity(exported.trainPath, {
+    dir: withoutDir, snapFile: snapshot('relabelled.csv', { set: { [NEW2.id]: { city: 'lehigh' } } }),
+  });
+  assert.equal(relabelled.result.exitCode, 1, relabelled.out);
+  assert.deepEqual([relabelled.result.writes.candidates, relabelled.result.writes.otherLabel, relabelled.result.writes.compared],
+    [2, 1, 1]);
+  assert.deepEqual(relabelled.result.writes.unreproduced, [{ id: written2.id, btId: NEW2.id, city: 'lehigh', why: 'inNoAnswerHere' }]);
+  assert.match(relabelled.out, new RegExp(`\\(1 under another label\\).*1 NOT REPRODUCED \\(${written2.id} ${NEW2.id} lehigh inNoAnswerHere\\)`));
+  assert.match(relabelled.out, /PARITY FAIL/);
+  const unplaced = await parity(exported.trainPath, {
+    dir: withoutDir, snapFile: snapshot('unplaced.csv', { set: { [NEW2.id]: { city: 'lehigh', latitude: '', longitude: '' } } }),
+  });
+  assert.equal(unplaced.result.exitCode, 1, unplaced.out);
+  assert.deepEqual(unplaced.result.writes.unreproduced.map((w) => [w.btId, w.city]), [[NEW2.id, 'lehigh']]);
+  const elsewhere = await parity(exported.trainPath, {
+    dir: withoutDir, snapFile: snapshot('elsewhere.csv', { set: { [NEW2.id]: { city: 'lehigh', latitude: '40.6023', longitude: '-75.4714' } } }),
+  });
+  assert.equal(elsewhere.result.exitCode, 0, elsewhere.out);
+  assert.deepEqual([elsewhere.result.writes.candidates, elsewhere.result.writes.otherLabel, elsewhere.result.writes.unreproduced],
+    [1, 0, []]);
 
   // A resumed folder whose first run's answers are gone whole. Run 1
   // (started 11:00, answers at 12:00) asked one philly tile holding over 500
