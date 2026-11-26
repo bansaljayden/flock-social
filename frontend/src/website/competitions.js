@@ -56,7 +56,8 @@
 // "By", not "Entered by": true of an entry that is in and of one being
 // entered next.
 const JAYDEN = 'By Jayden Bansal';
-const JAYDEN_AND_ASAD = 'By Jayden Bansal and Asad Ali';
+// Asad's title on the three he is on (his ask, 2026-11-26).
+const JAYDEN_AND_ASAD = 'By Jayden Bansal and Asad Ali (Growth & Competitions Lead)';
 
 // EACH ENTRY CARRIES ITS ORGANIZER'S LOGO (his call, 2026-11-11), drawn on a
 // white tile beside the name so it reads on the navy band. The files are in

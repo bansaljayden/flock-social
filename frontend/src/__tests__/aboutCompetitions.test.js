@@ -151,7 +151,7 @@ describe('competitions.js keeps to its rules', () => {
     expect(withAsad).toEqual(['Start-Up Business Plan', 'Diamond Challenge', 'Conrad Challenge']);
     for (const c of COMPETITIONS) {
       // "By", never "Entered by": an upcoming entry has not been entered.
-      expect([c.name, c.team]).toEqual([c.name, expect.stringMatching(/^By Jayden Bansal( and Asad Ali)?$/)]);
+      expect([c.name, c.team]).toEqual([c.name, expect.stringMatching(/^By Jayden Bansal( and Asad Ali \(Growth & Competitions Lead\))?$/)]);
     }
   });
 
