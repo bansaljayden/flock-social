@@ -59,7 +59,7 @@ export const PAPER_CITATION = {
 // dates and never as the number on a card today. The counter's figures are
 // owl-4.9 with its crowd model and the heat rule as deployed on all six real
 // benchmark sets, which also guided Owl's development (paper Figure 14 and
-// Table 17). Flux has run owl-5.1 since 2026-11-03; the paper reports it
+// Table 18). Flux has run owl-5.1 since 2026-11-03; the paper reports it
 // (Section 14.7), and this chart does not.
 const DESCRIPTION = 'Why Flock studies how busy places get, what the research found, and the full paper.';
 
