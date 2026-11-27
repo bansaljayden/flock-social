@@ -1040,7 +1040,7 @@ describe('copy rules (DESIGN-STANDARD)', () => {
   test('/research limits the charted forecast to the venues and readings it was measured on', () => {
     const page = readJs('ResearchPage.js').replace(/\s+/g, ' ');
     expect(page).not.toMatch(/every venue card/);
-    expect(page).toContain("The chart below scores the forecast Flock served from 26 September to mid-October, which moved each venue's weekly pattern with its own live readings. Since 1 November, Flock's own crowd model, Starling, has made the forecast behind venue cards wherever Flock knows a place's weekly pattern, and the paper tests it too. Other places get what is typical for their kind.");
+    expect(page).toContain("The chart below scores the forecast Flock served from 26 September to mid-October, which moved each venue's weekly pattern with its own live readings. Since 1 November, Flock's own crowd model, Starling, has made the forecast behind venue cards wherever Flock knows a place's weekly pattern, and the paper tests it too. We retrained it in late November to read each venue's recent live readings, and the second chart is that version's test. Other places get what is typical for their kind.");
     expect(page).not.toMatch(/has come from Starling/);
     // The readings of 9 to 25 September came before the charted forecast
     // went live, so they were replayed, not served. Its weights were fitted
@@ -1051,5 +1051,16 @@ describe('copy rules (DESIGN-STANDARD)', () => {
     expect(page).toContain(`note="Share of the same 119,939 live readings at 1,754 venues in Philadelphia, the Lehigh Valley and Miami, 9 September to 8 October 2026, each scored one hour ahead. Flock here is the forecast served from 26 September to mid-October, which moved each venue's weekly pattern with its own latest live readings. We replayed it on every reading, and its settings were fixed before the first one. Higher is better."`);
     expect(page).not.toContain('None of them was used to set the forecast. ');
     expect(page).toContain("{ label: 'Exact crowd level', us: 54.9, them: 30.2 }");
+    // The retrain's chart (research paper 7.2, Table 14): the gate's own
+    // readings and figures, and the two limits said beside them. The
+    // readings ran closer to the weekly patterns than September's, so the
+    // two charts are not on one scale; and most had a reading from the hour
+    // before, which the app has not had since 25 November.
+    expect(page).toContain("{ label: 'Within 10 points', us: 96.2, them: 86.9 }");
+    expect(page).toContain("{ label: 'Exact crowd level', us: 83.9, them: 71.8 }");
+    expect(page).toContain('note="Share of the same 712,165 live readings at 5,515 venues in Chicago, Denver, Los Angeles, the Lehigh Valley, Philadelphia and Seattle, 12 to 25 November 2026. Starling trained on none of them.');
+    expect(page).toContain('here the weekly pattern alone was within 10 points 61.5% of the time');
+    expect(page).toContain("Flock's live readings ended on 25 November, and replayed without any reading newer than a week, Starling is within 10 points 88.2% of the time on the same readings.");
+    expect(page).not.toMatch(/9[0-9](\.\d)?% accurate/);
   });
 });
