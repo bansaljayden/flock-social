@@ -217,6 +217,15 @@ test('zeroCurveServes: only the measured artifact, in the measured configuration
   const meta = { model_version: '2.6.0-starling', label_type: 'delta' };
   assert.equal(I.zeroCurveServes(meta, ok), true);
   assert.equal(I.zeroCurveServes({ ...meta, model_version: '2.7.0-test' }, ok), false);
+  // The November 2026 retrain was measured on these hours before it shipped
+  // (ZERO_CURVE_ALSO_MEASURED), and no artifact after it has been.
+  assert.deepEqual(Object.keys(I.ZERO_CURVE_ALSO_MEASURED), ['2.8.0-starling']);
+  assert.equal(I.zeroCurveServes({ ...meta, model_version: '2.8.0-starling' }, ok), true);
+  assert.equal(I.zeroCurveServes({ ...meta, model_version: '2.8.0-starling' }, { ...ok, nowcast: false }), false);
+  assert.equal(I.zeroCurveServes({ ...meta, model_version: '2.8.1-starling' }, ok), false);
+  assert.equal(I.zeroCurveMeasuredOn('2.6.0-starling'), true);
+  assert.equal(I.zeroCurveMeasuredOn(undefined), false);
+  assert.equal(I.zeroCurveMeasuredOn('toString'), false, 'a version is looked up as an own key');
   assert.equal(I.zeroCurveServes({ ...meta, label_type: 'two_head' }, ok), false);
   assert.equal(I.zeroCurveServes(meta, { ...ok, serveMode: 'curve_offset' }), false);
   assert.equal(I.zeroCurveServes(meta, { ...ok, serveMode: 'model_when_fresh' }), false);
@@ -268,6 +277,18 @@ test('every number either switch can make has a measured figure, and the confide
   assert.equal(conf({ zeroCurve: true, monthSupport: true }).confidenceMeasurement.metric, 'within_15_zero_curve_month_support');
   assert.equal(conf({ zeroCurve: true }).confidenceMeasurement.metric, 'within_15_zero_curve');
   assert.equal(conf({ zeroCurve: true }).confidence, Math.round(M.zeroCurve.asBuilt.within15));
+  // The retrain's zero-curve number carries the retrain's own figure and
+  // population, never v2.6.0-starling's; any other version keeps the old one.
+  const Z = I.ZERO_CURVE_ALSO_MEASURED['2.8.0-starling'];
+  assert.ok(valid(Z) && /2026-11-12\.\.11-25/.test(Z.population));
+  const z28 = conf({ zeroCurve: true, version: '2.8.0-starling' });
+  assert.equal(z28.confidenceMeasurement.metric, 'within_15_zero_curve');
+  assert.equal(z28.confidence, Math.round(Z.within15));
+  assert.equal(z28.confidenceMeasurement.population, Z.population);
+  assert.equal(z28.confidenceMeasurement.populationRows, Z.rows);
+  assert.equal(conf({ zeroCurve: true, version: '2.6.0-starling' }).confidenceMeasurement.population, I.MONTH_SUPPORT_POPULATION);
+  assert.equal(conf({ zeroCurve: true, version: '2.9.0-test' }).confidenceMeasurement.population, I.MONTH_SUPPORT_POPULATION);
+  assert.equal(conf({ version: '2.8.0-starling' }).confidenceMeasurement.metric, 'within_15', 'the version alone changes nothing');
   // Neither: the artifact's own figure, as before.
   assert.equal(conf({}).confidenceMeasurement.metric, 'within_15');
 });
@@ -383,7 +404,25 @@ async function independentMonthMean(art, vector) {
 test('month average on: each model number is the mean of three runs of the graph, and the replay publishes what production does', async () => {
   const fx = fixture();
   const { art, prepared } = await replaySetup(fx);
-  if (art.meta.model_version !== '2.6.0-starling') return; // MONTH_SUPPORT names no other artifact
+  if (art.meta.model_version !== '2.6.0-starling') {
+    // MONTH_SUPPORT names no other artifact, and the shipped one reads no
+    // month. So under it the switch must change nothing in the very
+    // configuration it was measured in: the same numbers, versions and
+    // confidence figures, in production and in the replay.
+    assert.equal(art.I.MONTH_SUPPORT[art.meta.model_version], undefined);
+    const same = (rows) => JSON.parse(JSON.stringify(rows, (k, v) => (k === 'asOf' ? undefined : v)));
+    const without = await runProduction(fx, prepared, PRODUCTION, { leakyOffset: true });
+    const withIt = await runProduction(fx, prepared, { ...PRODUCTION, CROWD_MONTH_SUPPORT: 'true' }, { leakyOffset: true });
+    assert.deepEqual(same(withIt), same(without), 'the month switch moved a number under an artifact it does not name');
+    assert.ok(withIt.filter((a) => a.predictionMethod === 'ml').length >= 60, 'the model must have answered these rows');
+    assert.ok(withIt.every((a) => !/month_support/.test(String(a.modelVersion))));
+    const replayOff = await B.scoreArtifact(art, prepared, { ...REPLAY_PRODUCTION, monthSupport: false, zeroCurve: false });
+    const replayOn = await B.scoreArtifact(art, prepared, { ...REPLAY_PRODUCTION, monthSupport: true, zeroCurve: false });
+    assert.equal(replayOn.monthSupport, false);
+    assert.deepEqual(same(replayOn.rows), same(replayOff.rows));
+    assert.deepEqual(mismatchesOf(withIt, replayOn), [], 'the replay must publish exactly what production publishes');
+    return;
+  }
   assert.ok(prepared.every((r) => r.ts.getUTCMonth() + 1 === 9), 'the fixture is dated September, outside the trained months');
   const off = await B.scoreArtifact(art, prepared, { ...REPLAY_PRODUCTION, monthSupport: false, zeroCurve: false });
   const on = await B.scoreArtifact(art, prepared, { ...REPLAY_PRODUCTION, monthSupport: true, zeroCurve: false });
@@ -439,13 +478,23 @@ test('month average on: nothing moves outside the configuration it was measured 
 test("zero-curve hours: the model at baseline 0 plus the strict offset, no nowcast, only where the hour's own row is zero", async () => {
   const fx = fixture({ zeroHours: true });
   const { art, prepared } = await replaySetup(fx);
-  if (art.meta.model_version !== '2.6.0-starling') return;
+  const version = art.meta.model_version;
+  // The shipped artifact must be one these hours were measured under, or it
+  // hands them back to the rule engine (31 points too high on average on
+  // v2.6.0-starling's measurement, 34 on 2.8.0-starling's) without anyone
+  // deciding that. A retrain is measured and added to
+  // ZERO_CURVE_ALSO_MEASURED before it ships.
+  assert.ok(art.I.zeroCurveMeasuredOn(version), `${version} has no zero-curve measurement`);
+  // An artifact that takes the offset as an input gets none after it, and
+  // only an artifact MONTH_SUPPORT names has a month average to combine.
+  const learnsOffset = art.I.artifactLearnsOffset(art.meta);
+  const months = art.I.MONTH_SUPPORT[version] ? [false, true] : [false];
   const zeroIdx = prepared.map((r, i) => (r.smoothed === 0 && r.rawCurve === 0 ? i : -1)).filter((i) => i >= 0);
   const noRowIdx = prepared.map((r, i) => (r.rawCurve === null ? i : -1)).filter((i) => i >= 0);
   assert.ok(zeroIdx.length >= 6, `the variant must hold zero-curve readings (${zeroIdx.length})`);
   assert.ok(noRowIdx.length >= 3, 'and readings of an hour with no row at all');
   const before = await runProduction(fx, prepared, PRODUCTION, { leakyOffset: true });
-  for (const month of [false, true]) {
+  for (const month of months) {
     const env = { ...PRODUCTION, CROWD_ZERO_CURVE_MODEL: 'true', ...(month ? { CROWD_MONTH_SUPPORT: 'true' } : {}) };
     const production = await runProduction(fx, prepared, env, { leakyOffset: true });
     const replay = await B.scoreArtifact(art, prepared, { ...REPLAY_PRODUCTION, monthSupport: month, zeroCurve: true });
@@ -456,13 +505,18 @@ test("zero-curve hours: the model at baseline 0 plus the strict offset, no nowca
       const answer = production[i];
       assert.equal(before[i].predictionMethod, 'rule_engine_no_baseline', 'the rule engine answered it before');
       assert.equal(answer.predictionMethod, 'ml');
-      assert.equal(answer.modelVersion, `2.6.0-starling${month ? '+month_support' : ''}+zero_curve`);
+      assert.equal(answer.modelVersion, `${version}${month ? '+month_support' : ''}+zero_curve`);
       assert.equal(answer.nowcast, null, 'no nowcast on a zero-curve hour');
       assert.equal(answer.baselineScore, null);
       assert.equal(answer.confidenceMeasurement.metric, month ? 'within_15_zero_curve_month_support' : 'within_15_zero_curve');
+      if (art.I.ZERO_CURVE_ALSO_MEASURED[version]) {
+        assert.equal(answer.confidenceMeasurement.population, art.I.ZERO_CURVE_ALSO_MEASURED[version].population);
+      }
       // Restated: the graph at baseline 0, then DEVIATION_WEIGHT times the
-      // strict offset, clamped and rounded.
-      const vector = art.I.buildFeatureVector(p.venue, p.weather, p.ts, p.events, null, 0, p.neighbors, { live: p.live, sports: null });
+      // strict offset, clamped and rounded; for an artifact that reads the
+      // offset as an input, the graph at baseline 0 and nothing after it.
+      const vector = art.I.buildFeatureVector(p.venue, p.weather, p.ts, p.events, null, 0, p.neighbors,
+        { live: p.live, sports: prepared.sports === undefined ? null : prepared.sports });
       const ort = require('onnxruntime-node');
       const raw = month
         ? await independentMonthMean(art, vector)
@@ -470,7 +524,7 @@ test("zero-curve hours: the model at baseline 0 plus the strict offset, no nowca
       let want = art.I.reconstructScore(raw, 0);
       if (p.switchedOffset !== null) {
         withOffset++;
-        want = Math.max(0, Math.min(100, Math.round(want + art.I.DEVIATION_WEIGHT * p.switchedOffset)));
+        if (!learnsOffset) want = Math.max(0, Math.min(100, Math.round(want + art.I.DEVIATION_WEIGHT * p.switchedOffset)));
       }
       assert.equal(answer.score, want, `row ${i}`);
     }
@@ -639,6 +693,25 @@ test('zero-curve switch on: nothing moves outside the configuration it was measu
     const leaky = env.CROWD_NOWCAST_ENABLED === 'true' || (env.CROWD_SERVE_MODE && env.CROWD_SERVE_MODE !== 'model');
     const without = await runProduction(fx, prepared, env, { leakyOffset: leaky });
     const withIt = await runProduction(fx, prepared, { ...env, CROWD_ZERO_CURVE_MODEL: 'true' }, { leakyOffset: leaky });
+    // The quantile map is one artifact's table (QMAP_FITTED_ON). Left on under
+    // any other artifact it reshapes no number, so "map on" is then the
+    // measured configuration itself (model mode, the nowcast on, no map in
+    // the number) and the zero-curve hours are the model's there as well.
+    const mapOnly = !env.CROWD_SERVE_MODE && !env.CROWD_QMAP_ENABLED && env.CROWD_NOWCAST_ENABLED === 'true';
+    if (mapOnly && META.model_version !== I.QMAP_FITTED_ON && I.zeroCurveMeasuredOn(META.model_version)) {
+      const zeroIdx = prepared.map((r, i) => (r.smoothed === 0 && r.rawCurve === 0 ? i : -1)).filter((i) => i >= 0);
+      assert.ok(zeroIdx.length >= 6);
+      withIt.forEach((a, i) => {
+        if (zeroIdx.includes(i)) {
+          assert.equal(without[i].predictionMethod, 'rule_engine_no_baseline');
+          assert.equal(a.predictionMethod, 'ml');
+          assert.equal(a.modelVersion, `${META.model_version}+zero_curve`);
+        } else {
+          assert.deepEqual(comparable([a]), comparable([without[i]]), `row ${i} moved without being a zero-curve hour`);
+        }
+      });
+      continue;
+    }
     assert.deepEqual(comparable(withIt), comparable(without), JSON.stringify(env));
   }
 });

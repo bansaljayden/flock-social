@@ -43,9 +43,9 @@
 // bind inside one fails with EACCES. On 2026-11-26 the blocks 52239-52538
 // covered all of slot 44 (52264-52519), so addFriendsRealDb could not bind any
 // port it owned and failed in its before hook, 24 tests, with nothing wrong
-// in the code under test. 85 ports each keeps slots 0 to 95 inside
-// 41000-49151, and the check under SUITE_SLOTS refuses a slot that would not
-// fit.
+// in the code under test. 85 ports each keeps slots 0 to 94 inside
+// 41000-49074 (slot 95 would end at 49159), and the check under SUITE_SLOTS
+// refuses a slot that would not fit.
 // ---------------------------------------------------------------------------
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');

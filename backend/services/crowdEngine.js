@@ -2083,7 +2083,7 @@ const MIN_CALIBRATION_REPORTERS = 3;
 // calibration is live for that venue and hour.
 //
 // Deliberately equal to TIE_MARGIN above, which this file justifies from the
-// shipped model's holdout error: a single stranger's tap must never move the
+// shipped model's error on live readings: a single stranger's tap must never move the
 // public number by more than the difference the same file refuses to act on as
 // noise. Enforced by construction — the blended weight is capped so
 // that weight * (FEEDBACK_SCORE_SPAN / n) can never exceed it — so the bound

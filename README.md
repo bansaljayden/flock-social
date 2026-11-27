@@ -124,9 +124,13 @@ November two switches changed model mode for v2.6.0: outside March to May, its
 training months, the model's part of the number was its mean over those three
 months (`CROWD_MONTH_SUPPORT`), and an hour whose curve is 0 got the model at
 a curve of 0 plus the offset, without the nowcast, instead of the rule engine
-(`CROWD_ZERO_CURVE_MODEL`). That nowcast table and both switches name v2.6.0
-and do nothing under v2.8.0, so an hour whose curve is 0 is answered by the
-rule engine again.
+(`CROWD_ZERO_CURVE_MODEL`). That nowcast table and the month switch name
+v2.6.0 and do nothing under v2.8.0. The zero-curve switch was measured again
+for v2.8.0 before it shipped. On the 10,759 live readings of 12 to 25 November
+at such hours, the model at a curve of 0 was within 10 points 79.3% to 80.5%
+of the time, depending on how old the venue's newest reading was, against
+8.2% for the rule engine. So under v2.8.0 an hour whose curve is 0 gets the
+model at a curve of 0, with nothing added after it.
 
 From 26 September to 1 November production ran `CROWD_SERVE_MODE=curve_offset`:
 the curve plus 0.85 times the offset, with the nowcast serving a reading from

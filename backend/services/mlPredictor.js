@@ -4510,7 +4510,15 @@ function applyNowcast(score, pick, baseKey) {
 // `monthSupport` and `zeroCurve` are CROWD_MONTH_SUPPORT's and
 // CROWD_ZERO_CURVE_MODEL's account of this number (monthReachesNumber; the
 // zero-curve hour), each with its own figures (MONTH_SUPPORT_MEASURED).
-function switchedMeasurement(curveOffset, nowcast, { monthSupport = false, zeroCurve = false } = {}) {
+// `version` is the artifact that made the number: a zero-curve hour under an
+// artifact measured later carries that artifact's figure
+// (ZERO_CURVE_ALSO_MEASURED); with no version given it is v2.6.0-starling's,
+// as it was before there was a second one.
+function switchedMeasurement(curveOffset, nowcast, { monthSupport = false, zeroCurve = false, version } = {}) {
+  if (zeroCurve && Object.prototype.hasOwnProperty.call(ZERO_CURVE_ALSO_MEASURED, version || '')) {
+    const m = ZERO_CURVE_ALSO_MEASURED[version];
+    return { percent: m.within15, metric: 'within_15_zero_curve', population: m.population, rows: m.rows };
+  }
   if (zeroCurve) {
     const m = MONTH_SUPPORT_MEASURED.zeroCurve[monthSupport ? 'monthSupport' : 'asBuilt'];
     return {
@@ -4587,9 +4595,11 @@ function servedModelVersion(version, curveOffset, nowcast, { monthSupport = fals
 //                (monthReachesNumber), false by default
 //   zeroCurve    whether the number is a zero-curve hour the model answered
 //                (CROWD_ZERO_CURVE_MODEL), false by default
+//   version      the artifact's model_version, read only to pick a zero-curve
+//                hour's figure (switchedMeasurement)
 //   ladder       () => crowdEngine's input-completeness figure for the venue,
 //                read only for an artifact that cannot state an accuracy
-function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowcast, monthSupport = false, zeroCurve = false, ladder }) {
+function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowcast, monthSupport = false, zeroCurve = false, version, ladder }) {
   let confidence;
   let confidenceMeasurement;
   // WHEN A SWITCH MADE THE NUMBER, neither the artifact's figure nor the
@@ -4598,7 +4608,7 @@ function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowc
   // run (SERVE_MEASURED, MONTH_SUPPORT_MEASURED), with its own population
   // string. Null whenever the number is the model path as it always was,
   // which leaves the two branches after this one exactly as they were.
-  const switched = switchedMeasurement(curveOffset, nowcast, { monthSupport, zeroCurve });
+  const switched = switchedMeasurement(curveOffset, nowcast, { monthSupport, zeroCurve, version });
   if (switched) {
     // The weather adjustment below exists because the MODEL runs on
     // climatology without a live reading. A number the model's output did
@@ -4741,8 +4751,9 @@ function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowc
 // error 35.6 against 30.6), so these hours' bias is worth watching. Only where
 // the lookup found the hour's own row (storedZeroSlot); a venue with no row, a
 // refused lookup and a failed one are answered exactly as before. And
-// only in the configuration it was measured in (zeroCurveServes): the artifact
-// ZERO_CURVE_FITTED_ON, CROWD_SERVE_MODE model, CROWD_NOWCAST_ENABLED on and
+// only in the configuration it was measured in (zeroCurveServes): an artifact
+// it was measured under (ZERO_CURVE_FITTED_ON, and since the November 2026
+// retrain ZERO_CURVE_ALSO_MEASURED), CROWD_SERVE_MODE model, CROWD_NOWCAST_ENABLED on and
 // the quantile map off. bandEval's model-served population stays the hours
 // with a positive baseline, so these hours are counted only among every live
 // reading as shown.
@@ -4756,6 +4767,37 @@ const MONTH_SUPPORT = Object.freeze({
   '2.6.0-starling': Object.freeze([3, 4, 5]),
 });
 const ZERO_CURVE_FITTED_ON = '2.6.0-starling';
+
+// 2.8.0-STARLING ON THE SAME HOURS, MEASURED 2026-11-26, before it shipped.
+// The switch was keyed to one artifact, so the retrain would have handed
+// these hours back to the rule engine. Replayed through bandEval on the
+// 10,759 zero-curve readings of 2026-11-12..11-25 (31 cities, the
+// fortnight held out of that artifact's training; 77.5% of them exactly 0),
+// the model at baseline 0 against the rule engine, within 10 points and mean
+// absolute error:
+//   every earlier reading visible          79.3% against 8.2%, 8.01 against 33.83
+//   none newer than a week (today's feed)  80.5% against 8.2%, 7.40 against 33.83
+//   none inside the offset's four weeks    79.9% against 8.2%, 7.72 against 33.83
+// (date-block 95% interval on the middle row's difference: 70.2 to 74.8
+// points). That artifact takes the offset as an input, so nothing is added
+// after it here either, and it has no month to average. The figure a
+// zero-curve number publishes under it is the lowest within-15 of the three
+// replays (with no reading inside four weeks visible), so no state of the feed
+// overstates it. A later artifact is not in this table until somebody
+// measures it.
+const ZERO_CURVE_ALSO_MEASURED = Object.freeze({
+  '2.8.0-starling': Object.freeze({
+    within15: 82.4,
+    rows: 10759,
+    population: 'live readings 2026-11-12..11-25 at hours whose own curve row blends to zero (31 cities, read-only production export of 2026-11-25, the fourteen days held out of this artifact\'s training), answered by the model at baseline 0 and replayed with no reading inside four weeks visible',
+  }),
+});
+
+// Whether a zero-curve hour was measured under this artifact.
+function zeroCurveMeasuredOn(version) {
+  return version === ZERO_CURVE_FITTED_ON
+    || Object.prototype.hasOwnProperty.call(ZERO_CURVE_ALSO_MEASURED, version || '');
+}
 
 // 'true' and nothing else, in any case, like CROWD_NOWCAST_ENABLED.
 function monthSupportEnabled() {
@@ -4834,7 +4876,7 @@ function monthSupportServes(meta, { serveMode: mode, nowcast, qmapApplies }) {
 // about the configuration it replays.
 function zeroCurveServes(meta, { serveMode: mode, nowcast, qmapApplies }) {
   return Boolean(meta)
-    && (meta.model_version || '') === ZERO_CURVE_FITTED_ON
+    && zeroCurveMeasuredOn(meta.model_version || '')
     && meta.label_type === 'delta'
     && mode === 'model'
     && nowcast === true
@@ -5738,6 +5780,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       nowcast: nowcastApplied,
       monthSupport: monthInNumber,
       zeroCurve: zeroCurveSlot,
+      version: metadata.model_version,
       ladder: () => crowdEngine.calculateCrowdScore(venue, weather, timestamp).confidence,
     });
 
@@ -6656,6 +6699,8 @@ module.exports = {
     // __tests__/mlServingFixes.test.js.
     MONTH_SUPPORT,
     ZERO_CURVE_FITTED_ON,
+    ZERO_CURVE_ALSO_MEASURED,
+    zeroCurveMeasuredOn,
     MONTH_SUPPORT_MEASURED,
     MONTH_SUPPORT_POPULATION,
     monthSupportEnabled,

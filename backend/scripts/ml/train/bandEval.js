@@ -874,6 +874,7 @@ async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast, monthSup
       nowcast: nowcastApplied,
       monthSupport: monthInNumber,
       zeroCurve: zero,
+      version: art.meta.model_version,
       ladder: () => r.ruleConfidence,
     });
     res[i] = {
