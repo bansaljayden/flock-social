@@ -445,29 +445,42 @@ test('a suppressed re-emit is not charged to the budget genuine requests draw on
 
 test('the crowd tie margin still sits inside the error band the model reports', () => {
   // services/crowdEngine.js sets TIE_MARGIN (and, deliberately equal to it,
-  // MAX_SINGLE_REPORT_LEVERAGE) from the shipped model's holdout error. The
+  // MAX_SINGLE_REPORT_LEVERAGE) from the shipped model's error. The
   // justification used to quote "~58% of predictions within 15" from a model
-  // that has since been replaced — the metadata now says 85.1%. A prose number
-  // sourced from another file rots silently, so it is checked here: the margin
-  // must be larger than the typical (median) error, or it acts on noise, and no
-  // larger than the model's RMSE, or it ignores real differences.
+  // that has since been replaced. A prose number sourced from another file
+  // rots silently, so it is checked here: the margin must be no larger than
+  // the model's mean absolute error, or it acts on differences the model
+  // cannot resolve, and no smaller than half of it, or it has gone stale.
+  //
+  // WHICH ERROR. Until the November 2026 retrain this read evaluation.holdout,
+  // every row of the held-out cities. Most of those rows are weekly snapshots
+  // whose label is the curve itself, and under 2.8.0-starling they pull that
+  // block's MAE to 2.30, which no published number has against a live
+  // reading. The live readings are training_metrics_by_population
+  // .realtime_served (each city held out in turn), the block the card's
+  // confidence figure is read from, so the margin is held to that one. An
+  // artifact from before the trainer wrote it is held to the holdout block,
+  // as it always was.
   let meta;
   try {
     meta = require('../scripts/ml/models/model_metadata.json');
   } catch (_) {
     return; // model artifacts are optional in a checkout without them
   }
-  const holdout = meta.evaluation?.holdout;
-  if (!holdout) return;
+  const served = meta.training_metrics_by_population?.realtime_served;
+  const block = served && Number.isFinite(served.mae) ? served : meta.evaluation?.holdout;
+  if (!block || !Number.isFinite(block.mae)) return;
+  const name = block === served ? 'live-reading' : 'holdout';
 
-  const { MAX_SINGLE_REPORT_LEVERAGE } = require('../services/crowdEngine');
+  const { MAX_SINGLE_REPORT_LEVERAGE, TIE_MARGIN } = require('../services/crowdEngine');
+  assert.strictEqual(TIE_MARGIN, MAX_SINGLE_REPORT_LEVERAGE, 'the two are deliberately equal');
   assert.ok(
-    MAX_SINGLE_REPORT_LEVERAGE <= holdout.mae,
-    `margin ${MAX_SINGLE_REPORT_LEVERAGE} exceeds the holdout MAE ${holdout.mae}: it would act on differences the model cannot resolve`
+    MAX_SINGLE_REPORT_LEVERAGE <= block.mae,
+    `margin ${MAX_SINGLE_REPORT_LEVERAGE} exceeds the ${name} MAE ${block.mae}: it would act on differences the model cannot resolve`
   );
   assert.ok(
-    MAX_SINGLE_REPORT_LEVERAGE >= holdout.mae / 2,
-    `margin ${MAX_SINGLE_REPORT_LEVERAGE} has fallen far below the holdout MAE ${holdout.mae}: re-derive it rather than leaving it stale`
+    MAX_SINGLE_REPORT_LEVERAGE >= block.mae / 2,
+    `margin ${MAX_SINGLE_REPORT_LEVERAGE} has fallen far below the ${name} MAE ${block.mae}: re-derive it rather than leaving it stale`
   );
 });
 

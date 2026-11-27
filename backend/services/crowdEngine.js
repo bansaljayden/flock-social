@@ -1435,29 +1435,29 @@ function isOpenHour(h, types, openHour, closeHour, closeMinute) {
 // THE LEVEL noise floor. Not the ordering one — see HOUR_ORDERING_MIN_GAP.
 //
 // This is the smallest difference in a PUBLISHED score this file treats as a
-// real difference rather than model noise. It is derived from the shipped
-// model's holdout error (scripts/ml/models/model_metadata.json,
-// evaluation.holdout), sitting just under the mean absolute error. It was 5
-// under the artifacts up to v2.6.0-starling (mae 5.81, then 6.32). Under
-// 2.8.0-starling that block reads mae 2.30, rmse 6.22, within_5 90.8%,
-// within_10 95.8%, so it is 2. That holdout is every row of the three
-// held-out cities, weekly snapshots included, the population this margin has
-// always been read off; it is not the error of a live reading.
+// real difference rather than model noise. It sits just under the shipped
+// model's mean absolute error (scripts/ml/models/model_metadata.json), so a
+// gap smaller than it is inside the model's own typical miss. Up to
+// v2.6.0-starling that error was read off evaluation.holdout (mae 5.81, then
+// 6.32). Under 2.8.0-starling that block reads mae 2.30, because most of its
+// rows are weekly snapshots whose label is the curve itself, and that is not
+// the error of a published number. So the margin is read off the live
+// readings instead, training_metrics_by_population.realtime_served, the
+// population mlPredictor's confidence figure already comes from: mae 5.89
+// with each city held out in turn. Just under that is still 5.
 //
-// One thing still stands on it, and it is not a claim about hour order:
+// Two things still stand on it, and neither is a claim about hour order:
 // MAX_SINGLE_REPORT_LEVERAGE below (deliberately equal, so one stranger's tap
 // cannot move a public number by more than the difference this file refuses to
-// read as signal). routes/venueDashboard.js's STRIP_ORDERING_MIN_GAP was set
-// as one label band (20) plus this margin when the margin was 5, and stays at
-// 25: it hedges a sentence about two venues, and nothing measured since says
-// a smaller gap can carry one.
+// read as signal), and routes/venueDashboard.js's STRIP_ORDERING_MIN_GAP,
+// which is one label band (20) plus this margin.
 //
 // It USED to be what recommendBestTime acted on, and that was the defect fixed
 // on 2026-08-20. A level error band cannot license an ordering claim: how far
 // off the printed number is says nothing about whether 9 PM outranks 8 PM.
-// Re-derive it from the metadata if the model is retrained;
-// __tests__/socketTakedownParity.test.js keeps it inside the reported band.
-const TIE_MARGIN = 2;
+// Re-derive it from the metadata's realtime_served block if the model is
+// retrained; __tests__/socketTakedownParity.test.js keeps it inside that band.
+const TIE_MARGIN = 5;
 
 // THE ORDERING noise floor, and the only one the best-time line may use.
 //
@@ -1469,7 +1469,7 @@ const TIE_MARGIN = 2;
 //
 // So 10 is where a difference stops being a coin flip on the measurement that
 // asked this exact question, and below it the honest answer is that the hours
-// are the same. TIE_MARGIN (5 then) was never entitled to license this decision —
+// are the same. TIE_MARGIN (5) was never entitled to license this decision —
 // it comes from the size of the LEVEL error, which is a different quantity.
 //
 // Re-derive by re-running scripts/ml/train/hour_ranking_eval.py and reading
@@ -2098,7 +2098,7 @@ const MIN_CALIBRATION_REPORTERS = 3;
 // reports, and it does not describe the step at the floor. Going from
 // MIN_CALIBRATION_REPORTERS - 1 reporters to MIN_CALIBRATION_REPORTERS switches
 // blending on at once, so the report that crosses the line moves the published
-// number by weight * |feedbackScore - engine| — up to 0.1 * 80 = 8 points if
+// number by weight * |feedbackScore - engine| — up to 0.25 * 80 = 20 points if
 // three reporters unanimously contradict the model. That discontinuity is
 // inherent to having a floor at all (some report is always the one that turns
 // calibration on) and it is the deliberate trade: below the floor user feedback
@@ -2108,9 +2108,9 @@ const MIN_CALIBRATION_REPORTERS = 3;
 // reports three people rather than one person three times. Read what `verified`
 // actually proves in the MIN_CALIBRATION_REPORTERS note above before leaning on
 // it — one of its two branches is presence, the other is not. Do not restate
-// this constant as "no user feedback can move a score by more than 2 points";
+// this constant as "no user feedback can move a score by more than 5 points";
 // that is not what it enforces.
-const MAX_SINGLE_REPORT_LEVERAGE = 2;
+const MAX_SINGLE_REPORT_LEVERAGE = 5;
 
 // A report is evidence about how busy a place is, and that evidence goes stale.
 // Four weeks is four observations of any given weekly (day, hour) slot: enough
@@ -2244,9 +2244,8 @@ function buildCalibrationAdjustment(feedbackRows, engineScore, options = {}) {
   // MAX_SINGLE_REPORT_LEVERAGE points on their own. One reporter can move the
   // mean by at most FEEDBACK_SCORE_SPAN / n, and the blend passes weight * that
   // through to the published score, so this cap is the whole bound. It binds at
-  // the floor (n = 3, where the ladder alone would allow 6 points) and, at 2
-  // points, for every count up to 22 but 20; from 23 reporters the ladder is
-  // the smaller of the two.
+  // the floor (n = 3, where the ladder alone would allow 6 points) and goes
+  // slack as real reports accumulate.
   const weight = Math.min(ladderWeight, (MAX_SINGLE_REPORT_LEVERAGE * n) / FEEDBACK_SCORE_SPAN);
 
   const adjustedScore = Math.max(0, Math.min(100, Math.round(
@@ -2319,8 +2318,8 @@ module.exports = {
   findQuieterAlternatives,
   buildCalibrationAdjustment,
   // The two noise floors, exported so nothing restates either from memory:
-  // TIE_MARGIN is the LEVEL floor (what a stranger's report may move; what
-  // routes/venueDashboard.js built STRIP_ORDERING_MIN_GAP from when it was 5);
+  // TIE_MARGIN is the LEVEL floor (what a stranger's report may move, and what
+  // routes/venueDashboard.js builds STRIP_ORDERING_MIN_GAP from);
   // HOUR_ORDERING_MIN_GAP is the measured ORDERING floor the best-time line
   // hedges on, and the two are not interchangeable.
   TIE_MARGIN,
