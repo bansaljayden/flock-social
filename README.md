@@ -63,10 +63,14 @@ Not Busy, Steady, Busy, Packed. Getting that word right is the whole job.
 Map apps usually answer with a popular-times chart, the venue's typical level
 for that weekday and hour. Flock starts from the same weekly pattern, and
 Starling, its trained model, predicts how far each hour will move from it.
-From 1 September (hourly from 3 September) to 25 November 2026 a collector read
-the venues Flock tracked and kept 2,762,440 verified live readings. Starling
-v2.8.0, the version serving, learned from 1,481,472 of them, taken through 11
-November, and was tested on 1,227,914 taken from 12 to 25 November.
+From 1 September (hourly from 3 September) to 12 October 2026 a collector read
+the venues Flock tracked in Philadelphia, the Lehigh Valley and Miami and kept
+about 169,000 live readings. After an outage the data provider's feed answered
+again from 23 October to 25 November, but its readings from then, about 2.59
+million, were generated from its own weekly forecast, not measured ("The trained
+model", below). Starling v2.8.0, the version serving, learned from 1,481,472
+stored readings taken through 11 November, 89.3% of them of the generated
+kind.
 
 **Over a month of live readings, the forecast Flock served from 26 September
 named the exact crowd level 54.9% of the time. The popular-times chart, scored
@@ -94,13 +98,16 @@ From 13 October to 1 November production used that finding as its rule, rule
 (b): when the venue had been read in the past hour, the card showed that
 reading as it stood, and otherwise the curve plus the venue's offset, how far
 its recent live readings had run above or below it. Since 1 November the card
-has served Starling (below), and live collection ended on 25 November 2026.
+has served Starling (below). The last real live readings arrived on 12
+October, and collection ended on 25 November 2026.
 
 The pre-registered retrain tested whether a new model beats rule (b) on the
-last 14 days of live readings, 12 to 25 November 2026, under a decision rule
-fixed before its data existed. Its export ran on 25 November, and on 26
-November its size was chosen and the model was trained. It passed all eight
-tests that day and ships as v2.8.0 ("The trained model", below).
+last 14 days of readings, 12 to 25 November 2026, under a decision rule fixed
+before its data existed. Its export ran on 25 November, and on 26 November its
+size was chosen and the model was trained. It passed all eight tests that day
+and ships as v2.8.0. Those readings turned out to be generated from the
+provider's weekly forecast, so we withdrew that result as a test of
+forecasting ("The trained model", below).
 
 ### How the served number is built
 
@@ -116,7 +123,7 @@ reading, with that reading's age.
 
 Under v2.6.0, which served from 1 November until v2.8.0 replaced it, the base
 was the curve plus the predicted departure, clamped to ±50, plus 0.5 times the
-trailing offset. Until live collection ended, the nowcast then carried the
+trailing offset. Until collection ended, the nowcast then carried the
 venue's latest earlier reading at weight 1.0 when it was an hour old, 0.9 at
 two hours and 0.3 at three (`NOWCAST_WEIGHTS.model`, fitted on v2.6.0's own
 output; `model_qmap` while the quantile map was on, to 10 November). From 23
@@ -125,12 +132,15 @@ training months, the model's part of the number was its mean over those three
 months (`CROWD_MONTH_SUPPORT`), and an hour whose curve is 0 got the model at
 a curve of 0 plus the offset, without the nowcast, instead of the rule engine
 (`CROWD_ZERO_CURVE_MODEL`). That nowcast table and the month switch name
-v2.6.0 and do nothing under v2.8.0. The zero-curve switch was measured again
-for v2.8.0 before it shipped. On the 10,759 live readings of 12 to 25 November
-at such hours, the model at a curve of 0 was within 10 points 79.3% to 80.5%
-of the time, depending on how old the venue's newest reading was, against
-8.2% for the rule engine. So under v2.8.0 an hour whose curve is 0 gets the
-model at a curve of 0, with nothing added after it.
+v2.6.0 and do nothing under v2.8.0. The zero-curve switch was replayed for
+v2.8.0 before it shipped, on the 10,759 readings of 12 to 25 November at such
+hours, and under v2.8.0 an hour whose curve is 0 gets the model at a curve of
+0, with nothing added after it. Those readings were generated from the
+provider's forecast, which is zero at those hours, so the replay's 79.3% to
+80.5% within 10 points (8.2% for the rule engine) shows the model matching the
+provider's zeros, not real crowds: before the outage, real readings at such
+hours were above zero most of the time. Such an hour's card publishes no
+measured confidence, and whether the switch stays on is open.
 
 From 26 September to 1 November production ran `CROWD_SERVE_MODE=curve_offset`:
 the curve plus 0.85 times the offset, with the nowcast serving a reading from
@@ -144,13 +154,15 @@ chosen on those readings, so they are no test of it. The pre-registered
 retrain scored it on readings it was not chosen on: rule (b) is the comparator
 in v2.8.0's gate ("The trained model", below).
 
-Live collection ended on 25 November 2026 (newest reading 15:59 UTC), and the
+Collection ended on 25 November 2026 (newest reading 15:59 UTC), and the
 nowcast has moved no number since about 19:00 UTC that day. The latest-reading
 input v2.8.0 takes is empty for the same reason. The offset keeps working
 through the silence, as one of v2.8.0's inputs: it is the median gap between
 the curve and the venue's newest 20 readings from the 28 days before the hour
 shown (`trailingOffsetBefore`), so each reading ages out on its own clock and
-the offset rests on fewer, older readings as the silence goes on. Once fewer
+the offset rests on fewer, older readings as the silence goes on. Those
+readings are the provider's generated ones of November, so today the offset
+carries the gap between its forecast-derived numbers and the stored curve. Once fewer
 than two remain, 28 days after the venue's last reading at the latest (23
 December 2026 for a venue read on 25 November), that input is empty too, and
 Starling works from the curve, the weather, events, games and what it learned
@@ -182,27 +194,42 @@ presented as a model output.
 ### The trained model
 
 **On 26 November 2026 Starling v2.8.0, the version serving, passed all eight
-tests of a gate fixed in advance.** The gate was decided on 712,165 live
-readings the model never trained on, taken from 12 to 25 November 2026 in the
+tests of a gate fixed in advance. Then a review of our own paper caught that
+the gate's readings were not measurements, and we threw that result out.** The
+gate was decided on 712,165 readings taken from 12 to 25 November 2026 in the
 six cities Flock read every hour (Chicago, Denver, Los Angeles, the Lehigh
-Valley, Philadelphia and Seattle), against rule (b), the rule production
-served from 13 October to 1 November. On those readings v2.8.0 was within 10
-points 96.2% of the time, against 86.9% for rule (b) and 61.5% for the weekly
-curve alone. It named the exact crowd level, one of five, 83.9% of the time
-against rule (b)'s 71.8%, and its MAE was 3.49 points against 6.39. Across all
-31 cities with live readings in those two weeks (1,227,914 readings) it was
-within 10 points 94.3% of the time.
+Valley, Philadelphia and Seattle), against rule (b), the rule production served
+from 13 October to 1 November. From 23 October the data provider's live
+endpoint had been answering with numbers generated from its own weekly
+forecast: a venue's reading was the same number as a week earlier in 89% to
+99% of pairs, where real readings repeat 13% to 18% of the time. So v2.8.0's
+96.2% within 10 points on those readings, against 86.9% for rule (b), measures
+how closely it reproduces the provider's numbers, which is why it was
+withdrawn as a test of forecasting. A plain lookup of each venue's own stored
+value for the same weekday and hour scores about 99% on them.
+`backend/scripts/ml/MODEL-METRICS.md` has the full account.
 
-**Those readings were scored with the live feed on.** 88% of the six-city
-readings had a reading from the hour before, and v2.8.0 takes that reading as
-an input. Live collection ended on 25 November 2026, so today the app runs
-Starling without a fresh reading. Replayed on those 1,227,914 readings with no
-reading newer than a week, v2.8.0 is within 10 points 87.1% of the time, and
-with none inside four weeks 84.5%. v2.6.0 scores 69.6% and 59.7% in the same
-replays. The replays reuse the gate's readings, so they are a second look at
-them and do not count as a separate test. The readings are a provider's
-relative busyness estimates, 0 to 100 within each venue, and they do not count
-people.
+**On real readings with no reading from the hour before, v2.8.0 runs level
+with the weekly chart, with a smaller average miss.** The only real readings it
+never trained on are Miami's: 9,912 readings at 591 venues from 5 September to
+12 October 2026, read at 11:00 and 19:00, none with a reading from the hour
+before. That is the state the app has served in since collection ended.
+
+| 9,912 real readings in Miami, 5 Sep to 12 Oct 2026, no reading from the hour before | weekly chart | **Starling v2.8.0** |
+|---|---|---|
+| Within 10 points | 28.4% | 27.0% |
+| Within 15 points | 38.5% | 38.3% |
+| Names the exact crowd level | 26.4% | **28.5%** |
+| Average miss, out of 100 (MAE) | 28.4 | **25.2** |
+
+The card's confidence for a number v2.8.0 makes is that 38.3 (shown as 38, or
+23 without a live temperature reading). With a real reading from the hour
+before, repeating it, as rule (b) does, is within 10 points 80.1% of the time
+on 82,571 Philadelphia and Lehigh Valley readings, and v2.8.0, which trained
+on those rows, reaches 59.5%: the value was in the live reading. A second
+November model, 2.9.0, scores no better on real readings, and neither it nor
+its refit, 2.9.1, ships. The readings are a provider's relative busyness
+estimates, 0 to 100 within each venue, and they do not count people.
 
 **The version before it, v2.6.0, beat the popular-times chart on spring
 readings in three cities it never trained on, on every measure the card is
@@ -232,8 +259,9 @@ times graph, its MAE is 40% to 54% lower across five cities, and against last
 week's value at the same hour it is 14% to 19% lower. v2.6.0 reached its 6.5%
 with no recent reading of the venue in its feature set. From 1 September
 (hourly from 3 September) to 25 November 2026 the collector stored that
-reading for the venues it polled, and v2.8.0 learned from 1,481,472 of them,
-taken through 11 November.
+reading for the venues it polled (real live readings to 12 October, the
+provider's generated numbers from 23 October), and v2.8.0 learned from
+1,481,472 of them, taken through 11 November.
 
 **It is above zero at a granularity where the field often falls below it.** R²,
 the coefficient of determination, is positive when a model's predictions carry
@@ -261,7 +289,7 @@ holdout that have a usable curve, all of them in Miami. v2.6.0 could not be
 scored on that holdout's rows, so the two comparisons with it were deferred to
 the second gate. Since late September a second gate stands behind the first:
 the candidate and rule (b), the rule production served from 13 October to 1
-November, are replayed through the serving code on a 14-day window of live
+November, are replayed through the serving code on a 14-day window of
 readings held out of the candidate's training. For v2.8.0 that window was 12
 to 25 November 2026, 1,227,914 readings, and the verdict was taken on the
 712,165 of them in the six cities read every hour. The candidate loads only
@@ -270,7 +298,12 @@ if, on at least 1,000 readings over 5 or more dates that neither it nor rule
 than a point to it on within 10 or MAE, beats the weekly curve on within one
 level with band MAE no worse, does no worse than the rule engine, and keeps
 each of the six cities with 300 or more readings within 2 points of rule (b).
-v2.8.0 passed all eight tests on 26 November 2026.
+v2.8.0 passed all eight tests on 26 November 2026, on readings the provider
+had generated from its weekly forecast, so that verdict stands as arithmetic
+and not as a test of forecasting. From now on a gate first checks its window's
+readings for week-to-week repetition and against the provider's forecast, and
+scores a lookup of each venue's own same-slot reading beside rule (b)
+(`backend/scripts/ml/RETRAIN.md`, "The ship gate").
 
 **How it works.** Starling predicts a *delta*: how far a venue will sit from
 its own typical value for that hour. v2.8.0 learns that from **104 features**:
@@ -289,8 +322,9 @@ size chosen on 26 November 2026 by a test on held-out training cities, before
 training (`backend/scripts/ml/RETRAIN.md`). It keeps v2.6.0's learning rate,
 sampling and regularisation. It was trained that day on **3,533,480 rows
 across 31 cities** from the 25 November export: 2,052,008 typical-week values
-and 1,481,472 verified live readings taken from 1 September to 11 November
-2026, which carry most of the training weight. The spring realtime rows whose
+and 1,481,472 readings stored as live from 1 September to 11 November 2026,
+which carry most of the training weight; 89.3% of those are the provider's
+generated numbers from 23 October on. The spring realtime rows whose
 source was not recorded are no longer used, and the month inputs were dropped.
 Training runs on CPU with pinned threads and is **bit-reproducible**: given the
 same data and seed, two runs produce identical predictions, so the artifact
@@ -327,7 +361,11 @@ provenance-verified readings a day over the month of the test. Every row it
 wrote records whether its label is a live reading or the vendor's forecast,
 with the vendor's forecast for the same moment kept beside it, and each run
 read back what it wrote and refused to exit clean if any row it committed was
-unlabelled. Collection ended with the vendor subscription on 25 November 2026.
+unlabelled. It stored a value as live only when the vendor's answer flagged
+live data as available. From 23 October the vendor's answers carried that
+flag on numbers generated from its own weekly forecast, and the checks then
+in place counted rows, so they did not catch it. Collection ended with the
+vendor subscription on 25 November 2026.
 
 **Where the gain comes from.** The binding input for v2.6.0 was evidence
 density: the spring corpus holds about 25 realtime readings per venue across
@@ -335,9 +373,11 @@ density: the spring corpus holds about 25 realtime readings per venue across
 better than it read one particular venue departing from its own pattern. The
 month-long test points the same way: a venue's latest reading is worth more
 than any correction to its curve, so how often a venue is read matters more
-than how long its history is. v2.8.0, the pre-registered retrain, is the first
-trained on live rows that all carry verified provenance, with autumn months in
-the climate table, and it takes the venue's own recent readings as inputs.
+than how long its history is. v2.8.0, the pre-registered retrain, takes the
+venue's own recent readings as inputs, with autumn months in the climate
+table, but most of its live training rows are the provider's generated
+numbers, and on real readings an hour-old reading repeated as it stood still
+beats it.
 
 > **The trained model is not distributed with this source.** `crowd_model.onnx`
 > (kept gzipped, as `crowd_model.onnx.gz`, since v2.8.0)

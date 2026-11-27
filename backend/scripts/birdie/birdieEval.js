@@ -387,7 +387,11 @@ const nowcastOn = () => serving.nowcastEnabled();
 const switchesOn = () => serving.hourlyAttributionOn();
 const methodOf = (v) => (v && v.corpus ? 'ml' : (mlPredictor.noCurveFallbackEnabled() ? crowdEngine.NO_CURVE_FALLBACK_METHOD : 'rule_engine'));
 const hourLabel = (h) => `${h % 12 === 0 ? 12 : h % 12} ${h < 12 ? 'AM' : 'PM'}`;
-const MEASURED = (pct) => ({ status: 'measured', means: 'measured_accuracy', metric: 'within_15', population: 'realtime_served', populationRows: 4120, measuredPercent: pct, weatherPenalty: 0 });
+// A category-table number's block as predictBusyness gives it since
+// 2026-11-27 (mlPredictor noCurveFallbackResponse): unmeasured, because the
+// table's only figure was measured on readings the data provider generated
+// from its own weekly forecast.
+const UNMEASURED = Object.freeze({ status: 'unmeasured', means: 'input_completeness', metric: 'venue_metadata_completeness', population: null, populationRows: null, measuredPercent: null, weatherPenalty: 0 });
 
 // THE ARTIFACT THE MODEL SIDE ANSWERS AS. The fixture curve stands in for the
 // graph's output, and everything predictBusyness decides from the artifact
@@ -441,7 +445,7 @@ function curveAnswer(reading, weather, ladder) {
     modelVersion: serving.servedModelVersion(VERSION, true, nowcast),
     usedLiveReadings: Boolean(nowcast),
     ...serving.servedConfidence({
-      accuracy: ACCURACY, qmapApplied: false, hasWeather: serving.hasTempReading(weather), curveOffset: true, nowcast, ladder,
+      accuracy: ACCURACY, qmapApplied: false, hasWeather: serving.hasTempReading(weather), curveOffset: true, nowcast, version: VERSION, ladder,
     }),
   };
 }
@@ -475,8 +479,10 @@ function modelAnswer(v, reading, weather, ladder, ts) {
   const monthSupport = serving.monthReachesNumber(monthSupported, nowcast);
   const out = {
     modelVersion: serving.servedModelVersion(VERSION, false, nowcast, { monthSupport }),
+    // `version`, so an artifact measured on real readings publishes that
+    // figure here as predictBusyness does (REAL_READINGS_MEASURED).
     ...serving.servedConfidence({
-      accuracy: ACCURACY, qmapApplied, hasWeather: serving.hasTempReading(weather), curveOffset: false, nowcast, monthSupport, ladder,
+      accuracy: ACCURACY, qmapApplied, hasWeather: serving.hasTempReading(weather), curveOffset: false, nowcast, monthSupport, version: VERSION, ladder,
     }),
   };
   if (nowcast) out.dataSourcesUsed = ['ml_model', 'baseline', 'recent_live_readings'];
@@ -504,7 +510,7 @@ mlPredictor.predictBusyness = async (venue, weather, ts) => {
     predictionMethod: method, modelVersion: method === 'ml' ? VERSION : null, baselineScore: method === 'ml' ? score : null,
     eventsObserved: true,
   };
-  if (method === crowdEngine.NO_CURVE_FALLBACK_METHOD) out.confidenceMeasurement = MEASURED(41.2);
+  if (method === crowdEngine.NO_CURVE_FALLBACK_METHOD) out.confidenceMeasurement = { ...UNMEASURED };
   const live = Boolean(v && v.corpus && v.live && cases.openAt(v, day, hour, 30));
   const ladder = () => crowdEngine.calculateCrowdScore(venue, weather, ts).confidence;
   const curve = curveSide(method, live);

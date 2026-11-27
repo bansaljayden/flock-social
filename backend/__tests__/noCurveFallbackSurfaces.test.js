@@ -15,7 +15,9 @@
 // Postgres holds no curve for anybody):
 //   * the card: the hedged label, basis category_pattern, numberSource
 //     category_typical (category_typical_adjusted once verified reporters
-//     blend in), the measured confidence block with its own population, no
+//     blend in), an unmeasured confidence block (since 2026-11-27 the table's
+//     only figure describes readings the data provider generated from its own
+//     weekly forecast, so the integer is the input-completeness ladder), no
 //     model version, no model or live source, every bar named, and the serve
 //     recorded under the new method;
 //   * the vote list under it: the same evidence, row by row;
@@ -277,7 +279,7 @@ function threeBusyReporters() {
 // The card.
 // ===========================================================================
 
-test('the card says the number is typical for this kind of place, measured as such, and records it under its own name', async () => {
+test('the card says the number is typical for this kind of place, claims no measured figure for it, and records it under its own name', async () => {
   on();
   const id = freshId('CARD');
   const res = await call('GET', `/api/crowd/${id}`);
@@ -290,21 +292,21 @@ test('the card says the number is typical for this kind of place, measured as su
   assert.strictEqual(c.label, crowdEngine.publishedLabel(c.score, { supported: false }));
   assert.strictEqual(c.confidenceBasis, 'category_pattern');
   assert.strictEqual(c.supported, false);
-  assert.strictEqual(c.confidenceMeans, 'measured_accuracy');
+  assert.strictEqual(c.confidenceMeans, 'input_completeness');
   assert.strictEqual(c.numberSource, 'category_typical');
   assert.strictEqual(c.modelVersion, null, 'no model ran');
   assert.strictEqual(c.baselineData, null);
-  assert.strictEqual(c.confidence, 76);
+  assert.ok(Number.isInteger(c.confidence) && c.confidence !== 76, `the old figure is not published (${c.confidence})`);
   assert.deepStrictEqual(c.confidenceMeasurement, {
-    status: 'measured',
-    means: 'measured_accuracy',
-    metric: 'within_15_rule_engine_category_table',
-    population: mlPredictor._internals.NO_CURVE_FALLBACK_POPULATION,
-    populationRows: 159163,
-    measuredPercent: 76.0,
+    status: 'unmeasured',
+    means: 'input_completeness',
+    metric: 'venue_metadata_completeness',
+    population: null,
+    populationRows: null,
+    measuredPercent: null,
     weatherPenalty: 0,
     userReportBoost: 0,
-    publishedPercent: 76,
+    publishedPercent: c.confidence,
   });
   assert.deepStrictEqual(c.dataSourcesUsed, ['google_places', 'category_curve']);
   // Every bar is the table's, named as such, and says no live reading reached
@@ -373,9 +375,10 @@ test('the vote list gives each row the same evidence the card gives it', async (
   assert.strictEqual(a.score, barValue(5, 21));
   assert.match(a.label, HEDGED);
   assert.strictEqual(a.confidenceBasis, 'category_pattern');
-  assert.strictEqual(a.confidenceMeans, 'measured_accuracy');
+  assert.strictEqual(a.confidenceMeans, 'input_completeness');
   assert.strictEqual(a.modelVersion, null);
-  assert.strictEqual(a.confidenceMeasurement.metric, 'within_15_rule_engine_category_table');
+  assert.strictEqual(a.confidenceMeasurement.status, 'unmeasured');
+  assert.strictEqual(a.confidenceMeasurement.metric, 'venue_metadata_completeness');
   assert.strictEqual(a.confidenceMeasurement.publishedPercent, a.confidence);
   assert.strictEqual(b.predictionMethod, 'rule_engine_no_baseline');
   assert.strictEqual(b.confidenceMeasurement.status, 'unmeasured');
@@ -393,9 +396,9 @@ test('the public demo names it typical for its category, hedges it, and names ev
   assert.strictEqual(d.confidence_basis, 'category_pattern');
   assert.strictEqual(d.number_source, 'category_typical');
   assert.match(d.label, HEDGED);
-  assert.strictEqual(d.confidence, 76);
-  assert.strictEqual(d.confidence_measurement.status, 'measured');
-  assert.strictEqual(d.confidence_measurement.metric, 'within_15_rule_engine_category_table');
+  assert.notStrictEqual(d.confidence, 76, 'the old figure is not published');
+  assert.strictEqual(d.confidence_measurement.status, 'unmeasured');
+  assert.strictEqual(d.confidence_measurement.publishedPercent, d.confidence);
   for (const h of d.hourly) {
     assert.strictEqual(h.predictionMethod, METHOD, h.hour);
     assert.strictEqual(h.numberSource, 'category_typical', h.hour);
@@ -419,8 +422,10 @@ test('Birdie is handed the number as typical for this kind of place, hour by hou
   assert.strictEqual(out.crowd_source, 'category_pattern');
   assert.strictEqual(out.crowd_method, 'category_typical');
   assert.match(out.crowd_label, HEDGED);
-  assert.strictEqual(out.confidence_measurement.status, 'measured');
-  assert.strictEqual(out.confidence_measurement.metric, 'within_15_rule_engine_category_table');
+  // Unmeasured, so Birdie is told the integer is how much is known about the
+  // venue, never how often it is right.
+  assert.strictEqual(out.confidence_measurement.status, 'unmeasured');
+  assert.strictEqual(out.confidence_measurement.metric, 'venue_metadata_completeness');
   assert.strictEqual(out.hourly_forecast.length, 12);
   for (const h of out.hourly_forecast) {
     assert.strictEqual(h.predictionMethod, METHOD, h.hour);
@@ -555,19 +560,22 @@ test('the venue dashboard\'s strip names a peak the table made, with the serving
 // The block, read the way every surface reads it.
 // ===========================================================================
 
-test('the measurement block forwards the figure as measured, and the label never says more than typical', async () => {
+test('the measurement block forwards the table\'s number as unmeasured, and the label never says more than typical', async () => {
   on();
   const v = {
     place_id: freshId('BLOCK'), types: ['bar'], user_ratings_total: 300, rating: 4.4, price_level: 2,
     location: { latitude: 39.95, longitude: -75.16 },
   };
-  const r = await mlPredictor.predictBusyness(v, null, new Date(Date.UTC(2026, 8, 4, 21)));
+  const ts = new Date(Date.UTC(2026, 8, 4, 21));
+  const r = await mlPredictor.predictBusyness(v, null, ts);
   assert.strictEqual(r.predictionMethod, METHOD);
   const block = confidenceMeasurementFor(r, r.confidence, 0);
-  assert.strictEqual(block.status, 'measured');
-  assert.strictEqual(block.measuredPercent, 76.0);
-  assert.strictEqual(block.populationRows, 159163);
-  assert.strictEqual(block.publishedPercent, 76);
+  assert.strictEqual(block.status, 'unmeasured');
+  assert.strictEqual(block.means, 'input_completeness');
+  assert.strictEqual(block.measuredPercent, null);
+  assert.strictEqual(block.populationRows, null);
+  assert.strictEqual(r.confidence, crowdEngine.calculateCrowdScore(v, null, ts).confidence, 'the venue\'s input-completeness ladder');
+  assert.strictEqual(block.publishedPercent, r.confidence);
   const support = crowdEngine.describePredictionSupport(r.predictionMethod, 0);
   assert.doesNotMatch(crowdEngine.publishedLabel(r.score, support), NOT_THIS);
   assert.match(crowdEngine.publishedLabel(r.score, support), HEDGED);

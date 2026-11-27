@@ -272,31 +272,31 @@ test('every model-path answer carries the confidence figure serving publishes fo
   assert.deepEqual([...seen].sort(), Object.keys(figure).sort(), 'every arithmetic must be exercised');
 });
 
-test('with the month average on, a model number carries the figure serving publishes for it, and nothing moves where it does not serve', () => {
+test('with the month average on, a number it reaches publishes no measured figure, and nothing moves where it does not serve', () => {
   // Every eval clock is in November, outside the months starling trained on,
   // and the month average serves only in the configuration it was measured in
   // (monthSupportServes): the model, the nowcast on, the quantile map off.
   for (const at of Object.values(cases.CLOCKS)) assert.ok(![3, 4, 5].includes(new Date(at).getUTCMonth() + 1), at);
-  const M = serving.MONTH_SUPPORT_MEASURED;
   const measured = { ...MODEL, CROWD_QMAP_ENABLED: 'false' };
-  // Where the figure changes, it changes from the model's own figure to the
-  // one measured on the month average, and nowhere else: a reading carried at
-  // full weight, the curve and every other path keep theirs.
-  let alone = 0;
+  // The month average's only figures were measured on readings the data
+  // provider generated from its own weekly forecast (mlPredictor
+  // SWITCHED_UNMEASURED), so where it reaches the number the figure goes from
+  // the model's own, or a blended reading's, to unmeasured, and nowhere else:
+  // a reading carried at full weight, the curve and every other path keep
+  // theirs.
+  let reached = 0;
   paired(preview({ ...measured, CROWD_MONTH_SUPPORT: 'true' }), preview(measured)).forEach(([on, off]) => {
     const where = `${on.clock} ${on.key}`;
     assert.equal(on.score, off.score, `${where}: the fixture's number`);
-    if (on.conf && on.conf.metric === 'within_15_month_support') {
-      // An owner's reading over the model's number keeps the model's figure
-      // beside it, with or without the switch.
-      assert.deepEqual(on.conf, { published: Math.round(M.model.within15), percent: M.model.within15, metric: 'within_15_month_support' }, where);
-      assert.equal(off.conf.metric, 'within_15', `${where}: the model's own figure without the switch`);
-      alone++;
+    if (on.conf && on.conf.percent === null && off.conf && off.conf.percent !== null) {
+      assert.match(off.conf.metric, /^within_15(_nowcast_model_lag\d)?$/, `${where}: a model number without the switch`);
+      assert.deepEqual({ percent: on.conf.percent, metric: on.conf.metric }, { percent: null, metric: null }, where);
+      reached++;
     } else {
       assert.deepEqual(on.conf, off.conf, `${where}: keeps its figure`);
     }
   });
-  assert.ok(alone >= 5, `too few model-alone answers (${alone})`);
+  assert.ok(reached >= 5, `too few numbers the month average reached (${reached})`);
   // Under the quantile map it does not serve, so every answer is the one
   // served without it.
   assert.deepEqual(preview({ ...MODEL, CROWD_MONTH_SUPPORT: 'true' }), preview(MODEL));
@@ -357,6 +357,17 @@ test('with no --artifact the eval answers as the artifact serving loads', () => 
   // While that is v2.6.0-starling, the starling fixture these tests pin is
   // the same artifact, so every answer matches it.
   if (served === serving.QMAP_FITTED_ON) assert.deepEqual(preview(MIX, []), preview(MIX));
+  // An artifact measured on real readings publishes that figure on a model
+  // number here as predictBusyness does (REAL_READINGS_MEASURED): every
+  // fixture city has a weather reading, so nothing is taken off it.
+  const real = serving.REAL_READINGS_MEASURED[served];
+  if (real) {
+    const model = preview(MIX, []).filter((r) => r.source === 'model_holdout' && r.method === null && r.conf);
+    assert.ok(model.length >= 5, `too few model answers (${model.length})`);
+    for (const r of model) {
+      assert.deepEqual(r.conf, { published: Math.round(real.within15), percent: real.within15, metric: 'within_15_real_readings' }, `${r.clock} ${r.key}`);
+    }
+  }
 });
 
 test('the eval restates no switch: every one is read through the serving code\'s readers', () => {

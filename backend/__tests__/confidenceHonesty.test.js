@@ -29,10 +29,24 @@
 // crowdEngine's category prior — a large user-visible downgrade shipped to fix
 // a label. So the claim degrades and the model keeps serving.
 //
-// Nothing here asserts a tuned constant — every accuracy figure it checks is
-// read out of the artifact under test, so a retrain that moves the number moves
-// the assertion with it. What is asserted is which population the number came
-// from and that nothing was invented to fill a gap.
+// Sections 1 to 5 assert no tuned constant: every accuracy figure they check
+// is read out of the artifact under test, so a retrain that moves the number
+// moves the assertion with it. What is asserted is which population the
+// number came from and that nothing was invented to fill a gap.
+//
+// SECTION 6 (2026-11-27) PINS ONE MORE RULE. 2.8.0-starling's own served
+// slice (92.6% within 15 on 1,481,472 rows) is 89.3% readings the data
+// provider generated from its own weekly forecast after 2026-10-23, so it
+// describes agreement with the provider, not real crowds. An artifact named in
+// mlPredictor's REAL_READINGS_MEASURED publishes the figure measured on real
+// readings instead (2.8.0-starling: 38.3% on 9,912 Miami readings, a city it
+// never trained on); every other artifact publishes exactly what it did
+// before; and every number whose only figure was measured on generated
+// readings (a zero-curve hour, the month average, the category table)
+// publishes 'unmeasured'. Those figures ARE constants, measured once on the
+// only real readings there are, so section 6 pins them as such. Sections 1
+// to 5 run on a copy of the artifact under a version that table does not
+// name (UNLISTED), because they are about an artifact's own figure.
 //
 // The sibling pins live in __tests__/mlPredictorHarness.test.js (the fallback
 // ladder and the response contract) and __tests__/predictorCorrectness.test.js
@@ -133,8 +147,15 @@ async function withFreshPredictor({ ort, db = EMPTY_DB, mutateMeta } = {}, fn) {
 // 2026-08-15 failed criterion 3 — MODEL-METRICS.md section 5), so nothing loads
 // it as it stands. These tests are about the confidence figure, not the gate, so
 // they pass the gate explicitly and leave the gate's own pins to the harness.
+//
+// The copy is also given a version mlPredictor's REAL_READINGS_MEASURED does
+// not name (UNLISTED): these sections pin what an artifact publishes from its
+// own metadata, which is what every artifact outside that table publishes.
+// Section 6 pins the table under the version on disk.
+const UNLISTED = `${META.model_version}-unlisted`;
 const shipped = (over = {}) => (m) => ({
   ...m,
+  model_version: UNLISTED,
   ship_gate: { ...m.ship_gate, overall_pass: true, verdict: 'ship' },
   ...over,
 });
@@ -382,7 +403,7 @@ test('AN OLDER ARTIFACT STILL LOADS, AND ITS PER-VENUE BASELINE STILL ANSWERS', 
     const venue = venueWithBaseline(80);
     const r = await fresh.predictBusyness(venue, WEATHER, TS);
     assert.equal(r.predictionMethod, 'ml', 'the model answers');
-    assert.equal(r.modelVersion, META.model_version);
+    assert.equal(r.modelVersion, UNLISTED);
     // 86, not 85: baseline 80 + delta 5 reconstructs to 85, and 85 sits above
     // the extremes-push band [25, 65], so the dispersion-lab push (2026-08-19,
     // see reconstructScore) adds the one point. The assertion's point is
@@ -568,4 +589,309 @@ test('no invented confidence constant survives anywhere in the serving path', ()
     'a numeric fallback behind the accuracy figure is an invented measurement');
   assert.ok(!/confidence\s*=\s*\d+\s*;/.test(src),
     'confidence must be derived from a measurement, never assigned a literal');
+});
+
+// ---------------------------------------------------------------------------
+// 6. A figure measured on real readings, and none measured on generated ones
+//    (2026-11-27).
+//
+// From 2026-10-23 the data provider's "live" readings were generated from its
+// own weekly forecast, not measured. A figure measured on them says how
+// closely a number reproduces the provider's, not how often a card is right,
+// so it is never published as accuracy.
+// ---------------------------------------------------------------------------
+
+const { REAL_READINGS_MEASURED, artifactFigure, servedConfidence, noCurveFallbackResponse, NOWCAST_WEIGHTS } = mlPredictor._internals;
+const REAL_VERSION = '2.8.0-starling';
+// The artifact on disk, under the version the table names.
+const asRealVersion = (m) => ({ ...m, model_version: REAL_VERSION, ship_gate: { ...m.ship_gate, overall_pass: true, verdict: 'ship' } });
+
+// Every calendar date a population string names, as YYYY-MM-DD: full dates,
+// and the end of a range written 2026-09-05..10-12.
+function datesIn(s) {
+  const out = [];
+  for (const m of String(s).matchAll(/(\d{4})-(\d{2})-(\d{2})(?:\.\.(\d{2})-(\d{2}))?/g)) {
+    out.push(`${m[1]}-${m[2]}-${m[3]}`);
+    if (m[4]) out.push(`${m[1]}-${m[4]}-${m[5]}`);
+  }
+  return out;
+}
+// The last day the provider's readings were measurements, and the first day
+// its readings were generated.
+const LAST_REAL_DAY = '2026-10-12';
+const FIRST_GENERATED_DAY = '2026-10-23';
+
+test('REAL_READINGS_MEASURED names 2.8.0-starling: 38.3 within 15 on 9,912 real Miami readings it never trained on', () => {
+  assert.deepEqual(Object.keys(REAL_READINGS_MEASURED), [REAL_VERSION]);
+  const m = REAL_READINGS_MEASURED[REAL_VERSION];
+  assert.ok(Object.isFrozen(REAL_READINGS_MEASURED) && Object.isFrozen(m));
+  assert.equal(m.within15, 38.3);
+  assert.equal(m.rows, 9912);
+  assert.match(m.population, /2026-09-05\.\.10-12/);
+  assert.match(m.population, /Miami/);
+  assert.match(m.population, /never trained on/);
+  assert.match(m.population, /none with a reading from the hour before/);
+  const dates = datesIn(m.population);
+  assert.ok(dates.length >= 2);
+  for (const d of dates) assert.ok(d <= LAST_REAL_DAY, `${d}: every reading under it was a measurement`);
+  // And it is not the artifact's own figure, which is the one it replaces.
+  assert.notEqual(m.within15, META.training_metrics_by_population.realtime_served.within_15);
+});
+
+test('2.8.0-starling publishes 38, or 23 without a live temperature reading, with the real readings\' population and row count', async () => {
+  const m = REAL_READINGS_MEASURED[REAL_VERSION];
+  await withLoadedModel(async (fresh) => {
+    const venue = venueWithBaseline();
+    const withWx = await fresh.predictBusyness(venue, WEATHER, TS);
+    const noWx = await fresh.predictBusyness(venue, null, TS);
+    assert.equal(withWx.predictionMethod, 'ml');
+    assert.equal(noWx.predictionMethod, 'ml');
+    assert.equal(withWx.modelVersion, REAL_VERSION);
+    assert.equal(withWx.confidence, 38);
+    assert.equal(noWx.confidence, 23, '38 less the 15 the rule engine adds for a live reading');
+    const block = (penalty) => ({
+      status: 'measured',
+      means: 'measured_accuracy',
+      metric: 'within_15_real_readings',
+      population: m.population,
+      populationRows: 9912,
+      measuredPercent: 38.3,
+      weatherPenalty: penalty,
+    });
+    assert.deepEqual(withWx.confidenceMeasurement, block(0));
+    assert.deepEqual(noWx.confidenceMeasurement, block(15));
+    // The artifact's own figure is not what the card says.
+    const own = META.training_metrics_by_population.realtime_served.within_15;
+    assert.notEqual(withWx.confidence, Math.round(own));
+    assert.notEqual(noWx.confidence, Math.max(0, Math.round(own) - 15));
+  }, asRealVersion);
+});
+
+test('the version a figure is published for moves the claim and nothing else: score, label and hourly forecast are the same', async () => {
+  const serve = async (mutate) => {
+    let got;
+    await withLoadedModel(async (fresh) => {
+      const venue = venueWithBaseline(55, { place_id: 'confidence-same-venue' });
+      const now = await fresh.predictBusyness(venue, WEATHER, TS);
+      const strip = await fresh.predictHourlyForecast(venue, WEATHER, 18, 4, TS);
+      got = { now, strip };
+    }, mutate);
+    return got;
+  };
+  const real = await serve(asRealVersion);
+  const unlisted = await serve(withServed({ ...META.training_metrics_by_population.realtime_served }));
+  assert.equal(real.now.score, unlisted.now.score);
+  assert.equal(real.now.label, unlisted.now.label);
+  assert.deepEqual(real.strip.map((h) => [h.score, h.label]), unlisted.strip.map((h) => [h.score, h.label]));
+  assert.ok(real.strip.length === 4 && real.strip.every((h) => h.predictionMethod === 'ml'));
+  // The strip's hours carry no confidence of their own; the whole entry is
+  // the same under both versions.
+  assert.deepEqual(real.strip, unlisted.strip);
+  // Only the claim differs: 38 against the 93 the artifact's own figure gave.
+  assert.equal(real.now.confidence, 38);
+  assert.equal(unlisted.now.confidence, Math.round(META.training_metrics_by_population.realtime_served.within_15));
+});
+
+test('an artifact the table does not name publishes exactly what it did before', async () => {
+  // The artifact on disk under another version: its own served slice, as
+  // 2.8.0-starling itself published until 2026-11-27 (93, and 78 without a
+  // live temperature reading).
+  const own = META.training_metrics_by_population.realtime_served;
+  await withLoadedModel(async (fresh) => {
+    const withWx = await fresh.predictBusyness(venueWithBaseline(), WEATHER, TS);
+    const noWx = await fresh.predictBusyness(venueWithBaseline(), null, TS);
+    assert.equal(withWx.confidence, Math.round(own.within_15));
+    assert.equal(noWx.confidence, Math.round(own.within_15) - 15);
+    assert.deepEqual(withWx.confidenceMeasurement, {
+      status: 'measured',
+      means: 'measured_accuracy',
+      metric: 'within_15',
+      population: 'realtime_served',
+      populationRows: own.rows,
+      measuredPercent: own.within_15,
+      weatherPenalty: 0,
+    });
+  }, withServed({ ...own }));
+  // artifactFigure hands back readServedAccuracy's own answer, the same
+  // object, for every version it does not name, and never turns a malformed
+  // slice into a figure.
+  for (const version of [undefined, null, '', 'toString', '2.6.0-starling', '2.9.0-starling', UNLISTED]) {
+    const acc = readServedAccuracy({ training_metrics_by_population: { realtime_served: SERVED_FIXTURE } });
+    assert.equal(artifactFigure(acc, version), acc, String(version));
+  }
+  const broken = readServedAccuracy({ training_metrics_by_population: { realtime_served: { within_15: 'high' } } });
+  assert.equal(artifactFigure(broken, REAL_VERSION), broken);
+  // v2.6.0-starling, with its own 33.3 (spring readings that behave like real
+  // ones): 33, as before.
+  const v260 = servedConfidence({
+    accuracy: { status: 'measured', percent: 33.3, metric: 'within_15', population: 'realtime_served', rows: 369076 },
+    qmapApplied: false, hasWeather: true, curveOffset: false, nowcast: null, version: '2.6.0-starling', ladder: () => 70,
+  });
+  assert.equal(v260.confidence, 33);
+  assert.equal(v260.confidenceMeasurement.population, 'realtime_served');
+  // The real file, when this machine has it.
+  if (fs.existsSync(INCUMBENT_META_FILE)) {
+    const incumbent = JSON.parse(fs.readFileSync(INCUMBENT_META_FILE, 'utf8'));
+    if (!Object.prototype.hasOwnProperty.call(REAL_READINGS_MEASURED, incumbent.model_version)) {
+      const acc = readServedAccuracy(incumbent);
+      assert.equal(artifactFigure(acc, incumbent.model_version), acc);
+    }
+  }
+});
+
+test('the load gate still reads the metadata alone, under the version the table names', async () => {
+  // Garbage in the slice is refused whatever the table says.
+  await assertRefused((m) => ({ ...withServed({ ...SERVED_FIXTURE, rows: 0 })(m), model_version: REAL_VERSION }), 'zero rows under 2.8.0-starling');
+  await assertRefused((m) => ({ ...withServed({ ...SERVED_FIXTURE, within_15: 140 })(m), model_version: REAL_VERSION }), 'within_15=140 under 2.8.0-starling');
+  // Under the override a malformed slice still publishes nothing.
+  process.env.ML_SHIP_GATE_OVERRIDE = 'true';
+  try {
+    await withFreshPredictor({
+      ort: stubOrt(async () => ({ variable: { data: [4] } })),
+      mutateMeta: (m) => ({ ...withServed({ ...SERVED_FIXTURE, within_15: 'high' })(m), model_version: REAL_VERSION }),
+    }, async (fresh) => {
+      assert.equal(await fresh.init(), true);
+      const r = await fresh.predictBusyness(venueWithBaseline(), WEATHER, TS);
+      assert.equal(r.predictionMethod, 'rule_engine_fallback');
+      assert.equal(r.confidenceMeasurement, undefined);
+    });
+  } finally {
+    delete process.env.ML_SHIP_GATE_OVERRIDE;
+  }
+});
+
+test('every number whose only figure describes generated readings publishes unmeasured, and no published population is dated after the readings stopped being measurements', () => {
+  const LADDER = 70;
+  const UNMEASURED = {
+    status: 'unmeasured', means: 'input_completeness', metric: 'venue_metadata_completeness',
+    population: null, populationRows: null, measuredPercent: null, weatherPenalty: 0,
+  };
+  const accuracies = [
+    { status: 'measured', percent: 33.3, metric: 'within_15', population: 'realtime_served', rows: 369076 },
+    readServedAccuracy(META),
+    { status: 'unmeasured', reason: 'none' },
+  ];
+  const nowcasts = [null];
+  for (const [base, table] of Object.entries(NOWCAST_WEIGHTS)) {
+    for (const bucket of [1, 2, 3, 4]) {
+      if (table[bucket] > 0) nowcasts.push({ base, bucket, lagHours: bucket, weight: table[bucket] });
+    }
+  }
+  const published = new Set();
+  let n = 0;
+  for (const version of [undefined, '2.6.0-starling', REAL_VERSION, UNLISTED]) {
+    for (const accuracy of accuracies) {
+      for (const qmapApplied of [false, true]) {
+        for (const hasWeather of [true, false]) {
+          for (const curveOffset of [false, true]) {
+            for (const nowcast of nowcasts) {
+              for (const monthSupport of [false, true]) {
+                for (const zeroCurve of [false, true]) {
+                  const got = servedConfidence({
+                    accuracy, qmapApplied, hasWeather, curveOffset, nowcast, monthSupport, zeroCurve, version, ladder: () => LADDER,
+                  });
+                  const where = JSON.stringify({ version, accuracy: accuracy.population || accuracy.status, qmapApplied, hasWeather, curveOffset, nowcast, monthSupport, zeroCurve });
+                  n++;
+                  if (zeroCurve || monthSupport) {
+                    // A zero-curve hour and the month average: every figure
+                    // either was measured on is from 2026-10-23 or later.
+                    assert.deepEqual(got.confidenceMeasurement, UNMEASURED, where);
+                    assert.equal(got.confidence, LADDER, where);
+                  }
+                  const m = got.confidenceMeasurement;
+                  if (m.status === 'measured') published.add(m.population);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  assert.ok(n > 1000, `only ${n} combinations`);
+  // The category table's number, whatever the ladder says.
+  for (const ladder of [0, 42, 100]) {
+    const r = noCurveFallbackResponse(62, true, null, ladder);
+    assert.deepEqual(r.confidenceMeasurement, UNMEASURED);
+    assert.equal(r.confidence, ladder);
+    assert.equal(r.score, 62);
+  }
+  // Every population any of those published: none is dated after the last
+  // day the provider's readings were measurements, so none calls readings
+  // after 2026-10-23 live.
+  assert.ok(published.size >= 4, [...published].join(' | '));
+  for (const population of published) {
+    for (const d of datesIn(population)) {
+      assert.ok(d <= LAST_REAL_DAY, `${d} in a published population: ${population}`);
+      assert.ok(d < FIRST_GENERATED_DAY);
+    }
+  }
+  assert.ok(published.has(REAL_READINGS_MEASURED[REAL_VERSION].population), 'the real-readings figure is among them');
+  // And the records of what was measured on generated readings say so in
+  // their own words, so none can be republished as a live figure.
+  const I = mlPredictor._internals;
+  for (const record of [I.MONTH_SUPPORT_POPULATION, I.ZERO_CURVE_ALSO_MEASURED[REAL_VERSION].population, I.NO_CURVE_FALLBACK_POPULATION]) {
+    assert.doesNotMatch(record, /\blive readings\b/, record);
+    assert.match(record, /generated by the data provider from its own weekly forecast/, record);
+    assert.ok(datesIn(record).some((d) => d >= FIRST_GENERATED_DAY), record);
+    assert.ok(!published.has(record), `published: ${record}`);
+  }
+});
+
+// Last in the file: bandEval pins the process clock to UTC and points the
+// database settings at an address nothing listens on.
+test('the replay (bandEval.js) publishes the figure predictBusyness publishes for the artifact on disk, row for row', async () => {
+  require('./helpers/sharedOnnxSession');
+  const os = require('os');
+  const B = require('../scripts/ml/train/bandEval');
+  const FX = require('./helpers/bandEvalFixture');
+  const fx = FX.buildFixture();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-confidence-honesty-'));
+  const csv = path.join(dir, 'fixture.csv');
+  FX.writeFixtureCsv(csv, fx);
+  const quiet = [console.log, console.warn, console.error];
+  try {
+    B.pinUtcClock();
+    const corpus = await B.readCorpus([csv]);
+    const art = await B.loadArtifact(MODELS_DIR);
+    const prepared = B.prepareRows(corpus.live, corpus, { I: art.I, crowdEngine });
+    const replay = await B.scoreArtifact(art, prepared, { serveMode: 'model', nowcast: false, qmap: false });
+    const moments = new Map();
+    const stub = FX.makeFixturePool(fx, (alias) => moments.get(alias));
+    console.log = () => {};
+    console.warn = () => {};
+    console.error = () => {};
+    const production = await withFreshPredictor({ db: stub }, async (fresh) => {
+      assert.equal(await fresh.init(), true);
+      const out = [];
+      for (let i = 0; i < prepared.length; i++) {
+        const r = prepared[i];
+        const alias = `ChIJconfidencehonesty_${r.venueId}_${i}`;
+        moments.set(alias, { venueId: Number(r.venueId), date: r.date, hour: r.hour });
+        out.push(await fresh.predictBusyness({ ...r.venue, place_id: alias }, r.weather, r.ts));
+      }
+      return out;
+    });
+    [console.log, console.warn, console.error] = quiet;
+    assert.deepEqual(stub.unknown, []);
+    const real = REAL_READINGS_MEASURED[art.meta.model_version];
+    let ml = 0;
+    production.forEach((p, i) => {
+      const q = replay.rows[i];
+      assert.equal(p.score, q.served, `row ${i}: the number`);
+      assert.equal(p.confidence, q.confidence, `row ${i}: the confidence`);
+      if (p.predictionMethod !== 'ml') return;
+      ml++;
+      assert.equal(p.confidenceMeasurement.metric, q.confidenceMetric, `row ${i}: the metric`);
+      if (real) {
+        // The figure measured on real readings, in both.
+        assert.equal(q.confidenceMetric, 'within_15_real_readings', `row ${i}`);
+        assert.ok([Math.round(real.within15), Math.round(real.within15) - 15].includes(q.confidence), `row ${i}: ${q.confidence}`);
+      }
+    });
+    assert.ok(ml >= 60, `only ${ml} model rows`);
+  } finally {
+    [console.log, console.warn, console.error] = quiet;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

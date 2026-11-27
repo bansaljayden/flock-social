@@ -802,6 +802,10 @@ async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast, monthSup
     raw[k] = s ? I.averageMonthOutputs(outputs.subarray(at, at + n), n) : outputs[at];
     at += n;
   });
+  // The artifact's own figure; servedConfidence replaces it, by the version
+  // passed below, with the figure measured on real readings where
+  // mlPredictor's REAL_READINGS_MEASURED has one, exactly as predictBusyness
+  // does.
   const accuracy = I.readServedAccuracy(art.meta);
   const version = art.meta.model_version || '2.1.0';
   // A rule-engine answer carries crowdEngine's own confidence and no version.

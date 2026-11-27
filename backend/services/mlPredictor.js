@@ -1027,8 +1027,11 @@ function verifyModelShape(session_, meta) {
 // Those are v2.6.0-starling's figures. 2.8.0-starling, the November 2026
 // retrain, carries the same two populations: realtime_served within-15 92.6%
 // on 1,481,472 rows, and a blended 96.8% over all 3,533,480, of which
-// 2,052,008 are weekly snapshots. The rule is the same one: the served slice
-// is what is published, never the blend.
+// 2,052,008 are weekly snapshots. The rule is the same one: the blend is never
+// published. And since 2026-11-27 2.8.0-starling's served slice is not
+// published either: 89.3% of its rows are readings the data provider generated
+// from its own weekly forecast, so the card carries the figure measured on
+// real readings instead (REAL_READINGS_MEASURED, below this function).
 //
 // SO THIS READS THE SERVED SLICE AND NOTHING ELSE. The trainer writes
 // training_metrics_by_population with three keys (all_rows, realtime_served,
@@ -1114,6 +1117,66 @@ function readServedAccuracy(meta) {
   }
 
   return { status: 'measured', percent, metric: 'within_15', population: 'realtime_served', rows };
+}
+
+// ---------------------------------------------------------------------------
+// THE FIGURE MEASURED ON REAL READINGS, FOR AN ARTIFACT WHOSE OWN FIGURE
+// DESCRIBES SOMETHING ELSE (2026-11-27).
+//
+// readServedAccuracy reads what the trainer measured, and for 2.8.0-starling
+// that is the wrong thing to publish. The trainer's realtime_served population
+// mixes in readings the data provider generated from its own weekly forecast.
+// From 2026-10-23, when its live answers came back after the outage of
+// 10-12..10-23, the provider's "live" readings were no longer measurements:
+// each venue got one value per weekday and hour derived from the provider's
+// weekly forecast, the same number as seven days earlier in 89% to 99% of
+// pairs. 1,323,204 of the 1,481,472 rows behind the artifact's 92.6 (89.3%)
+// are of that kind. A model scores well on such rows by reproducing the
+// provider's numbers, so the artifact's own figure describes agreement with
+// the provider, not how often a card is right about a room.
+//
+// So an artifact in this table publishes the figure measured on real
+// readings, with that population and that row count, wherever the published
+// figure is chosen: servedConfidence reads this table by the artifact's
+// version, so predictBusyness and the replay (scripts/ml/train/bandEval.js)
+// publish the same figure, and so does the load log (logServedAccuracy).
+//
+// 2.8.0-starling: the only real readings it never trained on are Miami's,
+// 9,912 readings at 591 venues on 38 dates (2026-09-05..10-12), read at 11:00
+// and 19:00, none with a reading from the hour before, which is the state the
+// app has served in since collection ended on 2026-11-25. Each number as
+// served: within 15 points 38.3% (95% interval 37.1 to 39.5), within 10
+// points 27.0%, mean absolute error 25.2. The stored weekly curve on the same
+// readings is within 15 points 38.5%, with a mean error of 28.4.
+//
+// AN ARTIFACT NOT IN THIS TABLE publishes exactly what it did before: its own
+// figure (readServedAccuracy), or the quantile map's. v2.6.0-starling's 33.3
+// was measured on spring readings (2026-03-10..05-18) that behave like real
+// ones: a reading equals the same slot a week earlier 16.0% of the time, as
+// real readings do. The load gate still reads the metadata alone: a malformed
+// slice is refused whatever this table says, and an artifact that carries no
+// slice still loads.
+// ---------------------------------------------------------------------------
+const REAL_READINGS_MEASURED = Object.freeze({
+  '2.8.0-starling': Object.freeze({
+    within15: 38.3,
+    rows: 9912,
+    population: 'live readings 2026-09-05..10-12 in Miami, a city this model never trained on (591 venues, 38 dates, read at 11:00 and 19:00, none with a reading from the hour before), each number as served',
+  }),
+});
+
+// The figure the artifact publishes for a model number nothing else changed:
+// the table's, in readServedAccuracy's shape, for a version the table names;
+// otherwise readServedAccuracy's own answer, untouched. Never turns a
+// malformed slice into a figure: that artifact is refused at load, and under
+// the override predictBusyness refuses to publish for it.
+function artifactFigure(accuracy, version) {
+  if (!accuracy || accuracy.status === 'malformed') return accuracy;
+  if (typeof version !== 'string' || !Object.prototype.hasOwnProperty.call(REAL_READINGS_MEASURED, version)) {
+    return accuracy;
+  }
+  const m = REAL_READINGS_MEASURED[version];
+  return { status: 'measured', percent: m.within15, metric: 'within_15_real_readings', population: m.population, rows: m.rows };
 }
 
 // Concurrency: init() used to flip a `loadAttempted` flag SYNCHRONOUSLY and only
@@ -1272,9 +1335,16 @@ function onnxSource() {
   return bytes;
 }
 
+// The figure is the one servedConfidence publishes for a model number nothing
+// else changed (artifactFigure): the real-readings table's for a version it
+// names, the artifact's own otherwise.
 function logServedAccuracy(version, served) {
-  if (served.status === 'measured') {
-    console.log(`[MLPredictor] confidence published = ${served.percent}% (${served.metric} on ${served.population}${served.rows ? `, ${served.rows} rows` : ''}). The blended training_metrics figure ${metadata.training_metrics?.within_15}% is NOT published: ~80% of those rows are weekly anchors whose label equals the baseline by construction.`);
+  const published = artifactFigure(served, version);
+  if (published.status === 'measured') {
+    const own = published !== served && served.status === 'measured'
+      ? ` The artifact's own ${served.metric} on ${served.population} (${served.percent}%) is NOT published: most of those rows are readings the data provider generated from its own weekly forecast, not measurements (REAL_READINGS_MEASURED).`
+      : '';
+    console.log(`[MLPredictor] confidence published = ${published.percent}% (${published.metric} on ${published.population}${published.rows ? `, ${published.rows} rows` : ''}).${own} The blended training_metrics figure ${metadata.training_metrics?.within_15}% is NOT published: most of those rows are weekly anchors whose label equals the baseline by construction.`);
   } else {
     console.warn(`[MLPredictor] v${version} reports no usable served-population accuracy (${served.reason}). The model still serves, including its per-venue baselines. No accuracy figure will be published: \`confidence\` carries crowdEngine's input-completeness ladder and confidenceMeasurement.status says 'unmeasured'. Re-export from a training run that writes training_metrics_by_population to publish a real one.`);
   }
@@ -1603,9 +1673,12 @@ function reconstructTwoHeadScore(profile, deviation, clamp) {
 //
 // WHAT THE FLIP DOES NOT COVER, because the caution still applies here: the
 // confidence integer. It is training_metrics_by_population.realtime_served
-// .within_15 (33.3% on v2.6.0-starling, 92.6% on 2.8.0-starling), NOT the
-// blended figure (87.3%, then 96.8%) that mixes in weekly rows whose label
-// equals the baseline by construction — see readServedAccuracy below.
+// .within_15 (33.3% on v2.6.0-starling), NOT the blended figure (87.3%, then
+// 96.8%) that mixes in weekly rows whose label equals the baseline by
+// construction (see readServedAccuracy below). For 2.8.0-starling it is not
+// the served slice's 92.6% either, which rests mostly on readings the data
+// provider generated from its own weekly forecast, but the 38.3% measured on
+// real readings (REAL_READINGS_MEASURED, beside readServedAccuracy).
 // A verified axis makes the measurement describable; it does not make a
 // different, larger number true.
 //
@@ -4398,6 +4471,11 @@ const NOWCAST_WEIGHTS = Object.freeze({
 // publishes the curveOffset figure, measured on exactly that arithmetic. The
 // one-hour figure is unchanged: that weight did not move. The population
 // string says the curve_offset weights were chosen on this window.
+//
+// 2026-11-27: these figures stay published. Every reading under them was taken
+// before the provider's feed went quiet on 2026-10-12, when its live readings
+// were still measurements (the note above REAL_READINGS_MEASURED says what
+// changed on 10-23).
 const SERVE_MEASURED_POPULATION = 'live readings 2026-09-09..10-08 (Philadelphia, Lehigh and Miami, read-only production export of 2026-10-08); model-mode weights fitted on 2026-09-01..05, curve_offset weights chosen on this window';
 const SERVE_MEASURED = Object.freeze({
   curveOffset: Object.freeze({ within15: 42.7, rows: 119939 }),
@@ -4504,52 +4582,32 @@ function applyNowcast(score, pick, baseKey) {
   };
 }
 
-// The measured figure for a number a switch produced, or null when no switch
+// A NUMBER A SWITCH MADE WHOSE ONLY FIGURE DESCRIBES GENERATED READINGS
+// (2026-11-27). Every figure measured for the month average and for a
+// zero-curve hour (MONTH_SUPPORT_MEASURED, ZERO_CURVE_ALSO_MEASURED) was
+// measured on readings dated 2026-10-23 or later, which the data provider
+// generated from its own weekly forecast (the note above
+// REAL_READINGS_MEASURED). Those figures describe agreement with the
+// provider's numbers, not real crowds, so a number either switch made is
+// published the way a number with no figure is: the confidence is
+// crowdEngine's input-completeness ladder and confidenceMeasurement says
+// 'unmeasured'. No figure on real readings exists for either arithmetic.
+// What is claimed changes and nothing else: zeroCurveServes and
+// monthSupportServes read none of these figures, so both switches serve the
+// same hours and the same numbers as before.
+const SWITCHED_UNMEASURED = Object.freeze({ unmeasured: true });
+
+// The measured figure for a number a switch produced, SWITCHED_UNMEASURED for
+// one whose only figure describes generated readings, or null when no switch
 // changed this number's arithmetic (the model path as it always was, whose
 // figure is QMAP_MEASURED or the artifact's own, decided below).
 // `monthSupport` and `zeroCurve` are CROWD_MONTH_SUPPORT's and
 // CROWD_ZERO_CURVE_MODEL's account of this number (monthReachesNumber; the
-// zero-curve hour), each with its own figures (MONTH_SUPPORT_MEASURED).
-// `version` is the artifact that made the number: a zero-curve hour under an
-// artifact measured later carries that artifact's figure
-// (ZERO_CURVE_ALSO_MEASURED); with no version given it is v2.6.0-starling's,
-// as it was before there was a second one.
-function switchedMeasurement(curveOffset, nowcast, { monthSupport = false, zeroCurve = false, version } = {}) {
-  if (zeroCurve && Object.prototype.hasOwnProperty.call(ZERO_CURVE_ALSO_MEASURED, version || '')) {
-    const m = ZERO_CURVE_ALSO_MEASURED[version];
-    return { percent: m.within15, metric: 'within_15_zero_curve', population: m.population, rows: m.rows };
-  }
-  if (zeroCurve) {
-    const m = MONTH_SUPPORT_MEASURED.zeroCurve[monthSupport ? 'monthSupport' : 'asBuilt'];
-    return {
-      percent: m.within15,
-      metric: monthSupport ? 'within_15_zero_curve_month_support' : 'within_15_zero_curve',
-      population: MONTH_SUPPORT_POPULATION,
-      rows: m.rows,
-    };
-  }
-  if (monthSupport) {
-    // The model's part of the number is the month average, so the figure is
-    // the one measured on it. monthReachesNumber already left out a reading
-    // carried at full weight, whose figure below stays the nowcast's. A
-    // blending weight with no month figure keeps the nowcast's figure too:
-    // NOWCAST_WEIGHTS has none (__tests__/mlServingFixes.test.js pins a
-    // figure for every weight between 0 and 1), so only a fixture's own
-    // weight (scripts/birdie/birdieEval.js) lands there.
-    const m = nowcast
-      ? MONTH_SUPPORT_MEASURED.nowcast[nowcast.base] && MONTH_SUPPORT_MEASURED.nowcast[nowcast.base][nowcast.bucket]
-      : MONTH_SUPPORT_MEASURED.model;
-    if (m) {
-      return {
-        percent: m.within15,
-        metric: nowcast
-          ? `within_15_nowcast_${nowcast.base}_lag${nowcast.bucket === 4 ? '4plus' : nowcast.bucket}_month_support`
-          : 'within_15_month_support',
-        population: MONTH_SUPPORT_POPULATION,
-        rows: m.rows,
-      };
-    }
-  }
+// zero-curve hour). A reading carried at full weight replaces the month
+// average entirely (monthReachesNumber says false), so that number keeps the
+// nowcast's own figure below, measured in September.
+function switchedMeasurement(curveOffset, nowcast, { monthSupport = false, zeroCurve = false } = {}) {
+  if (zeroCurve || monthSupport) return SWITCHED_UNMEASURED;
   if (nowcast) {
     const m = SERVE_MEASURED.nowcast[nowcast.base] && SERVE_MEASURED.nowcast[nowcast.base][nowcast.bucket];
     if (!m) return null;
@@ -4595,21 +4653,26 @@ function servedModelVersion(version, curveOffset, nowcast, { monthSupport = fals
 //                (monthReachesNumber), false by default
 //   zeroCurve    whether the number is a zero-curve hour the model answered
 //                (CROWD_ZERO_CURVE_MODEL), false by default
-//   version      the artifact's model_version, read only to pick a zero-curve
-//                hour's figure (switchedMeasurement)
+//   version      the artifact's model_version: an artifact in
+//                REAL_READINGS_MEASURED publishes that figure in place of its
+//                own (artifactFigure)
 //   ladder       () => crowdEngine's input-completeness figure for the venue,
-//                read only for an artifact that cannot state an accuracy
+//                read only for a number with no figure to publish: an
+//                artifact that cannot state an accuracy, or a number a switch
+//                made whose only figure describes generated readings
 function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowcast, monthSupport = false, zeroCurve = false, version, ladder }) {
   let confidence;
   let confidenceMeasurement;
   // WHEN A SWITCH MADE THE NUMBER, neither the artifact's figure nor the
   // quantile map's describes it: both were measured on the model's own
   // arithmetic. The figure is the one measured for the arithmetic that did
-  // run (SERVE_MEASURED, MONTH_SUPPORT_MEASURED), with its own population
-  // string. Null whenever the number is the model path as it always was,
-  // which leaves the two branches after this one exactly as they were.
-  const switched = switchedMeasurement(curveOffset, nowcast, { monthSupport, zeroCurve, version });
-  if (switched) {
+  // run (SERVE_MEASURED), with its own population string, or none at all
+  // (SWITCHED_UNMEASURED). Null whenever the number is the model path as it
+  // always was, which leaves the two branches after this one as they were.
+  const switched = switchedMeasurement(curveOffset, nowcast, { monthSupport, zeroCurve });
+  // The artifact's figure: measured on real readings where the table has one.
+  const own = artifactFigure(accuracy, version);
+  if (switched && !switched.unmeasured) {
     // The weather adjustment below exists because the MODEL runs on
     // climatology without a live reading. A number the model's output did
     // not enter (curve_offset, or a reading carried at full weight) was not
@@ -4626,9 +4689,9 @@ function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowc
       measuredPercent: switched.percent,
       weatherPenalty,
     };
-  } else if (accuracy.status === 'measured') {
+  } else if (!switched && own.status === 'measured') {
     // WHEN THE QMAP IS ON, metadata's figure stops describing the published
-    // number. `accuracy` is the artifact's measured within-15 on the RAW
+    // number. `own` is the artifact's measured within-15 on the RAW
     // reconstruction; the qmap publishes a different number, and quoting the
     // old figure for it would be exactly the "publishing a measurement of
     // something else" failure readServedAccuracy was written to end. So the
@@ -4643,7 +4706,7 @@ function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowc
         population: QMAP_MEASURED.population,
         rows: QMAP_MEASURED.rows,
       }
-      : accuracy;
+      : own;
     confidence = Math.round(served.percent);
     // Without a live reading the temperature in the vector is climatology,
     // not evidence, and the weather one-hot sits in 'unknown'. The rule
@@ -4663,7 +4726,9 @@ function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowc
       weatherPenalty,
     };
   } else {
-    // UNMEASURED (every artifact exported before 2026-08-15). The model still
+    // UNMEASURED (every artifact exported before 2026-08-15, and since
+    // 2026-11-27 a number a switch made whose only figure describes generated
+    // readings, SWITCHED_UNMEASURED). The model still
     // runs and its per-venue baseline still answers; what it cannot do is
     // state a hit rate. The blend is not a substitute — it is the specific
     // wrong number this whole change exists to stop publishing — and 0 would
@@ -4753,15 +4818,23 @@ function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowc
 // refused lookup and a failed one are answered exactly as before. And
 // only in the configuration it was measured in (zeroCurveServes): an artifact
 // it was measured under (ZERO_CURVE_FITTED_ON, and since the November 2026
-// retrain ZERO_CURVE_ALSO_MEASURED), CROWD_SERVE_MODE model, CROWD_NOWCAST_ENABLED on and
+// retrain ZERO_CURVE_ALSO_SERVES), CROWD_SERVE_MODE model, CROWD_NOWCAST_ENABLED on and
 // the quantile map off. bandEval's model-served population stays the hours
 // with a positive baseline, so these hours are counted only among every live
 // reading as shown.
 //
+// WHAT THOSE MEASUREMENTS WERE TAKEN ON (2026-11-27). Every figure above for
+// either switch, and both choices to serve them, rest on readings dated from
+// 2026-10-23, which the data provider generated from its own weekly forecast:
+// zero wherever its forecast is zero, which real readings were not (before the
+// outage they were above zero at about 80% of such hours). So those figures
+// are not published as accuracy any more (SWITCHED_UNMEASURED), and whether
+// either switch should keep serving is a separate decision: both serve
+// exactly as before.
+//
 // BOTH SWITCHES NAME THEMSELVES on the number they changed: '+month_support'
 // and '+zero_curve' in modelVersion (servedModelVersion), which
-// served_predictions records, and a confidence figure measured on that
-// arithmetic (MONTH_SUPPORT_MEASURED).
+// served_predictions records. Their confidence is unmeasured (above).
 // ---------------------------------------------------------------------------
 const MONTH_SUPPORT = Object.freeze({
   '2.6.0-starling': Object.freeze([3, 4, 5]),
@@ -4780,23 +4853,33 @@ const ZERO_CURVE_FITTED_ON = '2.6.0-starling';
 //   none inside the offset's four weeks    79.9% against 8.2%, 7.72 against 33.83
 // (date-block 95% interval on the middle row's difference: 70.2 to 74.8
 // points). That artifact takes the offset as an input, so nothing is added
-// after it here either, and it has no month to average. The figure a
-// zero-curve number publishes under it is the lowest within-15 of the three
-// replays (with no reading inside four weeks visible), so no state of the feed
-// overstates it. A later artifact is not in this table until somebody
-// measures it.
+// after it here either, and it has no month to average. On that replay the
+// switch serves under it (ZERO_CURVE_ALSO_SERVES). A later artifact is not
+// on that list until somebody replays it.
+//
+// THOSE READINGS WERE GENERATED (2026-11-27). Every reading of that fortnight
+// is one the data provider made from its own weekly forecast, and 77.5% are
+// exactly 0 because its forecast is 0 there. So the figures below describe
+// how closely the model reproduces the provider's zeros, not real crowds,
+// and a zero-curve number publishes none of them (SWITCHED_UNMEASURED). They
+// are kept as the record of what the decision to serve rested on. The list
+// that decides serving is a separate constant, so this record can never
+// change which hours the model answers.
+const ZERO_CURVE_ALSO_SERVES = Object.freeze(['2.8.0-starling']);
 const ZERO_CURVE_ALSO_MEASURED = Object.freeze({
   '2.8.0-starling': Object.freeze({
     within15: 82.4,
     rows: 10759,
-    population: 'live readings 2026-11-12..11-25 at hours whose own curve row blends to zero (31 cities, read-only production export of 2026-11-25, the fourteen days held out of this artifact\'s training), answered by the model at baseline 0 and replayed with no reading inside four weeks visible',
+    readings: 'generated',
+    population: 'readings 2026-11-12..11-25 at hours whose own curve row blends to zero (31 cities, read-only production export of 2026-11-25, the fourteen days held out of this artifact\'s training), generated by the data provider from its own weekly forecast and not measurements; answered by the model at baseline 0 and replayed with no reading inside four weeks visible',
   }),
 });
 
-// Whether a zero-curve hour was measured under this artifact.
+// Whether the switch was replayed, and serves, under this artifact. Reads the
+// serving list only, never the measured record above.
 function zeroCurveMeasuredOn(version) {
   return version === ZERO_CURVE_FITTED_ON
-    || Object.prototype.hasOwnProperty.call(ZERO_CURVE_ALSO_MEASURED, version || '');
+    || (typeof version === 'string' && ZERO_CURVE_ALSO_SERVES.includes(version));
 }
 
 // 'true' and nothing else, in any case, like CROWD_NOWCAST_ENABLED.
@@ -4901,16 +4984,18 @@ function storedZeroSlot(rowMeta, ownReason) {
     && ownReason !== 'error';
 }
 
-// THE CONFIDENCE FIGURES for a number either switch changed: within 15 of the
-// served number, measured through bandEval.js on every live reading of
-// 2026-10-23..11-05 that the arithmetic produced, as SERVE_MEASURED is for
-// the other switches, and published with their own population string. They
-// describe the label regime since the feed outage, in which live readings sit
-// much closer to the venue's pattern than in SERVE_MEASURED's September
-// window; a reading carried at full weight (SERVE_MEASURED, lag 1) was within
-// 15 points on 96.5% of these readings against the 83.0 it publishes.
-const MONTH_SUPPORT_POPULATION = 'live readings 2026-10-23..11-05 (31 cities, read-only rehearsal export of 2026-11-05), each number as CROWD_MONTH_SUPPORT and CROWD_ZERO_CURVE_MODEL serve it, offset and nowcast weights as shipped; the month average was chosen on 10-23..10-29 of this window';
+// WHAT EITHER SWITCH'S NUMBERS WERE MEASURED AT: within 15 of the served
+// number, measured through bandEval.js on every reading of 2026-10-23..11-05
+// that the arithmetic produced. Published until 2026-11-27 and not since
+// (SWITCHED_UNMEASURED): every one of those readings is one the data provider
+// generated from its own weekly forecast, which is why they "sat much closer
+// to the venue's pattern" than September's real readings (a reading carried
+// at full weight was within 15 points on 96.5% of them against the 83.0
+// measured in September). Kept as the record of what the switches were
+// chosen on; nothing reads these figures to publish or to serve.
+const MONTH_SUPPORT_POPULATION = 'readings 2026-10-23..11-05 (31 cities, read-only rehearsal export of 2026-11-05), generated by the data provider from its own weekly forecast and not measurements; each number as CROWD_MONTH_SUPPORT and CROWD_ZERO_CURVE_MODEL serve it, offset and nowcast weights as shipped; the month average was chosen on 10-23..10-29 of this window';
 const MONTH_SUPPORT_MEASURED = Object.freeze({
+  readings: 'generated',
   // The model's number with the strict offset and no nowcast reading it uses.
   model: Object.freeze({ within15: 84.4, rows: 141664 }),
   // A reading two or three hours old blended in at the model table's weight.
@@ -4985,6 +5070,17 @@ const MONTH_SUPPORT_MEASURED = Object.freeze({
 // exact level +19.3, +20.9 and +26.5. So the constant below names
 // 2.8.0-starling, and v2.6.0-starling's table is served beside nothing.
 //
+// THAT FORTNIGHT'S READINGS WERE GENERATED (2026-11-27). Every reading of
+// 2026-11-12..11-25 is one the data provider made from its own weekly
+// forecast, not a measurement, and 2.8.0-starling's table is itself built
+// mostly from such readings. So the check above shows that the table is
+// close to the provider's numbers, not that it beats the rule engine on
+// real crowds, and the table's number publishes no measured figure
+// (noCurveFallbackResponse). Whether it should keep serving is a separate
+// decision; the gate below is unchanged and serves exactly as before.
+// v2.6.0-starling's table did beat the rule engine on real readings (the
+// figures above, 09-01..10-12), but it is a different table.
+//
 // WHAT IT TAKES, every one of these, or the rule engine answers exactly as it
 // always has:
 //   * the switch: "category_curve", exactly. Anything else that is set is
@@ -5025,19 +5121,22 @@ const NO_CURVE_FALLBACK_METHOD = crowdEngine.NO_CURVE_FALLBACK_METHOD;
 const NO_CURVE_FALLBACK_MIN_REVIEWS = 200;
 const NO_CURVE_FALLBACK_FITTED_ON = '2.8.0-starling';
 
-// WHAT THE CONFIDENCE FIGURE IS for a number the table made: the table's own
-// within-15 on the live readings it serves, each venue scored with its own
-// curve withheld, in the three cities the gate was studied in. Published with
-// its own population string, the way SERVE_MEASURED is, so it can never be
-// read as the model's figure or the switches'. It belongs to one artifact's
-// table. v2.6.0-starling's was within 15 points 37.1% of the time on the
-// 133,071 readings of 2026-09-01..10-12 (the policy's 35.6%; until 2026-10-14
+// WHAT THE TABLE'S NUMBERS WERE MEASURED AT: the table's own within-15 on the
+// readings it serves, each venue scored with its own curve withheld, in the
+// three cities the gate was studied in. It belongs to one artifact's table.
+// v2.6.0-starling's was within 15 points 37.1% of the time on the 133,071
+// real readings of 2026-09-01..10-12 (the policy's 35.6%; until 2026-10-14
 // the card carried the gated policy's 41.3% on 4,248 readings from three days
-// of Lehigh and Miami). 2.8.0-starling's is within 15 points 76.0% of the
-// time on the 159,163 readings of 2026-11-12..11-25, where the rule engine is
-// 48.2% (the gated policy over every reading, 224,827 of them: 70.1%).
-const NO_CURVE_FALLBACK_POPULATION = 'live readings 2026-11-12..11-25 (Philadelphia, Lehigh and Miami; read-only production export of 2026-11-25, the fourteen days whose live readings were held out of training), each venue scored with its own curve withheld; this table on the readings of venues with 200+ Google reviews whose first three Google types name one of its categories';
-const NO_CURVE_FALLBACK_MEASURED = Object.freeze({ within15: 76.0, rows: 159163 });
+// of Lehigh and Miami), and the card published it while that table served.
+// 2.8.0-starling's is within 15 points 76.0% of the time on the 159,163
+// readings of 2026-11-12..11-25, where the rule engine is 48.2% (the gated
+// policy over every reading, 224,827 of them: 70.1%). Those readings were
+// generated by the data provider from its own weekly forecast, so since
+// 2026-11-27 that figure is a record and not published: a table number's
+// confidence is unmeasured (noCurveFallbackResponse). No figure for
+// 2.8.0-starling's table on real readings exists.
+const NO_CURVE_FALLBACK_POPULATION = 'readings 2026-11-12..11-25 (Philadelphia, Lehigh and Miami; read-only production export of 2026-11-25, the fourteen days held out of training), generated by the data provider from its own weekly forecast and not measurements; each venue scored with its own curve withheld; this table on the readings of venues with 200+ Google reviews whose first three Google types name one of its categories';
+const NO_CURVE_FALLBACK_MEASURED = Object.freeze({ within15: 76.0, rows: 159163, readings: 'generated' });
 
 // THE FIRST THREE GOOGLE TYPES, because those are the types the table was
 // measured on. The study read each venue's category with guessCategory over
@@ -5287,12 +5386,21 @@ async function noCurveFallback(venue, ts, placeId, userId) {
 // what it is, and baselineScore, the ordering axis, because this table is what
 // ranks this venue's hours for the best-time and peak lines. No factors: none
 // of the rule engine's went in.
-function noCurveFallbackResponse(value, eventsSeen, eventsReason) {
-  const percent = NO_CURVE_FALLBACK_MEASURED.within15;
+//
+// THE CONFIDENCE IS UNMEASURED (2026-11-27). The only figure for the table
+// served, 2.8.0-starling's, was measured on readings the data provider
+// generated from its own weekly forecast (the note above
+// NO_CURVE_FALLBACK_POPULATION), so it is not published as accuracy. The
+// integer is `ladderConfidence`, crowdEngine's input-completeness figure for
+// this venue (the rule-engine answer the exit already computed), and the
+// block says 'unmeasured', the way servedConfidence reports a number with no
+// figure. Only what is claimed changed: the number is the table's, as before.
+function noCurveFallbackResponse(value, eventsSeen, eventsReason, ladderConfidence) {
+  const ladder = Number(ladderConfidence);
   return {
     score: value,
     label: getLabel(value),
-    confidence: Math.max(0, Math.min(100, Math.round(percent))),
+    confidence: Number.isFinite(ladder) ? Math.max(0, Math.min(100, Math.round(ladder))) : 0,
     factors: {},
     // What the number read: Google's types and review count (the category and
     // the gate) and the artifact's category table. Not the model, the weather,
@@ -5301,13 +5409,13 @@ function noCurveFallbackResponse(value, eventsSeen, eventsReason) {
     predictionMethod: NO_CURVE_FALLBACK_METHOD,
     modelVersion: null,
     confidenceMeasurement: {
-      status: 'measured',
-      means: 'measured_accuracy',
-      metric: `within_15_${NO_CURVE_FALLBACK_METHOD}`,
-      population: NO_CURVE_FALLBACK_POPULATION,
-      populationRows: NO_CURVE_FALLBACK_MEASURED.rows,
-      measuredPercent: percent,
-      // The table reads no weather, so a missing reading costs it nothing.
+      status: 'unmeasured',
+      means: 'input_completeness',
+      metric: 'venue_metadata_completeness',
+      population: null,
+      populationRows: null,
+      measuredPercent: null,
+      // The ladder already prices a missing weather reading.
       weatherPenalty: 0,
     },
     // The lookup ran before this exit was known, so what it said is stated
@@ -5522,7 +5630,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       if (result.predictionMethod === 'rule_engine_no_baseline') {
         const typical = await noCurveFallback(venue, ts, placeId, userId);
         if (typical !== null) {
-          const fallback = noCurveFallbackResponse(typical, eventsSeen, eventsReason);
+          const fallback = noCurveFallbackResponse(typical, eventsSeen, eventsReason, result.confidence);
           countPrediction(fallback.predictionMethod);
           return fallback;
         }
@@ -6616,6 +6724,7 @@ module.exports = {
     noCurveFallbackEnabled,
     noCurveFallbackState,
     noCurveFallbackValue,
+    noCurveFallbackResponse,
     noCurveFallbackCategory,
     venueHasCurve,
     hourlyAttributionOn,
@@ -6693,12 +6802,18 @@ module.exports = {
     curveOffsetScore,
     applyNowcast,
     switchedMeasurement,
+    SWITCHED_UNMEASURED,
     servedModelVersion,
     servedConfidence,
+    // The figures measured on real readings, for
+    // __tests__/confidenceHonesty.test.js.
+    REAL_READINGS_MEASURED,
+    artifactFigure,
     // CROWD_MONTH_SUPPORT and CROWD_ZERO_CURVE_MODEL, for bandEval.js and
     // __tests__/mlServingFixes.test.js.
     MONTH_SUPPORT,
     ZERO_CURVE_FITTED_ON,
+    ZERO_CURVE_ALSO_SERVES,
     ZERO_CURVE_ALSO_MEASURED,
     zeroCurveMeasuredOn,
     MONTH_SUPPORT_MEASURED,

@@ -288,8 +288,13 @@ async function main(argv = process.argv.slice(2)) {
     if (!seenVenues.has(r.venueId)) seenVenues.set(r.venueId, { city: r.city, served: table !== null });
     const rule = crowdEngine.calculateCrowdScore(venue, r.weather, ts).score;
     // The gated policy over every reading: the table where the gate serves
-    // it, the rule engine everywhere else. mlPredictor's published figure for
-    // a table number (NO_CURVE_FALLBACK_MEASURED) is this policy's within-15.
+    // it, the rule engine everywhere else, reported beside the table's own
+    // figure on the readings it serves (mlPredictor's record of it is
+    // NO_CURVE_FALLBACK_MEASURED). Since 2026-11-27 a table number publishes
+    // no figure, because the only
+    // one for the table served was measured on readings the data provider
+    // generated from its own weekly forecast; score real readings
+    // (2026-10-12 or earlier) before proposing one.
     policyRows.push({ city: r.city, date: r.date, y: r.y, policy: table === null ? rule : table, rule });
     if (table === null) { gateRefused++; continue; }
     scored.push({

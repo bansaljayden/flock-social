@@ -138,12 +138,14 @@ function hedgeLabel(label) {
 // fact instead of "Usually busy", and confidenceMeans becomes
 // 'measured_accuracy'.
 //
-// WHAT IT DOES NOT LICENSE. The confidence integer is still
-// training_metrics_by_population.realtime_served.within_15, NOT the blended
-// figure that mixes in weekly rows whose label equals the baseline by
-// construction: 33.3% and not 87.3% on v2.6.0-starling, 92.6% and not 96.8%
-// on 2.8.0-starling. mlPredictor already publishes the served figure. Do not
-// "improve" this by pointing it at the blended number.
+// WHAT IT DOES NOT LICENSE. The confidence integer is still a figure measured
+// on the readings a card is scored against, NOT the blended figure that mixes
+// in weekly rows whose label equals the baseline by construction: 33.3% and
+// not 87.3% on v2.6.0-starling. On 2.8.0-starling it is neither the blended
+// 96.8% nor the served slice's 92.6%, whose rows are mostly readings the data
+// provider generated from its own weekly forecast, but 38.3%, measured on real
+// readings in a city it never trained on (mlPredictor REAL_READINGS_MEASURED).
+// Do not "improve" this by pointing it at either larger number.
 //
 // TURN THIS BACK TO false if the served artifact is ever rolled back to a
 // pre-2026-08-18 model, because then the weights are on the old axis again.
@@ -195,9 +197,11 @@ function describePredictionSupport(predictionMethod, verifiedReports) {
     return { basis: 'user_reports', supported: true, confidenceMeans: 'input_completeness' };
   }
   if (predictionMethod === 'ml' && ML_BASELINE_AXIS_VERIFIED) {
-    // v2.6.0-starling onward: trained on the corrected corpus, so
-    // training_metrics_by_population.realtime_served.within_15 describes the
-    // rows this card is drawn from. That is a measurement, and it may say so.
+    // v2.6.0-starling onward: trained on the corrected corpus, so the figure
+    // mlPredictor publishes for a model number is a measurement on the rows
+    // this card is drawn from, and it may say so. (A number whose figure was
+    // measured only on generated readings publishes none; its own
+    // confidenceMeasurement says 'unmeasured'.)
     return { basis: 'model_holdout', supported: true, confidenceMeans: 'measured_accuracy' };
   }
   if (predictionMethod === 'ml') {
@@ -206,15 +210,14 @@ function describePredictionSupport(predictionMethod, verifiedReports) {
     // the old axis. Kept so that rollback degrades to honesty automatically.
     return { basis: 'model_unverified_axis', supported: false, confidenceMeans: 'input_completeness' };
   }
-  if (predictionMethod === NO_CURVE_FALLBACK_METHOD) {
-    // What is typical for the venue's category at this hour, for a venue with
-    // no curve of its own. A category prior like the rule engine's, so it is
-    // hedged the same way ("Usually busy") and claims nothing about this
-    // building. What differs is the confidence integer beside it: mlPredictor
-    // publishes this arithmetic's within-15, measured on held-out live
-    // readings, not the metadata ladder, so that is what it means.
-    return { basis: 'category_pattern', supported: false, confidenceMeans: 'measured_accuracy' };
-  }
+  // NO_CURVE_FALLBACK_METHOD lands here too: what is typical for the venue's
+  // category at this hour, for a venue with no curve of its own. A category
+  // prior like the rule engine's, so it is hedged the same way ("Usually
+  // busy") and claims nothing about this building. Until 2026-11-27 the
+  // integer beside it was the table's own within-15; the only figure for the
+  // table served now (2.8.0-starling's) was measured on readings the data
+  // provider generated from its own weekly forecast, so mlPredictor publishes
+  // the input-completeness ladder for it, and that is what it means.
   return { basis: 'category_pattern', supported: false, confidenceMeans: 'input_completeness' };
 }
 
@@ -323,14 +326,15 @@ function describePublishedArithmetic(result, { reportsBlended = false, ownerRead
 // distinction did NOT go away when ML_BASELINE_AXIS_VERIFIED flipped true with
 // v2.6.0-starling; the flip only settled which value the ML path gets. The
 // model path now reports 'measured_accuracy' and the number means what its name
-// implies — but only for the metric mlPredictor actually publishes,
-// training_metrics_by_population.realtime_served.within_15 (33.3% on
-// v2.6.0-starling, 92.6% on 2.8.0-starling). The blended figure over all
-// training rows (87.3%, then 96.8%) is still not this number and still must
-// not become it: that population is mostly weekly rows whose label equals the
-// baseline by construction, so its hit rate measures the corpus rather than
-// the model. The rule path is unchanged and still reports
-// 'input_completeness'.
+// implies, but only for the metric mlPredictor actually publishes:
+// training_metrics_by_population.realtime_served.within_15 on v2.6.0-starling
+// (33.3%), and on 2.8.0-starling the 38.3% measured on real readings, not that
+// artifact's served slice (92.6%, mostly readings the data provider generated
+// from its own weekly forecast). The blended figure over all training rows
+// (87.3%, then 96.8%) is still not this number and still must not become it:
+// that population is mostly weekly rows whose label equals the baseline by
+// construction, so its hit rate measures the corpus rather than the model.
+// The rule path and the category table report 'input_completeness'.
 // (TIME_ONLY_CONFIDENCE, the one rung of that ladder that is not metadata
 // richness, is exported for whoever does want to derive a real ceiling later.)
 //
@@ -1442,9 +1446,16 @@ function isOpenHour(h, types, openHour, closeHour, closeMinute) {
 // 6.32). Under 2.8.0-starling that block reads mae 2.30, because most of its
 // rows are weekly snapshots whose label is the curve itself, and that is not
 // the error of a published number. So the margin is read off the live
-// readings instead, training_metrics_by_population.realtime_served, the
-// population mlPredictor's confidence figure already comes from: mae 5.89
+// readings instead, training_metrics_by_population.realtime_served: mae 5.89
 // with each city held out in turn. Just under that is still 5.
+//
+// 2026-11-27: most of the rows behind that 5.89 are readings the data provider
+// generated from its own weekly forecast, so it understates the model's miss
+// on real readings (25.2 in Miami, a city it never trained on; mlPredictor
+// REAL_READINGS_MEASURED), and a gap a little over 5 can still be noise. The
+// margin stays 5, as it has been since v2.6.0, because moving it would move
+// published numbers; re-deriving it from real readings is a separate
+// decision, not a side effect of correcting the confidence figure.
 //
 // Two things still stand on it, and neither is a claim about hour order:
 // MAX_SINGLE_REPORT_LEVERAGE below (deliberately equal, so one stranger's tap

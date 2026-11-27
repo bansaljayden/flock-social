@@ -393,11 +393,16 @@ test('the promoted model publishes a measured accuracy, not a magic number', asy
   // shapes: an artifact carrying a served-population figure publishes it, and
   // an older artifact that never measured one publishes venue metadata
   // completeness instead and says so, rather than reaching for the blend.
-  const acc = mlPredictor._internals.readServedAccuracy(meta);
+  // Since 2026-11-27 an artifact named in REAL_READINGS_MEASURED publishes
+  // the figure measured on real readings in place of its own served slice,
+  // which for 2.8.0-starling rests mostly on readings the data provider
+  // generated from its own weekly forecast (artifactFigure).
+  const acc = mlPredictor._internals.artifactFigure(mlPredictor._internals.readServedAccuracy(meta), meta.model_version);
   if (acc.status === 'measured') {
     assert.equal(r.confidence, Math.round(acc.percent),
-      'a measured artifact publishes its served-population accuracy');
+      'a measured artifact publishes its measured accuracy');
     assert.equal(r.confidenceMeasurement.status, 'measured');
+    assert.equal(r.confidenceMeasurement.population, acc.population);
   } else {
     assert.equal(r.confidenceMeasurement.status, 'unmeasured',
       'an artifact with no served-population slice must say the accuracy is unmeasured');

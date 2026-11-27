@@ -522,9 +522,12 @@ function placesRefusal(res, userId, cost = 1) {
 // `confidence` is a single integer, and it is two entirely different quantities
 // depending on which branch of services/mlPredictor.js produced it:
 //
-//   status 'measured'    the loaded model's within-15 on `realtime_served`, the
-//                        rows production is actually asked to score. Today that
-//                        is 33 (scripts/ml/MODEL-METRICS.md section 2).
+//   status 'measured'    a within-15 measured for the arithmetic that made the
+//                        number, on the rows it is asked to score. When this
+//                        was written that was 33 (scripts/ml/MODEL-METRICS.md
+//                        section 2); for a 2.8.0-starling number it is 38, the
+//                        figure measured on real readings
+//                        (mlPredictor REAL_READINGS_MEASURED).
 //   status 'unmeasured'  crowdEngine's input-completeness ladder, which counts
 //                        how richly GOOGLE describes the venue and reaches 72
 //                        without one observation of how full the room has been.

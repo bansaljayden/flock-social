@@ -14,6 +14,24 @@ data collection in `../` (`runCollection.js`, `collectWeekly.js`,
 `collectRealtime.js`, `collectEvents.js`), feature engineering and training in
 `../train/`, and the runbook in `../RETRAIN.md`.
 
+## What the shipped model's own figures mean
+
+`model_metadata.json` reports how 2.8.0-starling scored on its training and
+gate readings, and most of those readings are not measurements. From
+2026-10-23 to 2026-11-25 the data provider's live endpoint answered with
+numbers generated from its own weekly forecast: 89.3% of the 1,481,472 rows
+behind the metadata's `realtime_served` figure (92.6% within 15 points) are of
+that kind, and so is every reading of the gate's window, 2026-11-12..11-25. So
+those figures say how closely the model reproduces the provider's numbers.
+
+On real readings it never trained on, 9,912 in Miami from 2026-09-05 to 10-12
+with no reading from the hour before, 2.8.0-starling is within 15 points 38.3%
+of the time and within 10 points 27.0%. The stored weekly chart scores 38.5%
+and 28.4% on the same readings, so the model runs level with it, with an
+average miss about 3 points smaller (25.2 against 28.4). That 38.3 is the
+confidence `services/mlPredictor.js` publishes for the model's numbers
+(`REAL_READINGS_MEASURED`). `../MODEL-METRICS.md` has the rest.
+
 ## A model over 50 MB: commit `crowd_model.onnx.gz` instead
 
 GitHub refuses any file over 100 MB, and this file's estimate for a 2,000-tree

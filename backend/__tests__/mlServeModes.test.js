@@ -83,10 +83,13 @@ const I = freshPredictor()._internals;
 // switches off and a schedule holding no games. The quantile map was fitted on
 // v2.6.0-starling and is applied to no other version (QMAP_FITTED_ON), so
 // with it on or off these are the same numbers; both are still served and
-// compared. Confidence is the artifact's served figure, 92.6 rounded, less 15
-// where the reading carried no weather; 68 is the rule engine's on its rows.
+// compared. Confidence is the figure measured on real readings for this
+// artifact, 38.3 rounded (mlPredictor REAL_READINGS_MEASURED; re-recorded
+// 2026-11-27, when it replaced the artifact's own 92.6, with every score
+// unchanged), less 15 where the reading carried no weather; 68 is the rule
+// engine's on its rows.
 const GOLDEN_SCORES = '64,45,37,71,72,13,21,21,51,89,45,53,50,80,21,12,44,40,69,59,43,74,73,44,33,30,56,35,41,50,77,81,27,26,54,45,0,51,49,80,63,40,40,37,64,59,50,58,57,93,30,43,47,42,20,46,87,76,68,38,33,36,60,14,55,62,63,51,38,51,53,49,35,55,83,98,29,36,43,78,68,12,55,71,97,55,29,56,60,88,20,56,84,79,34,33,47,73,67,20,65,70,93,42,37,55,61,86,26,75,85,70,41,43,58,78,74,37,63,53,52,33,40,62,71,91,35,76,95,61,31,52,60,82,77';
-const GOLDEN_CONFIDENCE = '93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,68,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,68,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,68,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78';
+const GOLDEN_CONFIDENCE = '38,38,38,38,23,38,38,38,38,23,38,38,38,38,23,38,38,38,38,23,38,38,38,38,23,38,38,68,38,23,38,38,38,38,23,38,38,38,38,23,38,38,38,38,23,38,38,38,38,23,38,38,38,38,23,38,38,38,38,23,38,38,38,38,23,38,38,38,38,23,38,38,68,38,23,38,38,38,38,23,38,38,38,38,23,38,38,38,38,23,38,38,38,38,23,38,38,38,38,23,38,38,38,38,23,38,38,38,38,23,38,38,38,38,23,38,38,68,38,23,38,38,38,38,23,38,38,38,38,23,38,38,38,38,23';
 const GOLDEN = {
   version: '2.8.0-starling',
   ruleRows: [27, 72, 117],
@@ -957,13 +960,19 @@ test('migration 093 adds the offset readings column additively, in ASCII, and de
 //   * co and conow send exactly the statements recorded for v2.6.0-starling
 //     (the same hash): the curve_offset path runs no model, so it reads no
 //     schedule. Their responses differ from that record in the version.
+// Re-recorded 2026-11-27 for off, off_qmapoff, now and now_qmapoff, whose
+// responses changed in confidence and confidenceMeasurement alone: a model
+// number now publishes the figure measured on real readings
+// (mlPredictor REAL_READINGS_MEASURED). Their statements, every score, label
+// and version, and both curve_offset records are the ones recorded on
+// 2026-11-26.
 const RECORDED = {
-  off: ['6d26f634078b01ba7ec4ce1fd59343ccef57f89699b953af0f8494c623314d37', '977432f8bd4fad5a94ca588f21bab570e5ea192a65b478baab79a28fa21fd19c'],
-  off_qmapoff: ['6d26f634078b01ba7ec4ce1fd59343ccef57f89699b953af0f8494c623314d37', '977432f8bd4fad5a94ca588f21bab570e5ea192a65b478baab79a28fa21fd19c'],
+  off: ['9f357271ab76db38571736a86fcd7285cbcbf81d8d8f3083553394284f26eecc', '977432f8bd4fad5a94ca588f21bab570e5ea192a65b478baab79a28fa21fd19c'],
+  off_qmapoff: ['9f357271ab76db38571736a86fcd7285cbcbf81d8d8f3083553394284f26eecc', '977432f8bd4fad5a94ca588f21bab570e5ea192a65b478baab79a28fa21fd19c'],
   co: ['b49b32c55a8135f3b4221b9327f424c13df915d4f63cc87cdafa6811ec48bab8', '80b3c413e5f577ef1f7ff7767c75ca1586818aa3ad8845bd010c0876c4ad9e6b'],
   conow: ['052962d4b4c068867ba9ad59347b25c36b6106b3113a6038e33ed19a0ed57603', '80b3c413e5f577ef1f7ff7767c75ca1586818aa3ad8845bd010c0876c4ad9e6b'],
-  now: ['e3567e19b428d4f8855943155a1eee34cae73999919da865ae65f945971bc8d7', '977432f8bd4fad5a94ca588f21bab570e5ea192a65b478baab79a28fa21fd19c'],
-  now_qmapoff: ['e3567e19b428d4f8855943155a1eee34cae73999919da865ae65f945971bc8d7', '977432f8bd4fad5a94ca588f21bab570e5ea192a65b478baab79a28fa21fd19c'],
+  now: ['567ca2855ac59d8f21860371519c1d2696014221714d517976bcbb041c3676d6', '977432f8bd4fad5a94ca588f21bab570e5ea192a65b478baab79a28fa21fd19c'],
+  now_qmapoff: ['567ca2855ac59d8f21860371519c1d2696014221714d517976bcbb041c3676d6', '977432f8bd4fad5a94ca588f21bab570e5ea192a65b478baab79a28fa21fd19c'],
 };
 const RECORDED_ENV = {
   off: {},
