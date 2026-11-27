@@ -28,11 +28,25 @@ import { shareThisPage } from './shareCard';
 //   the version serving today, 2.8.0-starling, trained 2026-11-26:
 //     XGBoost, 2,000 trees up to 10 deep (model_metadata.json
 //     best_params), a size chosen 2026-11-26 on training cities
-//     (backend/scripts/ml/RETRAIN.md). It learned from live readings
-//     through 11 November (time_holdout.training_live_through) and passed
-//     all eight tests of the gate, scored on the live readings of 12 to
-//     25 November in the six cities read every hour, none of which it
-//     trained on (ship_gate.band_gate; research paper 7.2)
+//     (backend/scripts/ml/RETRAIN.md). It learned from the provider's
+//     readings through 11 November (time_holdout.training_live_through):
+//     about 158,000 real live readings from 1 September to 12 October and
+//     about 1.32 million from 23 October on, which the provider generated
+//     from its own weekly forecast (research paper 7.2). So the page calls
+//     the readings after 23 October "readings", never live ones
+//   live readings made the forecast sharp: in September, with them, the
+//     served forecast named the exact level 54.9% of the time against
+//     30.2% for the chart (servedAccuracy.json previous_weights; /research),
+//     "nearly twice as often". The last real live reading is from 12
+//     October; the provider's feed ended 2026-11-25
+//   without a live reading, the app's state today, 2.8.0 is level with the
+//     weekly chart on hit rate and about 3 points better on average miss:
+//     Miami's 9,912 real readings, never trained on, mean error 25.2
+//     against 28.4 (research paper 7.2)
+//   the November test (712,165 readings of 12 to 25 November, gate
+//     ship_gate.band_gate) was withdrawn on 2026-11-27, when a peer review
+//     of the paper found those readings were generated from the provider's
+//     weekly forecast; the page gives no figure for it and links /research
 //   the version before it, 2.6.0-starling, trained 2026-08-18: 800 trees
 //     up to 8 deep. The trees figure and the code figure are stills of
 //     that version, so their alt text and captions say "the previous
@@ -42,16 +56,18 @@ import { shareThisPage } from './shareCard';
 //   the readings are 0 to 100 estimates, not head counts          C-058
 //   where Flock knows the venue's usual week, the card's number starts
 //     from Starling's forecast: CROWD_SERVE_MODE=model since the evening
-//     of 2026-11-01 (C-157). 2.8.0 takes the venue's live readings as
+//     of 2026-11-01 (C-157). 2.8.0 takes the venue's provider readings as
 //     inputs: its newest earlier reading and that reading's age, and its
-//     trailing offset, the median gap of its live readings in the 28 days
+//     trailing offset, the median gap of its readings in the 28 days
 //     before the hour, with the count behind it (last_live_dev,
 //     last_live_age_h, recent_offset, recent_offset_n;
 //     backend/services/mlPredictor.js liveFeatureValues). Nothing is
 //     added after the model (artifactLearnsOffset); v2.6.0 added 0.5 x
-//     that offset instead. No live reading has arrived since 2026-11-25
+//     that offset instead. No reading has arrived since 2026-11-25
 //     15:59 UTC, so the newest-reading input is empty and the offset
-//     input empties by about 2026-12-23, hence "until late December".
+//     input empties by about 2026-12-23, hence "in late December". The
+//     readings in that window are all from after 23 October, so the page
+//     calls them the provider's readings.
 //     The delta model cannot score a venue with no usual week; that
 //     venue gets its kind's pattern or the rule engine
 //   a venue can set its live number; groups see it credited to the place (utils/venueLabel.js picks the noun);
@@ -63,7 +79,8 @@ import { shareThisPage } from './shareCard';
 //     that the facts do not back loses its sentence (2026-10-28;
 //     backend/services/advisorAnswer.js). It used to be barred
 //     from typing a digit at all                                  C-080, C-105
-// No accuracy figure is quoted: /research has them with their limits.
+// No accuracy figure is quoted (no percentage): /research has them with their
+// limits.
 
 const DESCRIPTION = 'The four AI models in Flock: the crowd forecast, the Owl people counter, Roost’s advisor and Birdie, what each one reads and how it was checked.';
 
@@ -184,22 +201,35 @@ export default function AiPage() {
                 For every hour it predicts how far the crowd will move and adds
                 that to the usual week, which gives a busyness score from 0 to 100.
                 Where Flock knows a venue’s usual week, the number on its card
-                starts from that score. Starling also reads a venue’s live readings from the last four weeks. No live reading has arrived since November 25, so those readings inform the forecast until late December.
-              </p>
-              <p>
-                We tested it on three cities it never trained on: Miami, Barcelona
-                and Tokyo. Its training and test readings are a busyness provider’s
-                estimates on that 0 to 100 scale, not head counts. The results are
-                in the paper on the <a href="/research">research page</a>.
+                starts from that score. Starling also reads a venue’s readings
+                from our data provider over the last four weeks. No reading has
+                come in since November 25, so they stop counting in late December.
               </p>
               <p>
                 The version serving today is 2,000 small decision trees up to 10
                 splits deep, each one fixing what the trees before it got wrong.
-                We trained it on November 26, and it learned from live readings
-                taken up to November 11. It took over after passing all eight
-                tests of a gate we fixed in advance. The gate was scored on live
-                readings it never trained on, taken from November 12 to 25 in the
-                six cities we read every hour. The version before it had 800 trees.
+                We trained it on November 26, on venues’ usual weeks and our data
+                provider’s readings up to November 11, and kept three cities out
+                of training to test it on: Miami, Barcelona and Tokyo. The
+                readings are the provider’s estimates on that 0 to 100 scale, not
+                head counts. The version before it had 800 trees.
+              </p>
+              <p>
+                Live readings are what made the forecast sharp. In September, with
+                them coming in, Flock’s forecast named the right crowd level
+                nearly twice as often as the popular-times chart. The last
+                real live readings are from October 12. Without a reading from the
+                hour before, which is how the app runs today, Starling comes out
+                about as close as the weekly chart on real readings from Miami, a
+                city it never trained on, and its average miss is about 3 points
+                smaller.
+              </p>
+              <p>
+                We tested this version on our data provider’s readings of November
+                12 to 25. A review of our own paper then found that from October
+                23 those readings had been made from the provider’s own weekly
+                forecast, so we threw the result out, and
+                the <a href="/research">research page</a> says what happened.
               </p>
             </div>
             <Figure

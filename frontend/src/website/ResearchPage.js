@@ -61,6 +61,15 @@ export const PAPER_CITATION = {
 // benchmark sets, which also guided Owl's development (paper Figure 14 and
 // Table 18). Flux has run owl-5.1 since 2026-11-03; the paper reports it
 // (Section 14.7), and this chart does not.
+//
+// A chart of the November retrain (2.8.0-starling against the rule before
+// it, on the readings of 12 to 25 November) stood between these two until
+// 2026-11-27, and it is gone with its data and its note. A peer review of
+// the paper found that from 23 October every reading the provider sent as
+// live repeats the venue's value of seven days earlier in 89% to 99% of
+// pairs and follows the provider's own weekly forecast, so those readings
+// are not measurements and the result was withdrawn (research paper 7.2).
+// The lead says so once, with the reason in the same sentence as the figure.
 const DESCRIPTION = 'Why Flock studies how busy places get, what the research found, and the full paper.';
 
 // Share of readings or frames, in percent. `us` is Flock's number, `them` the
@@ -69,19 +78,6 @@ const FORECAST = [
   { label: 'Within one crowd level', us: 78.4, them: 64.8 },
   { label: 'Exact crowd level', us: 54.9, them: 30.2 },
   { label: 'Within 10 points', us: 55.2, them: 30.9 },
-];
-// The November retrain's gate (research paper 7.2, Table 14): 2.8.0-starling
-// against rule (b), the forecast served from 13 October to 1 November, on the
-// 712,165 model-served live readings of 12 to 25 November in the six cities
-// read every hour. The note carries the two limits the paper states: the
-// readings ran closer to the weekly patterns than September's (the pattern
-// alone is within 10 points 61.5% of the time), and most had a reading from
-// the hour before, which the app has not had since 25 November (88.2% within
-// 10 replayed with none newer than a week, an exploratory second look).
-const RETRAIN = [
-  { label: 'Within one crowd level', us: 99.9, them: 99.3 },
-  { label: 'Exact crowd level', us: 83.9, them: 71.8 },
-  { label: 'Within 10 points', us: 96.2, them: 86.9 },
 ];
 const COUNTER = [
   { label: "Flux's camera model", note: 'SDT (TU Wien), indoor rooms, 2,000 frames', us: 89.7, them: 77.1 },
@@ -153,33 +149,39 @@ export default function ResearchPage() {
         <section className="lp-sec-navy lp-on-navy rs-hero">
           <div className="lp-wrap">
             <h1>Why we study crowds, and what we found.</h1>
-            {/* The chart below scores the online correction, a venue's
-                weekly pattern moved by its live readings, as served from
-                26 September to mid-October. Since the evening of 1 November
-                production serves Starling (model mode; v2.6.0-starling until
-                the ship of 26 November, 2.8.0-starling since), and
-                live readings ended on 25 November, so the lead dates the
-                charted forecast and says a card's number starts from
-                Starling's forecast: under v2.6.0 model mode added 0.5 x the
-                venue's trailing offset to it (mlPredictor.js
-                DEVIATION_WEIGHT), and until 25 November an hour-old reading
-                replaced it outright. 2.8.0 reads both as inputs and nothing
-                is added after it (artifactLearnsOffset); verified crowd
-                reports can still move the number (crowdEngine.js).
-                A venue with no pattern gets the no-curve fallback or the rule
-                engine (crowdEngine.js), so the lead never puts Starling
-                behind every card. */}
+            {/* The lead's figures are the September study's, on real live
+                readings: the forecast served from 26 September to
+                mid-October, a venue's weekly pattern moved by its own live
+                readings, replayed one hour ahead (servedAccuracy.json
+                previous_weights: 119,939 readings, the exact level 54.9%;
+                the chart's 30.2% is the FORECAST row below, from
+                MODEL-METRICS.md's month section; reading_one_hour_earlier:
+                57,900 readings, within 10 points 80.5%). The November
+                retrain, 2.8.0-starling, scored 96.2% within 10 points on the
+                712,165 readings of 12 to 25 November
+                (model_metadata.json ship_gate.band_gate). Those readings, like
+                every one the provider sent as live from 23 October, were
+                generated from the provider's own weekly forecast (research
+                paper 7.2), so the result was withdrawn. The lead gives the
+                figure only in the sentence that throws it out, with the
+                reason, and claims no motive for the provider, which is not
+                known. Flock has had no live readings since 25 November and no
+                real ones since 12 October, so nothing here says it reads a
+                venue live today. */}
             <p className="lp-lead rs-hero-lead">
-              The first study is the crowd forecast. The chart below scores the
-              forecast Flock served from 26 September to mid-October, which moved
-              each venue's weekly pattern with its own live readings. Since 1
-              November, Flock's own crowd model, Starling, has made the forecast
-              behind venue cards wherever Flock knows a place's weekly pattern,
-              and the paper tests it too. We retrained it in late November to
-              read each venue's recent live readings, and the second chart is
-              that version's test. Other places get what is typical for
-              their kind. The second study is Flux, a sensor that counts the
-              people in a room. We tested it on research footage, including six public benchmark sets. Testing in real venues comes next.
+              The first study is the crowd forecast. With live readings
+              arriving, Flock's forecast named the right crowd level one hour
+              ahead 54.9% of the time, against 30.2% for the popular-times
+              chart, on 119,939 real readings. Where it had a reading from the
+              hour before, it was within 10 points 80.5% of the time. In
+              November we retrained Starling, our crowd model. It scored 96% on
+              a new test, and we threw that result out once a review of our own
+              paper caught the reason: from October 23, the readings our data
+              provider sent as live had been made from its own weekly forecast.
+              The paper says exactly what happened. The second study is Flux, a
+              sensor that counts the people in a room. We tested it on research
+              footage, including six public benchmark sets. Testing in real
+              venues comes next.
             </p>
 
             <div className="rs-paper">
@@ -249,13 +251,6 @@ export default function ResearchPage() {
               themLabel="Chart"
               rows={FORECAST}
               note="Share of the same 119,939 live readings at 1,754 venues in Philadelphia, the Lehigh Valley and Miami, 9 September to 8 October 2026, each scored one hour ahead. Flock here is the forecast served from 26 September to mid-October, which moved each venue's weekly pattern with its own latest live readings. We replayed it on every reading, and its settings were fixed before the first one. Higher is better."
-            />
-            <Chart
-              title="The retrained Starling against the rule before it"
-              usLabel="Starling"
-              themLabel="Rule"
-              rows={RETRAIN}
-              note="Share of the same 712,165 live readings at 5,515 venues in Chicago, Denver, Los Angeles, the Lehigh Valley, Philadelphia and Seattle, 12 to 25 November 2026. Starling trained on none of them. The rule is the forecast Flock served from 13 October to 1 November: a venue's reading from the hour before where it had one, otherwise its weekly pattern moved by its recent readings. The test and its pass marks were fixed before these readings existed, and Starling passed all eight. November's readings ran closer to the weekly patterns than September's, so this chart and the one above are not on the same scale: here the weekly pattern alone was within 10 points 61.5% of the time. Most of these readings had a reading from the hour before. Flock's live readings ended on 25 November, and replayed without any reading newer than a week, Starling is within 10 points 88.2% of the time on the same readings."
             />
             <Chart
               title="Owl against the heat rule it replaced"
@@ -332,8 +327,7 @@ export default function ResearchPage() {
             <p className="lp-lead">
               Start with the {SUMMARY_PAGES}-page summary. The full paper covers both
               studies in detail.
-              It is a working paper: Starling keeps getting better, and the paper
-              is updated as it does.
+              It is a working paper, updated as the work goes on.
             </p>
             <div className="rs-paper-actions">
               <a className="lp-btn lp-btn-cream" href={SUMMARY_URL} target="_blank" rel="noopener noreferrer">

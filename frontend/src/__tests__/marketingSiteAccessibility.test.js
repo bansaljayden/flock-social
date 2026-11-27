@@ -1005,62 +1005,175 @@ describe('copy rules (DESIGN-STANDARD)', () => {
     expect(hits).toEqual([]);
   });
 
+  // The September study's record of what the served forecast measured on real
+  // live readings. /research charts it and /about quotes one line of it, so
+  // both are held to this file.
+  const SERVED = path.join(__dirname, '..', '..', '..', 'backend', 'services', 'servedAccuracy.json');
+  const served = () => JSON.parse(fs.readFileSync(SERVED, 'utf8'));
+  // The research chart's own rows, so /about's "against 31%" for the chart is
+  // the chart /research draws, not a second copy of it.
+  const forecastRow = (label) => {
+    const m = new RegExp(`\\{ label: '${label}', us: ([\\d.]+), them: ([\\d.]+) \\}`).exec(readJs('ResearchPage.js'));
+    expect(m).not.toBeNull();
+    return { us: Number(m[1]), them: Number(m[2]) };
+  };
+
   // /about quoted the crowd model's corpus and served-accuracy figures until
-  // 2026-10-21, pinned here to model_metadata.json and servedAccuracy.json.
-  // The page is about the company now. The figures live on /research (pinned
-  // below) and in llms.txt (pinned by aiCrawlerSurface.test.js), and /about
-  // may quote none of them, so nothing on it can drift from those files.
-  test('/about quotes no model figure, so none can drift there', () => {
+  // 2026-10-21, then none at all, then (2026-11-26) the November retrain's
+  // test, which rested on readings the provider generated from its own weekly
+  // forecast and was withdrawn on 2026-11-27. Since then its one line on
+  // Starling quotes the September study, measured on real live readings, and
+  // only that: two percentages, each held to its source here, and the count
+  // of readings they were measured on.
+  test('/about quotes only the September study, each figure held to its source', () => {
     // What renders, not the source, so a style value like '50%' is not copy.
     // eslint-disable-next-line global-require
     const AboutPage = require('../website/AboutPage').default;
     const { container, unmount } = render(React.createElement(AboutPage));
     const copy = container.textContent.replace(/\s+/g, ' ');
     unmount();
-    expect(copy).not.toMatch(/\d+(\.\d+)?%/);
-    expect(copy).not.toMatch(/\b(106 signals|1\.9 million|1,934,988|395,000|395,464|119,939)\b/);
-    expect(copy).not.toMatch(/within one level|held out|average miss/i);
+    const s = served();
+    const within10 = forecastRow('Within 10 points');
+    expect(within10.us).toBe(s.previous_weights.within_10);
+    const ours = Math.round(s.previous_weights.within_10);
+    const chart = Math.round(within10.them);
+    // Exactly these two percentages, in this order, and nothing else.
+    expect(copy.match(/\d+(\.\d+)?%/g)).toEqual([`${ours}%`, `${chart}%`]);
+    expect(copy).toContain(`With live readings, Flock’s forecast landed within 10 points of the real reading ${ours}% of the time on ${s.rows.toLocaleString('en-US')} readings, against ${chart}% for the popular-times chart. Without them Starling runs about level with the chart, with a smaller average miss.`);
+    // A venue with no usual week is scored by its kind or the rule engine.
+    expect(copy).toContain('Starling, Flock’s crowd model, makes the number on a venue’s card wherever Flock knows the venue’s usual week.');
+    // The old corpus figures, a stated miss, and the withdrawn November test.
+    expect(copy).not.toMatch(/\b(106 signals|1\.9 million|1,934,988|395,000|395,464)\b/);
+    expect(copy).not.toMatch(/within one level|held out|average miss (of|was|is) \d/i);
+    expect(copy).not.toMatch(/every threshold|eight tests|November 12 to 25|took over after|newest version/i);
   });
 
-  // The Research page charts the served figures as "Flock", on the month of
-  // readings the paper reports. Its lead put that forecast behind "every venue
-  // card", but a venue with no weekly pattern is scored by the rule engine,
-  // which the study does not chart as Flock's number, and the note names the
-  // readings, the venues, the cities and the dates, and the horizon they were
+  // The Research page charts the September study's served forecast as
+  // "Flock", on the real live readings the paper reports, and its note names
+  // the readings, the venues, the cities, the dates and the horizon they were
   // scored at (one hour ahead), so the headline is never read as holding hours
-  // before a visit. The charted forecast served from 26 September to
-  // mid-October; production has served Starling in model mode since the
-  // evening of 1 November (backend/scripts/ml/RETRAIN.md), so the lead dates
-  // the charted forecast and says a card's number starts from Starling's
-  // forecast today. "Has come from Starling" said more: under v2.6.0 model
-  // mode added half the venue's trailing offset (mlPredictor.js
-  // DEVIATION_WEIGHT), and until 25 November an hour-old reading replaced the
-  // forecast outright. 2.8.0-starling, serving since the ship of 26 November,
-  // reads both as inputs, and verified crowd reports can still move the number.
-  test('/research limits the charted forecast to the venues and readings it was measured on', () => {
+  // before a visit. The lead quotes the same study: the exact level against
+  // the chart, on every reading, and within 10 points where a reading from the
+  // hour before existed. Every one of those figures is held to
+  // servedAccuracy.json here.
+  //
+  // The November retrain's chart (2.8.0-starling on the readings of 12 to 25
+  // November) stood under it until 2026-11-27. Every reading the provider
+  // sent as live from 23 October was generated from its own weekly forecast,
+  // so that result was withdrawn: the chart, its rows and its note are gone,
+  // and the lead says in one sentence that it was thrown out and why.
+  test('/research quotes the September study as measured and says the November result was thrown out', () => {
     const page = readJs('ResearchPage.js').replace(/\s+/g, ' ');
+    // eslint-disable-next-line global-require
+    const { renderToStaticMarkup } = require('react-dom/server');
+    // eslint-disable-next-line global-require
+    const ResearchPage = require('../website/ResearchPage').default;
+    const text = renderToStaticMarkup(React.createElement(ResearchPage))
+      .replace(/<[^>]+>/g, ' ').replace(/&#x27;|&#39;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ');
+    const s = served();
+    const pw = s.previous_weights;
     expect(page).not.toMatch(/every venue card/);
-    expect(page).toContain("The chart below scores the forecast Flock served from 26 September to mid-October, which moved each venue's weekly pattern with its own live readings. Since 1 November, Flock's own crowd model, Starling, has made the forecast behind venue cards wherever Flock knows a place's weekly pattern, and the paper tests it too. We retrained it in late November to read each venue's recent live readings, and the second chart is that version's test. Other places get what is typical for their kind.");
     expect(page).not.toMatch(/has come from Starling/);
+
+    // (c) The chart's Flock bars are servedAccuracy.json's tested weights.
+    expect(forecastRow('Within one crowd level').us).toBe(pw.within_one_band);
+    expect(forecastRow('Exact crowd level').us).toBe(pw.band_exact);
+    expect(forecastRow('Within 10 points').us).toBe(pw.within_10);
+    expect(pw.rows).toBe(s.rows);
+    // The lead's figures are the same study's, and the chart's own row.
+    const chartExact = forecastRow('Exact crowd level').them;
+    const hour = s.reading_one_hour_earlier;
+    expect(text).toContain(`The first study is the crowd forecast. With live readings arriving, Flock's forecast named the right crowd level one hour ahead ${pw.band_exact}% of the time, against ${chartExact}% for the popular-times chart, on ${s.rows.toLocaleString('en-US')} real readings. Where it had a reading from the hour before, it was within 10 points ${hour.within_10}% of the time.`);
     // The readings of 9 to 25 September came before the charted forecast
     // went live, so they were replayed, not served. Its weights were fitted
     // on 1 to 5 September, so "fixed before the first one" is true of
     // that forecast. The nowcast weights served from mid-October were chosen
     // on these same readings (backend/scripts/ml/MODEL-METRICS.md), so the
     // bare "None of them was used to set the forecast" stays banned.
-    expect(page).toContain(`note="Share of the same 119,939 live readings at 1,754 venues in Philadelphia, the Lehigh Valley and Miami, 9 September to 8 October 2026, each scored one hour ahead. Flock here is the forecast served from 26 September to mid-October, which moved each venue's weekly pattern with its own latest live readings. We replayed it on every reading, and its settings were fixed before the first one. Higher is better."`);
+    expect(page).toContain(`note="Share of the same ${s.rows.toLocaleString('en-US')} live readings at 1,754 venues in Philadelphia, the Lehigh Valley and Miami, 9 September to 8 October 2026, each scored one hour ahead. Flock here is the forecast served from 26 September to mid-October, which moved each venue's weekly pattern with its own latest live readings. We replayed it on every reading, and its settings were fixed before the first one. Higher is better."`);
     expect(page).not.toContain('None of them was used to set the forecast. ');
-    expect(page).toContain("{ label: 'Exact crowd level', us: 54.9, them: 30.2 }");
-    // The retrain's chart (research paper 7.2, Table 14): the gate's own
-    // readings and figures, and the two limits said beside them. The
-    // readings ran closer to the weekly patterns than September's, so the
-    // two charts are not on one scale; and most had a reading from the hour
-    // before, which the app has not had since 25 November.
-    expect(page).toContain("{ label: 'Within 10 points', us: 96.2, them: 86.9 }");
-    expect(page).toContain("{ label: 'Exact crowd level', us: 83.9, them: 71.8 }");
-    expect(page).toContain('note="Share of the same 712,165 live readings at 5,515 venues in Chicago, Denver, Los Angeles, the Lehigh Valley, Philadelphia and Seattle, 12 to 25 November 2026. Starling trained on none of them.');
-    expect(page).toContain('here the weekly pattern alone was within 10 points 61.5% of the time');
-    expect(page).toContain("Flock's live readings ended on 25 November, and replayed without any reading newer than a week, Starling is within 10 points 88.2% of the time on the same readings.");
-    expect(page).not.toMatch(/9[0-9](\.\d)?% accurate/);
+
+    // (a) The withdrawal, said once, with its reason in the same sentence.
+    expect(text).toContain("In November we retrained Starling, our crowd model. It scored 96% on a new test, and we threw that result out once a review of our own paper caught the reason: from October 23, the readings our data provider sent as live had been made from its own weekly forecast. The paper says exactly what happened.");
+    // The November chart, its rows and its note are gone from what renders
+    // and from the code that drew them.
+    expect(page).not.toMatch(/const RETRAIN|rows=\{RETRAIN\}|The retrained Starling against the rule/);
+    expect(text).not.toMatch(/712,165|5,515 venues|passed all eight|61\.5%|88\.2%|96\.2%|83\.9%|99\.9%/);
+    expect(text).not.toMatch(/9[0-9](\.\d)?% accurate/);
+    // The closing line promises what is true: a working paper that is updated.
+    expect(text).toContain('It is a working paper, updated as the work goes on.');
+    expect(text).not.toMatch(/keeps getting better/);
+  });
+
+  // Every public surface: the rendered pages (their text and their alt text),
+  // the crawler blocks, and llms.txt. The November figures were measured on
+  // readings the provider generated from its own weekly forecast, so none of
+  // them may stand as accuracy. One may appear only inside the sentence that
+  // says the result was withdrawn or thrown out. And nothing may say or imply
+  // that Flock reads venues live today: it has had no live readings since 25
+  // November and no real ones since 12 October.
+  // 88.6% is September's (within one level, with a reading from the hour
+  // before), so the November replay's 88.2% is named exactly.
+  const NOVEMBER = /\b(?:96(?:\.[02])?|94\.3|92\.6|90\.0|88\.2|87\.1|84\.5)\s?%|\beight (?:registered )?tests\b|\bpassed all eight\b|\bevery threshold\b/i;
+  const WITHDRAWN = /\bwithdr(?:aw|ew|awn)\b|\bthrew (?:that|the) result out\b/i;
+  const LIVE_TODAY = [
+    /\breads?\b[^.]{0,40}\blive\b(?! location)/i,
+    /\blive readings?\b[^.]{0,30}\b(?:from|over|in) the last (?:four|4) weeks\b/i,
+    /\blive (?:busyness )?readings?\b[^.]{0,60}\b(?:ran|runs|run|ended|stopped)\b[^.]{0,40}\b(?:November|25 Nov)/i,
+    /\b(?:collects|is collecting|keeps collecting|still collects) (?:live|busyness)/i,
+  ];
+  // A sentence ends at . ! or ? before a capital, a digit, a bracket, a quote,
+  // or llms.txt's next bullet or heading.
+  const sentences = (t) => t.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+(?=[A-Z0-9(“"#-])/);
+  const novemberOutsideWithdrawal = (t) => sentences(t).filter((x) => NOVEMBER.test(x) && !WITHDRAWN.test(x));
+  const saysLiveToday = (t) => sentences(t).filter((x) => LIVE_TODAY.some((re) => re.test(x)));
+
+  test('the checks catch the sentences that were public before 2026-11-27', () => {
+    // So the sweep below can fail: each of these stood on the site or in
+    // llms.txt, and each is caught.
+    for (const old of [
+      'On those readings Starling\'s number was within 10 points of the reading 96.2% of the time, against 86.9% for that rule.',
+      'On November 26, 2026, version 2.8.0 passed all eight tests of a gate fixed in advance.',
+      'Replayed without any reading newer than a week, Starling is within 10 points 88.2% of the time on the same readings.',
+      'The newest version of Starling took over after it was scored on the crowd readings of November 12 to 25 and passed every threshold set in September.',
+    ]) expect(novemberOutsideWithdrawal(old)).toEqual([old]);
+    for (const old of [
+      'Starling also reads a venue’s live readings from the last four weeks.',
+      'Flock’s hourly collection of live busyness readings ran from September 3 to November 25, 2026.',
+      "Flock's live readings ended on November 25, 2026, so today the app runs Starling without a fresh reading.",
+    ]) expect(saysLiveToday(old)).toEqual([old]);
+    // And the sentence that throws the result out is allowed its figure.
+    expect(novemberOutsideWithdrawal('It scored 96% on a new test, and we threw that result out once a review caught the reason.')).toEqual([]);
+  });
+
+  test('no surface quotes a November figure outside the sentence that withdraws it, or says Flock reads venues live today', () => {
+    // eslint-disable-next-line global-require
+    const { renderToStaticMarkup } = require('react-dom/server');
+    const pageText = (name) => {
+      // eslint-disable-next-line global-require, import/no-dynamic-require
+      const Page = require(`../website/${name}`).default;
+      const html = renderToStaticMarkup(React.createElement(Page));
+      const alts = [...html.matchAll(/alt="([^"]*)"/g)].map((m) => m[1]);
+      return `${html.replace(/<[^>]+>/g, ' ')} ${alts.join('. ')}`
+        .replace(/&#x27;|&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+    };
+    // eslint-disable-next-line global-require
+    const api = require('../../api/marketing-page.js');
+    const surfaces = [
+      ...['LandingPage', 'AboutPage', 'ResearchPage', 'AiPage', 'HowItWorksPage', 'FluxPage', 'ProPage',
+        'SupportPage', 'TermsOfService', 'PrivacyPolicy'].map((n) => [n, pageText(n)]),
+      ['api/marketing-page.js', Object.values(api.PAGE_BLOCKS).flat().map(([, t]) => t).join(' ')],
+      ['public/llms.txt', fs.readFileSync(path.join(__dirname, '..', '..', 'public', 'llms.txt'), 'utf8')],
+    ];
+    const hits = [];
+    for (const [name, text] of surfaces) {
+      for (const x of novemberOutsideWithdrawal(text)) hits.push(`${name} (November figure): ${x}`);
+      for (const x of saysLiveToday(text)) hits.push(`${name} (live today): ${x}`);
+    }
+    expect(hits).toEqual([]);
+    // The withdrawal is said where the result was published: /research and
+    // llms.txt (aiCrawlerSurface.test.js pins llms.txt's words).
+    expect(surfaces.find(([n]) => n === 'ResearchPage')[1]).toMatch(/we threw that result out/);
+    expect(surfaces.find(([n]) => n === 'public/llms.txt')[1].replace(/\s+/g, ' ')).toMatch(/Flock withdrew the November test of version 2\.8\.0/);
   });
 });

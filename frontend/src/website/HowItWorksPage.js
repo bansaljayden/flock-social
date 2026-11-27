@@ -39,13 +39,15 @@ const VIDEO_TITLE = 'Flock: Nurturing friendship, one flock at a time';
 const VIDEO_PHOTO_CREDIT = 'Venue photos in the video: Google Maps and its contributors.';
 // The video, dated under the player. Its narration at 1:56-2:17 says Flock
 // adds readings every hour and that each place's number updates with every
-// reading. Live collection ran hourly from 2026-09-03 to 2026-11-25 (newest
-// reading 15:59 UTC; the research paper's section 7.2). The video is the
-// entry as it was submitted, so the caption carries the dates instead of a
-// new cut. It says the hourly collection ran, not that every hour has a
-// reading: the provider returned almost none from 12 to 23 October (paper
-// 7.2), and curve rebuilds cost six sweeps on 18 and 19 November (paper 4.2).
-const VIDEO_NOTE = 'Made for the Congressional App Challenge in October 2026. Flock’s hourly collection of live busyness readings ran from September 3 to November 25, 2026.';
+// reading. That was true of the real live readings, read hourly from
+// 2026-09-03 (the research paper's section 4) until the provider's outage
+// of 12 October. The provider returned almost nothing from 12 to 23 October,
+// and every reading it sent as live from 23 October until the subscription
+// ended on 25 November was generated from its own weekly forecast (paper
+// 7.2), so the caption ends the live readings on October 12 and says Flock
+// has had none since. The video is the entry as it was submitted, so the
+// caption carries the dates instead of a new cut.
+const VIDEO_NOTE = 'Made for the Congressional App Challenge in October 2026. Flock’s hourly live busyness readings ran from September 3 to October 12, 2026. Flock has had no live readings since.';
 
 // The video's own chapter list, from its YouTube description; each button
 // starts the player at its time.

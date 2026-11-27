@@ -303,7 +303,7 @@ const PAGE_BLOCKS = {
     ["h2", "Where things stand"],
     ["p", "Flock is on the App Store for iPhone, and the web app is live at flockcorp.com."],
     ["p", "Venues can make a free account, and Roost, the paid plan for venues, is sold in the venue dashboard. There’s a paid plan for people too, Flock Pro, with more Birdie, more crowd forecasts and crowd alerts, on sale on this site since November 13, 2026. Buying it here unlocks it in the iPhone app too."],
-    ["p", "Flux, a sensor that counts the people in a room, was tested on research footage. Testing in real venues comes next. The newest version of Starling took over after it was scored on the crowd readings of November 12 to 25, which it never trained on, and passed every threshold set in September."],
+    ["p", "Flux, a sensor that counts the people in a room, was tested on research footage. Testing in real venues comes next. Starling, Flock’s crowd model, makes the number on a venue’s card wherever Flock knows the venue’s usual week. With live readings, Flock’s forecast landed within 10 points of the real reading 55% of the time on 119,939 readings, against 31% for the popular-times chart. Without them Starling runs about level with the chart, with a smaller average miss."],
     ["h2", "Get in touch"],
     ["p", "Email social@flockcorp.com about anything, venues included. The pitch and anything new go up on our YouTube channel."],
     ["p", "Flock Social LLC is not affiliated with Flock Safety or its license plate cameras."],

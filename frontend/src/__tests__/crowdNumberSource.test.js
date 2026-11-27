@@ -20,9 +20,9 @@ const {
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8').replace(/\r\n/g, '\n');
 
 test('each value the server names has plain words, and anything else has none', () => {
-  expect(numberSourcePhrase('venue_pattern_live')).toBe("this venue's usual pattern and its live readings from the last four weeks");
+  expect(numberSourcePhrase('venue_pattern_live')).toBe("this venue's usual pattern and its readings from the last four weeks");
   expect(numberSourcePhrase('venue_pattern')).toBe("this venue's usual pattern");
-  expect(numberSourcePhrase('model_live')).toBe("the Flock crowd model and this venue's live readings from the last four weeks");
+  expect(numberSourcePhrase('model_live')).toBe("the Flock crowd model and this venue's readings from the last four weeks");
   expect(numberSourcePhrase('model_alone')).toBe('the Flock crowd model alone');
   for (const v of [undefined, null, '', 'ml', 'model', 'curve_offset', 'toString', '__proto__',
     'live_reading', 'live_reading_0h', 'live_reading_13h', 'live_reading_1', 'xlive_reading_1h']) {
@@ -48,10 +48,10 @@ test('a number visitor reports adjusted is never worded as the reading itself, n
   expect(numberSourcePhrase('live_reading_3h_adjusted'))
     .toBe("this venue's reading taken 3 hours ago, adjusted by visitor reports from this time of week over the last four weeks");
   expect(numberSourcePhrase('venue_pattern_live_adjusted'))
-    .toBe("this venue's usual pattern and its live readings from the last four weeks, adjusted by visitor reports from this time of week over the last four weeks");
+    .toBe("this venue's usual pattern and its readings from the last four weeks, adjusted by visitor reports from this time of week over the last four weeks");
   expect(numberSourcePhrase('venue_pattern_adjusted')).toBe("this venue's usual pattern, adjusted by visitor reports from this time of week over the last four weeks");
   expect(numberSourcePhrase('model_live_adjusted'))
-    .toBe("the Flock crowd model and this venue's live readings from the last four weeks, adjusted by visitor reports from this time of week over the last four weeks");
+    .toBe("the Flock crowd model and this venue's readings from the last four weeks, adjusted by visitor reports from this time of week over the last four weeks");
   // Not "alone" once visitor reports moved it.
   expect(numberSourcePhrase('model_alone_adjusted')).toBe('the Flock crowd model, adjusted by visitor reports from this time of week over the last four weeks');
   for (const v of ['_adjusted', 'ml_adjusted', 'live_reading_13h_adjusted', 'live_reading_1h_adjusted_adjusted', 'toString_adjusted']) {
@@ -64,13 +64,15 @@ test('a number visitor reports adjusted is never worded as the reading itself, n
   }
 });
 
-// Live collection ended on 2026-11-25, and with a serving switch on the
-// served offset keeps reading a venue's live readings for 28 days
+// Collection ended on 2026-11-25, and with a serving switch on the served
+// offset keeps reading a venue's readings for 28 days
 // (backend/services/mlPredictor.js OFFSET_WINDOW_HOURS, trailingOffsetBefore).
 // A number they moved can rest on readings weeks old, so the words say how far
 // back the readings reach and never call them recent. If the window changes,
-// these words change with it.
-test('live readings are said to be from the last four weeks, the offset window, never recent', () => {
+// these words change with it. And they are never called live: from 23 October
+// every reading the provider sent as live was generated from its own weekly
+// forecast, so no reading inside that window is a live one (2026-11-27).
+test('the four-week readings are said to be from the offset window, never recent and never live', () => {
   const predictor = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'services', 'mlPredictor.js'), 'utf8');
   expect(predictor).toMatch(/const OFFSET_WINDOW_HOURS = 28 \* 24;/);
   const on = (numberSource, liveReadings) => ({ predictionMethod: 'ml', numberSource, liveReadings });
@@ -83,9 +85,13 @@ test('live readings are said to be from the last four weeks, the offset window, 
     demoNoteLead([on('model_live', true)], {}).text,
   ];
   for (const phrase of phrases) {
-    expect(phrase).toMatch(/live readings from the last four weeks/);
+    expect(phrase).toMatch(/readings from the last four weeks/);
     expect(phrase).not.toMatch(/\brecent\b/);
+    expect(phrase).not.toMatch(/\blive\b/i);
   }
+  // Every phrase lib/crowd.js can say about a number, the same way.
+  const crowdSource = read('lib/crowd.js');
+  expect(crowdSource).not.toMatch(/live readings from the last four weeks/);
 });
 
 const EM_DASH = new RegExp(String.fromCharCode(0x2014));
@@ -118,7 +124,7 @@ describe('the hourly chart caption comes from the bars drawn', () => {
     expect(hourlySourcePhrase([rule, ml('venue_pattern'), ml('venue_pattern')]))
       .toBe("this venue's usual pattern, and in hours not measured here yet, what is typical for a venue like yours");
     expect(hourlySourcePhrase([rule, ml('venue_pattern_live'), ml('venue_pattern')]))
-      .toBe("this venue's usual pattern, with this venue's live readings from the last four weeks in some hours, and in hours not measured here yet, what is typical for a venue like yours");
+      .toBe("this venue's usual pattern, with this venue's readings from the last four weeks in some hours, and in hours not measured here yet, what is typical for a venue like yours");
   });
 
   test('live readings come from each bar\'s own yes or no, never from a missing source', () => {
@@ -127,26 +133,26 @@ describe('the hourly chart caption comes from the bars drawn', () => {
     // stored offset's score, and says yes to live readings for it. Read from
     // absence, this strip was "in some hours"; every bar used live readings.
     expect(hourlySourcePhrase([on(null, true), on(null, true), on('live_reading_1h', true)]))
-      .toBe("the Flock crowd model and this venue's live readings from the last four weeks");
+      .toBe("the Flock crowd model and this venue's readings from the last four weeks");
     expect(hourlySourcePhrase([on('model_live', true), on(null, true)]))
-      .toBe("the Flock crowd model and this venue's live readings from the last four weeks");
+      .toBe("the Flock crowd model and this venue's readings from the last four weeks");
     // A no is a no.
     expect(hourlySourcePhrase([on('model_live', true), on(null, false)]))
-      .toBe("the Flock crowd model, with this venue's live readings from the last four weeks in some hours");
+      .toBe("the Flock crowd model, with this venue's readings from the last four weeks in some hours");
     expect(hourlySourcePhrase([on('model_alone', false), on(null, false)])).toBe('the Flock crowd model');
     // A rule-engine hour is a no whatever it says.
     expect(hourlySourcePhrase([{ predictionMethod: 'rule_engine_fallback', liveReadings: false }, on('venue_pattern_live', true)]))
-      .toBe("this venue's usual pattern and its live readings from the last four weeks, and in hours not measured here yet, what is typical for a venue like yours");
+      .toBe("this venue's usual pattern and its readings from the last four weeks, and in hours not measured here yet, what is typical for a venue like yours");
   });
 
   test('live readings are named for every bar, some bars, or none, as the bars say', () => {
     // The current hour used a reading; the evening had none to use.
     expect(hourlySourcePhrase([ml('model_live'), ml(), ml()]))
-      .toBe("the Flock crowd model, with this venue's live readings from the last four weeks in some hours");
+      .toBe("the Flock crowd model, with this venue's readings from the last four weeks in some hours");
     expect(hourlySourcePhrase([ml('venue_pattern_live'), ml('venue_pattern')]))
-      .toBe("this venue's usual pattern, with this venue's live readings from the last four weeks in some hours");
+      .toBe("this venue's usual pattern, with this venue's readings from the last four weeks in some hours");
     expect(hourlySourcePhrase([ml('live_reading_1h'), ml('model_live')]))
-      .toBe("the Flock crowd model and this venue's live readings from the last four weeks");
+      .toBe("the Flock crowd model and this venue's readings from the last four weeks");
     expect(hourlySourcePhrase([ml('model_alone'), ml()])).toBe('the Flock crowd model');
     expect(hourlySourcePhrase([ml('live_reading_1h'), ml('live_reading_2h')])).toBe("this venue's readings taken in earlier hours");
   });
@@ -234,7 +240,7 @@ describe("the public demo's note names what made its numbers, and never calls it
     expect(demoNoteLead([], { confidence_basis: 'category_pattern' })).toEqual({ text: DEMO_RULE_ENGINE_NOTE });
     expect(demoNoteLead([], { confidence_basis: 'model_holdout' })).toEqual({ text: 'From the model inside Flock' });
     expect(demoNoteLead([], { confidence_basis: 'model_holdout', number_source: 'venue_pattern_live' }))
-      .toEqual({ text: "From this venue's usual pattern and its live readings from the last four weeks" });
+      .toEqual({ text: "From this venue's usual pattern and its readings from the last four weeks" });
     expect(demoNoteLead([], { confidence_basis: 'model_holdout', number_source: 'venue_pattern' }))
       .toEqual({ text: "From this venue's usual pattern" });
   });
@@ -253,7 +259,7 @@ describe("the public demo's note names what made its numbers, and never calls it
 
   test('a strip with live readings in it says so in words, and the pattern alone says it is the pattern', () => {
     expect(demoNoteLead([on('venue_pattern_live', true), on('venue_pattern', false)], {}))
-      .toEqual({ text: "From this venue's usual pattern, with this venue's live readings from the last four weeks in some hours" });
+      .toEqual({ text: "From this venue's usual pattern, with this venue's readings from the last four weeks in some hours" });
     expect(demoNoteLead([on('live_reading_1h', true)], {})).toEqual({ text: "From this venue's reading taken an hour ago" });
     expect(demoNoteLead([on('venue_pattern', false), on('venue_pattern', false)], {}))
       .toEqual({ text: "From this venue's usual pattern" });
@@ -293,7 +299,7 @@ describe("the public demo's note names what made its numbers, and never calls it
     expect(demoNoteLead([], { score: 40, confidence_basis: 'category_pattern', forecast_locked: true, hourly: [] }))
       .toEqual({ text: DEMO_RULE_ENGINE_NOTE });
     expect(demoNoteLead([], { score: 40, number_source: 'venue_pattern_live', confidence_basis: 'model_holdout', forecast_locked: true }))
-      .toEqual({ text: "From this venue's usual pattern and its live readings from the last four weeks" });
+      .toEqual({ text: "From this venue's usual pattern and its readings from the last four weeks" });
   });
 
   test('no note starts with Live, whatever made it', () => {
@@ -429,9 +435,9 @@ describe('the strip of nearby peaks is captioned from the rows drawn, one per ve
   test('the pattern is each venue\'s, never "this venue\'s"', () => {
     expect(peersSourcePhrase([row('venue_pattern', false), row('venue_pattern', false)])).toBe("each venue's usual pattern");
     expect(peersSourcePhrase([row('venue_pattern_live', true), row('venue_pattern_live', true)]))
-      .toBe("each venue's usual pattern and live readings from the last four weeks");
+      .toBe("each venue's usual pattern and readings from the last four weeks");
     expect(peersSourcePhrase([row('venue_pattern_live', true), row('venue_pattern', false)]))
-      .toBe("each venue's usual pattern, with live readings from the last four weeks for some venues");
+      .toBe("each venue's usual pattern, with readings from the last four weeks for some venues");
   });
 
   test('model rows beside pattern rows name both, and carried readings are named as readings', () => {

@@ -32,9 +32,18 @@ const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 //   on the App Store since November 4, 2026                               Apple released 1.0; apps.apple.com/app/id6781442127
 //   Roost sold in the venue dashboard since November 10, 2026 (VENUE_BILLING_ENABLED=true);
 //     Flock Pro on sale on the web since November 13, 2026 (PAYWALL_ENABLED=true)
-//   2.8.0-starling, trained 2026-11-26 without the readings of            backend/scripts/ml/models/model_metadata.json (ship_gate.band_gate),
-//     November 12 to 25, was scored on those days, passed all eight       backend/scripts/ml/RETRAIN.md and the paper's section 7.2; the
-//     tests and took over from v2.6.0-starling                            thresholds were committed on September 25 and 26, 2026
+//   Starling makes the number on a venue's card wherever Flock knows      CROWD_SERVE_MODE=model since 2026-11-01; a venue with no usual week
+//     the venue's usual week                                              gets its kind's pattern or the rule engine (crowdEngine.js)
+//   with live readings, the forecast was within 10 points of the real     backend/services/servedAccuracy.json previous_weights (55.2, 119,939
+//     reading 55% of the time on 119,939 readings, against 31% for the    rows); the chart's 30.9 is ResearchPage.js FORECAST, the paper's
+//     popular-times chart                                                 September study (Section 6)
+//   without them Starling runs about level with the chart, with a         Miami's 9,912 real readings, never trained on, none with a reading
+//     smaller average miss                                                from the hour before: 27.0 / 38.3 within 10 / 15 and a 25.2-point
+//                                                                         miss against the chart's 28.4 / 38.5 and 28.4 (the paper's 7.2)
+// The November retrain's test (2.8.0-starling on the readings of November 12
+// to 25) is not quoted here: those readings were generated from the
+// provider's own weekly forecast, and the result was withdrawn on 2026-11-27
+// (the paper's 7.2; /research says so).
 // The story and the bios were filled out on 2026-11-13 from the record (see
 // PEOPLE and STORY); Asad's photo is up, the maintainer's is still to come.
 // The names are in the title and description because the page is what a
@@ -398,9 +407,12 @@ export default function AboutPage() {
             </p>
             <p>
               Flux, a sensor that counts the people in a room, was tested on research footage. Testing in real venues
-              comes next. The newest version of Starling took over after it was
-              scored on the crowd readings of November 12 to 25, which it never
-              trained on, and passed every threshold set in September.
+              comes next. Starling, Flock’s crowd model, makes the number on a
+              venue’s card wherever Flock knows the venue’s usual week. With live
+              readings, Flock’s forecast landed within 10 points of the real
+              reading 55% of the time on 119,939 readings, against 31% for the
+              popular-times chart. Without them Starling runs about level with
+              the chart, with a smaller average miss.
             </p>
           </div>
         </section>

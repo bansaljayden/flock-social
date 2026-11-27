@@ -83,11 +83,19 @@ export const compactHourLabel = (hour) => {
  * the switch CROWD_NO_CURVE_FALLBACK): for a venue with no crowd curve of its
  * own, what is typical for its kind of place at that hour of the week. Its
  * words say exactly that, and never this venue's pattern, the model or live.
+ *
+ * The four-week readings are called readings, never live ones (2026-11-27).
+ * The provider's readings stopped being measurements on 23 October (every
+ * reading it sent as live from then on was generated from its own weekly
+ * forecast) and stopped arriving on 25 November, so no reading inside the
+ * offset's four-week window is live, and Flock has had no live reading since.
+ * The source keys keep their `_live` names: they say a reading reached the
+ * number, which stays true, and the server names them.
  */
 const NUMBER_SOURCE_PHRASES = {
-  venue_pattern_live: "this venue's usual pattern and its live readings from the last four weeks",
+  venue_pattern_live: "this venue's usual pattern and its readings from the last four weeks",
   venue_pattern: "this venue's usual pattern",
-  model_live: "the Flock crowd model and this venue's live readings from the last four weeks",
+  model_live: "the Flock crowd model and this venue's readings from the last four weeks",
   model_alone: 'the Flock crowd model alone',
   category_typical: 'what is typical for this kind of place at this hour of the week',
 };
@@ -278,8 +286,8 @@ export const hourlySourcePhrase = (bars, { reader = 'owner' } = {}) => {
   const live = measured.filter((p) => p.live).length;
   if (bases.size === 0) return withRule("this venue's readings taken in earlier hours");
   const base = bases.size > 1 ? BASE_PHRASES.both : BASE_PHRASES[[...bases][0]];
-  if (live === measured.length) return withRule(`${base} and this venue's live readings from the last four weeks`);
-  if (live > 0) return withRule(`${base}, with this venue's live readings from the last four weeks in some hours`);
+  if (live === measured.length) return withRule(`${base} and this venue's readings from the last four weeks`);
+  if (live > 0) return withRule(`${base}, with this venue's readings from the last four weeks in some hours`);
   return withRule(base);
 };
 
@@ -385,8 +393,8 @@ const modelPeersPhrase = (drawn) => {
   if (bases.has('pattern')) words.push("each venue's usual pattern");
   if (bases.has('model')) words.push('the Flock crowd model');
   let phrase = words.join(' or ');
-  if (measured > 0 && live === measured) phrase += ' and live readings from the last four weeks';
-  else if (live > 0) phrase += ', with live readings from the last four weeks for some venues';
+  if (measured > 0 && live === measured) phrase += ' and readings from the last four weeks';
+  else if (live > 0) phrase += ', with readings from the last four weeks for some venues';
   if (readings > 0) {
     phrase = phrase ? `${phrase}, or a reading taken in an earlier hour` : 'readings taken in earlier hours';
   }
