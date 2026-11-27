@@ -20,7 +20,7 @@
 // too late. Everything here is therefore synchronous by construction.
 //
 // HOW A PORT IS CHOSEN
-//   1. Each suite owns a disjoint 256-port range (BASE + slot * SPAN). Two
+//   1. Each suite owns a disjoint 85-port range (BASE + slot * SPAN). Two
 //      suites running at once -- node --test gives each file its own process --
 //      can never be handed the same port, whatever else happens.
 //   2. Inside its range the starting candidate is derived from process.pid. An
@@ -35,6 +35,17 @@
 // The range sits below 49152 deliberately. Windows hands out dynamic client
 // ports from 49152 upward, which is exactly where every one of the old
 // hardcoded 59xxx ports lived -- a second, quieter way for them to be stolen.
+//
+// THE SPAN IS 85 SO THAT STAYS TRUE FOR EVERY SLOT. At 256 ports a slot, slot 32
+// and up sat above 49152 after all, and Windows does more there than hand
+// ports out: at boot it sets whole 100-port blocks aside (`netsh interface
+// ipv4 show excludedportrange protocol=tcp`), different ones each boot, and a
+// bind inside one fails with EACCES. On 2026-11-26 the blocks 52239-52538
+// covered all of slot 44 (52264-52519), so addFriendsRealDb could not bind any
+// port it owned and failed in its before hook, 24 tests, with nothing wrong
+// in the code under test. 85 ports each keeps slots 0 to 95 inside
+// 41000-49151, and the check under SUITE_SLOTS refuses a slot that would not
+// fit.
 // ---------------------------------------------------------------------------
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -43,7 +54,8 @@ const path = require('node:path');
 const PROBE = path.join(__dirname, 'probeFreePort.js');
 
 const BASE = 41000;
-const SPAN = 256;
+const SPAN = 85;
+const DYNAMIC_PORTS_FROM = 49152;
 
 // Every suite that boots an embedded Postgres must appear here, with a slot no
 // other suite uses. The slots are what makes the ranges disjoint; a typo that
@@ -248,6 +260,13 @@ const SUITE_SLOTS = {
       );
     }
     seen.set(slot, suite);
+    if (!Number.isInteger(slot) || slot < 0 || BASE + ((slot + 1) * SPAN) > DYNAMIC_PORTS_FROM) {
+      throw new Error(
+        `embeddedPgPort: slot ${slot} ("${suite}") ends at port ${BASE + ((slot + 1) * SPAN) - 1}, ` +
+        `past ${DYNAMIC_PORTS_FROM - 1}. Windows reserves blocks of the dynamic range at boot, so a ` +
+        'range up there can be unbindable from one day to the next. Pick a lower free slot.'
+      );
+    }
   }
 }
 

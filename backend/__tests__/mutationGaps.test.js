@@ -80,29 +80,27 @@ const { buildCalibrationAdjustment, CROWD_LEVEL_TO_SCORE } = crowdEngine;
 const reporters = (levels) => levels.map((crowd_level, i) => ({ crowd_level, user_id: 900 + i }));
 
 test('the published score is ROUNDED, not truncated toward the quiet end', () => {
-  // n=4 against engine 61, at the weight the leverage cap allows four
-  // reporters (2 * 4 / 60, under the ladder's 0.30): the blend lands on 56.53
-  // and the mean on 27.5, so every output has a fraction and every output
-  // rounds UP. Math.floor would answer 56 / 27 / -34 here.
+  // n=4 at weight 0.30 against engine 61: the blend lands on 50.95 and the mean
+  // on 27.5, so every output has a fraction and every output rounds UP.
+  // Math.floor would answer 50 / 27 / -34 here.
   const r = buildCalibrationAdjustment(reporters([1, 1, 1, 2]), 61);
 
   assert.strictEqual(r.reportCount, 4);
-  assert.strictEqual(r.feedbackWeight, (2 * 4) / 60);
-  assert.strictEqual(r.adjustedScore, 57, 'the score the card prints');
+  assert.strictEqual(r.feedbackWeight, 0.3);
+  assert.strictEqual(r.adjustedScore, 51, 'the score the card prints');
   assert.strictEqual(r.avgFeedbackScore, 28, 'what the crowd said, as shown');
   assert.strictEqual(r.predictionDrift, -33, 'how far the model was off, as shown');
 });
 
 test('and it is not rounded UP either', () => {
-  // The mirror fixture. n=8 against engine 61, at the cap's weight for eight
-  // reporters (2 * 8 / 60, under the ladder's 0.50): the blend lands on 53.07
-  // and the mean on 31.25, so every output rounds DOWN.
-  // Math.ceil would answer 54 / 32 / -29 here.
+  // The mirror fixture. n=8 at weight 0.50 against engine 61: the blend lands
+  // on 46.125 and the mean on 31.25, so every output rounds DOWN.
+  // Math.ceil would answer 47 / 32 / -29 here.
   const r = buildCalibrationAdjustment(reporters([1, 1, 1, 1, 1, 2, 2, 2]), 61);
 
   assert.strictEqual(r.reportCount, 8);
-  assert.strictEqual(r.feedbackWeight, (2 * 8) / 60);
-  assert.strictEqual(r.adjustedScore, 53);
+  assert.strictEqual(r.feedbackWeight, 0.5);
+  assert.strictEqual(r.adjustedScore, 46);
   assert.strictEqual(r.avgFeedbackScore, 31);
   assert.strictEqual(r.predictionDrift, -30);
 });
@@ -135,8 +133,7 @@ test('the drift the dashboard shows is the mean minus the model, at that same pr
   const r = buildCalibrationAdjustment(reporters([3, 3, 3, 3, 3, 2, 2, 2]), 60);
   assert.strictEqual(r.avgFeedbackScore, 69);
   assert.strictEqual(r.predictionDrift, 9);
-  // 60 blended 16/60 of the way to 68.75 is 62.33.
-  assert.strictEqual(r.adjustedScore, 62);
+  assert.strictEqual(r.adjustedScore, 64);
 });
 
 // ===========================================================================

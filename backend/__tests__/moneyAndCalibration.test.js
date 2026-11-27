@@ -442,9 +442,9 @@ test('two reporters are still below the floor; three are the floor', () => {
   assert.strictEqual(three.feedbackUsed, true);
   assert.strictEqual(three.reportCount, 3);
   assert.ok(three.adjustedScore > 20, 'the floor is a floor, not a wall');
-  // weight is capped at MAX_SINGLE_REPORT_LEVERAGE * n / span = 0.1 here
-  // (2 * 3 / 60), so 20 blended a tenth of the way to 80.
-  assert.strictEqual(three.adjustedScore, 26);
+  // weight is capped at MAX_SINGLE_REPORT_LEVERAGE * n / span = 0.25 here,
+  // so 20 blended a quarter of the way to 80.
+  assert.strictEqual(three.adjustedScore, 35);
 });
 
 test('one account reporting six times is one reporter, not a crowd', () => {
@@ -462,7 +462,7 @@ test('one account reporting six times is one reporter, not a crowd', () => {
   const padded = [...reporters([1, 1]), ...Array.from({ length: 5 }, () => report(3, { userId: 777 }))];
   const p = cal(padded, 20);
   assert.strictEqual(p.reportCount, 3);
-  assert.strictEqual(p.feedbackWeight, 0.1, 'seven rows must not buy the seven-report weight');
+  assert.strictEqual(p.feedbackWeight, 0.25, 'seven rows must not buy the seven-report weight');
 });
 
 test('an account that revises its report is counted at its newest one', () => {
@@ -513,7 +513,7 @@ test('no single report can move the score by more than the coin-flip margin', ()
   // The bound the weight cap exists to guarantee, checked by flipping one
   // reporter from the quietest reading to the busiest across the whole range
   // of crowd sizes. One point of slack for the final rounding.
-  assert.strictEqual(MAX_SINGLE_REPORT_LEVERAGE, 2);
+  assert.strictEqual(MAX_SINGLE_REPORT_LEVERAGE, 5);
 
   for (let n = MIN_CALIBRATION_REPORTERS; n <= 40; n++) {
     for (let engine = 0; engine <= 100; engine += 10) {
@@ -571,8 +571,8 @@ test('the adjusted score stays inside 0-100 and never goes NaN', () => {
     // plausible-looking number the card would print.
     assert.ok(Object.is(r.adjustedScore, bad), `${String(bad)} was not passed through`);
   }
-  // A numeric string still calibrates: 55 a tenth of the way to 80.
-  assert.strictEqual(buildCalibrationAdjustment(reporters([3, 3, 3]), '55', { now: NOW }).adjustedScore, 58);
+  // A numeric string still calibrates: 55 a quarter of the way to 80.
+  assert.strictEqual(buildCalibrationAdjustment(reporters([3, 3, 3]), '55', { now: NOW }).adjustedScore, 61);
   assert.ok(!Number.isNaN(cal(reporters([3, 3, 3]), 50).adjustedScore));
 });
 
@@ -633,12 +633,12 @@ test('three verified reporters do move it, by the capped amount', async () => {
 
   assert.strictEqual(res.status, 200, res.text);
   assert.strictEqual(res.body.rawEngineScore, 20);
-  assert.strictEqual(res.body.score, 26);
+  assert.strictEqual(res.body.score, 35);
   assert.strictEqual(res.body.calibration.feedbackUsed, true);
   assert.strictEqual(res.body.calibration.reportCount, 3);
   assert.ok(res.body.dataSourcesUsed.includes('user_feedback'));
   // The label the card prints follows the calibrated score, not the raw one.
-  assert.strictEqual(res.body.label, crowdEngine.getLabel(26));
+  assert.strictEqual(res.body.label, crowdEngine.getLabel(35));
 });
 
 test('one account filing three times does not move the card', async () => {

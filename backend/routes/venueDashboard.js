@@ -2815,13 +2815,11 @@ router.get('/strip', requirePro, async (req, res) => {
 //
 // WHY 25. Labels change every 20 points (crowdEngine.getLabel), so anything
 // inside one band is two venues the product itself describes with the same
-// word; crowdEngine's TIE_MARGIN, 5 when this was set, is what it refuses to
-// act on as noise within one venue. One full band plus that margin is the
-// first gap where the ordering sentence and the labels cannot contradict each
-// other. The margin has since been re-derived to 2 (crowdEngine.js says from
-// what); this gap was not lowered with it. It is a floor argued from the
-// product's own vocabulary, not a measured decision boundary — the 43.1%
-// figure says the measurement cannot currently supply one.
+// word; TIE_MARGIN (5) is what crowdEngine already refuses to act on as noise
+// within one venue. One full band plus that margin is the first gap where the
+// ordering sentence and the labels cannot contradict each other. It is a floor
+// argued from the product's own vocabulary, not a measured decision boundary —
+// the 43.1% figure says the measurement cannot currently supply one.
 const STRIP_ORDERING_MIN_GAP = 25;
 
 // null = no claim. 'busier' / 'quieter' = the competitor relative to you.
