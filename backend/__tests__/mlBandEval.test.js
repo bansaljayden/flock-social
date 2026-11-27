@@ -355,6 +355,9 @@ test('the evaluation points every database setting at an address nothing listens
 // The synthetic corpus and the pool that answers predictBusyness from it live
 // in helpers/bandEvalFixture.js, shared with mlServeModes.test.js.
 const FX = require('./helpers/bandEvalFixture');
+// The parity test below loads a fresh predictor for each of twelve settings;
+// this makes the shipped graph one open for all of them (see the helper).
+require('./helpers/sharedOnnxSession');
 
 const SWITCH_ENV = ['CROWD_SERVE_MODE', 'CROWD_NOWCAST_ENABLED', 'CROWD_QMAP_ENABLED'];
 
@@ -433,16 +436,27 @@ test('the replay publishes what predictBusyness publishes, row for row, under ev
     assert.equal(prepared.length, fx.live.length);
     const today = await B.scoreArtifact(art, prepared, { serveMode: 'model', nowcast: false });
     // THE FIXTURE MUST EXERCISE EVERY STEP, or agreement proves nothing: the
-    // model and the rule engine both answer, the quantile map and the offset
-    // each move published numbers, the zero-slot edge is present, and the
-    // nowcast finds readings at every lag it weighs.
+    // model and the rule engine both answer, the venue's live readings reach
+    // the number, the zero-slot edge is present, and the nowcast finds
+    // readings at every lag it weighs.
     const ml = today.rows.filter((r) => r.ml);
     assert.ok(ml.length >= 60, `only ${ml.length} rows reached the model`);
     assert.ok(today.rows.some((r) => !r.ml), 'the fixture must reach the rule engine too');
-    assert.equal(today.qmapApplied, true, 'the shipped artifact is served through the quantile map by default');
-    assert.ok(ml.filter((r) => r.mapped !== r.reconstructed).length >= 10, 'the quantile map must move scores');
-    assert.ok(ml.filter((r) => r.served !== (today.qmapApplied ? r.mapped : r.reconstructed)).length >= 10,
-      'the trailing offset must move published scores');
+    // How the readings reach it depends on the artifact. v2.6.0-starling was
+    // served through the quantile map with the trailing offset added after
+    // it, and both had to move numbers here. 2.8.0-starling lists the live
+    // features: the map (fitted on that other version) is not applied to it,
+    // no offset is added after it, and the readings are among its inputs. So
+    // nothing may move its number after the graph, and what has to be
+    // exercised is the inputs: most rows hand the graph a reading or an
+    // offset, and some hand it neither.
+    assert.equal(art.I.artifactLearnsOffset(art.meta), true, 'the shipped artifact takes the offset as an input');
+    assert.equal(today.qmapApplied, false, 'the quantile map is applied to no version but the one it was fitted on');
+    assert.ok(ml.every((r) => r.mapped === r.reconstructed && r.served === r.reconstructed),
+      'nothing is added after a model that took the readings as inputs');
+    const fedReadings = prepared.filter((r, i) => today.rows[i].ml && art.I.liveFeaturesUsedReadings(r.live, art.meta));
+    assert.ok(fedReadings.length >= 60, `only ${fedReadings.length} model rows had a reading or an offset among their inputs`);
+    assert.ok(fedReadings.length < ml.length, 'the fixture must include a model row with no reading among its inputs');
     assert.ok(prepared.some((r) => r.rawCurve === 0 && r.smoothed > 0),
       'the fixture must include the zero-slot-with-neighbours edge');
     assert.ok(prepared.some((r) => r.neighbors.count > 0), 'and rows with neighbours');
@@ -466,8 +480,10 @@ test('the replay publishes what predictBusyness publishes, row for row, under ev
       // has it after the target hour's own sweep, that hour's reading
       // included. A switched number must not read it, so parity here proves
       // the served offset is the strictly-earlier one the replay measured.
-      // With both off the stored median is served as it always was, and the
-      // replay's strictly-past median is what that path is compared with.
+      // With both off an artifact that lists no live feature is served the
+      // stored median as it always was, and the replay's strictly-past median
+      // is what that path is compared with; the shipped one reads its
+      // readings strictly before the hour under every setting.
       const switched = cfg.serveMode !== 'model' || cfg.nowcast;
       const production = await runProduction(fx, prepared, env, { leakyOffset: switched });
       assert.deepEqual(mismatchesOf(prepared, production, replay), [], `${label}: the replay must publish exactly what production publishes`);
@@ -478,7 +494,13 @@ test('the replay publishes what predictBusyness publishes, row for row, under ev
       }
       if (cfg.nowcast) {
         const moved = replay.rows.filter((r) => r.nowcast);
-        assert.ok(moved.length >= 20, `${label}: the nowcast must move scores (${moved.length})`);
+        // A nowcast reaches the shipped artifact's numbers only on the
+        // curve_offset base. Its model numbers get none (the model tables
+        // were fitted on v2.6.0-starling's output: nowcastBaseKey), and under
+        // model_when_fresh the curve side answers only where no reading is
+        // fresh enough to carry.
+        if (cfg.serveMode === 'curve_offset') assert.ok(moved.length >= 20, `${label}: the nowcast must move scores (${moved.length})`);
+        else assert.equal(moved.length, 0, `${label}: a nowcast reached a number it has no table for`);
         // Never the target hour's own reading: every reading used is from an
         // earlier hour, although the stored list held the hour's own reading.
         for (const [i, r] of replay.rows.entries()) {

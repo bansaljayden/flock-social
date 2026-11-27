@@ -344,19 +344,25 @@ test('skew (d): out-of-vocab category fills with the global mean, refined falls 
 // the value an imputed temperature already produced. Mirroring the Python
 // fillna would not have been parity, because that fill never described one
 // training row.
+//
+// 2.8.0-starling's corpus adds the autumn's live readings, so its table holds
+// months 3, 4, 5, 9, 10 and 11 (read off its temp_norms keys, 57 of them). It
+// lists neither anomaly feature, so on it the table feeds only the imputed
+// temperature; the rule above is still what an artifact that lists them gets,
+// and June to August and December to February still have no cell.
 // ---------------------------------------------------------------------------
 
-const CORPUS_MONTHS = [3, 4, 5];
+const CORPUS_MONTHS = [3, 4, 5, 9, 10, 11];
 
-test('skew (e): the shipped artifact carries climatology for the corpus spring only', async () => {
+test('skew (e): the shipped artifact carries climatology for its corpus months only', async () => {
   assert.equal(await mlPredictor.init(), true);
   const norms = I.getMetadata().temp_norms || {};
   const keys = Object.keys(norms);
   assert.ok(keys.length > 0, 'the artifact must carry temp_norms at all');
   const months = [...new Set(keys.map((k) => Number(k.split('_')[1])))].sort((a, b) => a - b);
   assert.deepEqual(months, CORPUS_MONTHS,
-    'if a retrain widens the corpus past spring this test is the notice, and the '
-    + 'null branch in monthClimateNorm stops firing on its own');
+    'if a retrain widens the corpus past these months this test is the notice, and the '
+    + 'null branch in monthClimateNorm stops firing for them on its own');
 });
 
 test('skew (e): monthClimateNorm answers only for a month the artifact has, climateNorm still imputes', async () => {

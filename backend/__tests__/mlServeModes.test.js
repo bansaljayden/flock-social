@@ -8,9 +8,10 @@
 //
 //   * WITH BOTH OFF NOTHING MOVES. The served number, its confidence, its label,
 //     its method and its version on the band-replay fixture, value for value,
-//     against numbers recorded from the code before either switch existed, with
-//     the quantile map on and off. The switches off also means the offset is
-//     read with exactly the statement it always was.
+//     against the numbers recorded for the served artifact (GOLDEN), with the
+//     quantile map on and off. The switches off also means nothing is read but
+//     what the model itself takes in: for an artifact that lists the live
+//     features, the venue's row with its readings, once per number.
 //   * how each switch is read, including the values that must NOT turn it on;
 //   * the nowcast's choice of reading: strictly an earlier hour, the newest one,
 //     never an older one in its place, nothing past NOWCAST_MAX_LAG_HOURS;
@@ -35,6 +36,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+// Every case here opens the shipped graph for a fresh predictor and again for
+// the replay; this makes those one open (see the helper for why).
+require('./helpers/sharedOnnxSession');
 const B = require('../scripts/ml/train/bandEval');
 const crowdEngine = require('../services/crowdEngine');
 const FX = require('./helpers/bandEvalFixture');
@@ -72,19 +76,22 @@ const I = freshPredictor()._internals;
 
 // ── Both off: exactly today's number ───────────────────────────────────────
 
-// Recorded from the fixture (helpers/bandEvalFixture.js) with the code before
-// either switch existed, artifact 2.6.0-starling. Row order is the fixture's.
+// Recorded from the fixture (helpers/bandEvalFixture.js), row order the
+// fixture's. Until 2026-11-26 these were v2.6.0-starling's numbers, recorded
+// with the code before either switch existed. They are 2.8.0-starling's now,
+// recorded 2026-11-26 by serving the fixture through this code with both
+// switches off and a schedule holding no games. The quantile map was fitted on
+// v2.6.0-starling and is applied to no other version (QMAP_FITTED_ON), so
+// with it on or off these are the same numbers; both are still served and
+// compared. Confidence is the artifact's served figure, 92.6 rounded, less 15
+// where the reading carried no weather; 68 is the rule engine's on its rows.
+const GOLDEN_SCORES = '64,45,37,71,72,13,21,21,51,89,45,53,50,80,21,12,44,40,69,59,43,74,73,44,33,30,56,35,41,50,77,81,27,26,54,45,0,51,49,80,63,40,40,37,64,59,50,58,57,93,30,43,47,42,20,46,87,76,68,38,33,36,60,14,55,62,63,51,38,51,53,49,35,55,83,98,29,36,43,78,68,12,55,71,97,55,29,56,60,88,20,56,84,79,34,33,47,73,67,20,65,70,93,42,37,55,61,86,26,75,85,70,41,43,58,78,74,37,63,53,52,33,40,62,71,91,35,76,95,61,31,52,60,82,77';
+const GOLDEN_CONFIDENCE = '93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,68,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,68,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78,93,93,68,93,78,93,93,93,93,78,93,93,93,93,78,93,93,93,93,78';
 const GOLDEN = {
-  version: '2.6.0-starling',
+  version: '2.8.0-starling',
   ruleRows: [27, 72, 117],
-  qmapDefault: {
-    scores: '100,70,94,100,100,28,23,38,55,100,70,91,93,99,5,16,40,58,100,75,95,100,98,5,31,55,71,35,85,23,100,100,11,40,68,83,25,100,100,96,93,16,55,84,100,100,100,100,100,100,15,50,73,85,23,98,100,100,100,10,40,68,92,25,100,100,99,5,18,61,85,100,35,100,34,100,18,34,76,100,100,13,100,98,100,10,55,100,100,100,20,100,100,100,33,50,98,100,100,18,100,100,100,5,40,88,100,100,23,100,100,100,5,49,96,100,100,37,100,15,35,9,63,99,98,99,45,100,100,30,31,95,100,100,100',
-    confidence: '36,36,36,36,21,36,36,36,36,21,36,36,36,36,21,36,36,36,36,21,36,36,36,36,21,36,36,68,36,21,36,36,36,36,21,36,36,36,36,21,36,36,36,36,21,36,36,36,36,21,36,36,36,36,21,36,36,36,36,21,36,36,36,36,21,36,36,36,36,21,36,36,68,36,21,36,36,36,36,21,36,36,36,36,21,36,36,36,36,21,36,36,36,36,21,36,36,36,36,21,36,36,36,36,21,36,36,36,36,21,36,36,36,36,21,36,36,68,36,21,36,36,36,36,21,36,36,36,36,21,36,36,36,36,21',
-  },
-  qmapOff: {
-    scores: '100,53,62,78,95,34,33,39,47,100,53,59,66,91,15,28,40,48,100,55,62,77,92,17,38,46,54,35,60,33,84,100,25,42,54,59,34,76,87,91,86,28,48,57,72,98,68,80,91,100,29,45,54,60,33,65,79,89,88,25,42,52,62,35,70,79,86,20,30,51,60,70,35,79,41,100,32,40,57,68,76,27,89,97,100,23,47,67,77,87,31,82,93,100,38,45,65,75,84,30,81,91,98,18,42,61,74,83,33,83,93,80,15,45,64,76,84,37,91,29,39,26,49,69,80,89,43,100,91,37,38,63,83,94,100',
-    confidence: '33,33,33,33,18,33,33,33,33,18,33,33,33,33,18,33,33,33,33,18,33,33,33,33,18,33,33,68,33,18,33,33,33,33,18,33,33,33,33,18,33,33,33,33,18,33,33,33,33,18,33,33,33,33,18,33,33,33,33,18,33,33,33,33,18,33,33,33,33,18,33,33,68,33,18,33,33,33,33,18,33,33,33,33,18,33,33,33,33,18,33,33,33,33,18,33,33,33,33,18,33,33,33,33,18,33,33,33,33,18,33,33,33,33,18,33,33,68,33,18,33,33,33,33,18,33,33,33,33,18,33,33,33,33,18',
-  },
+  qmapDefault: { scores: GOLDEN_SCORES, confidence: GOLDEN_CONFIDENCE },
+  qmapOff: { scores: GOLDEN_SCORES, confidence: GOLDEN_CONFIDENCE },
 };
 
 // The fixture through the real predictBusyness, with a pool answering from it
@@ -135,7 +142,7 @@ for (const [label, env, golden] of [
   ["set to values that are not 'on' (typo, '1')", { CROWD_SERVE_MODE: 'curve-offset', CROWD_NOWCAST_ENABLED: '1' }, GOLDEN.qmapDefault],
   ['unset, quantile map off', { CROWD_QMAP_ENABLED: 'false' }, GOLDEN.qmapOff],
 ]) {
-  test(`both switches ${label}: every served number is the number served before the switches existed`, async () => {
+  test(`both switches ${label}: every served number is the number recorded for the served artifact`, async () => {
     const { out, sql, unknown, version } = await serveFixture(env);
     assert.deepEqual(unknown, []);
     if (version !== GOLDEN.version) {
@@ -156,12 +163,20 @@ for (const [label, env, golden] of [
           && !('usedLiveReadings' in r),
           'a switched-off response carries no new keys');
         assert.ok(r.dataSourcesUsed.includes('ml_model'));
+        // This artifact takes the trailing offset as an input, so none is
+        // added after it, and another version's quantile map is not applied.
+        assert.equal(r.recentDeviation, null, `row ${i}`);
+        assert.equal(r.scoreCalibration, null, `row ${i}`);
       }
     });
-    // The offset is read with the statement it has always been read with.
+    // The venue's row is read once for each model number, and with its
+    // readings: an artifact that lists the live features builds them from the
+    // stored readings whatever the switches say. (v2.6.0-starling listed none,
+    // and with the switches off it was never sent a statement asking for them.)
     const dev = sql.filter((s) => /ml_venue_recent_deviation/.test(s));
-    assert.ok(dev.length > 0);
-    assert.ok(dev.every((s) => !/recent_readings/.test(s)), 'the switched-off server never asks for the readings');
+    assert.equal(dev.length, out.length - GOLDEN.ruleRows.length);
+    assert.ok(dev.every((s) => /recent_readings/.test(s) && /offset_readings/.test(s)),
+      'an artifact that lists the live features is read the venue\'s stored readings');
   });
 }
 
@@ -491,14 +506,26 @@ test('with both switches on, the hour\'s own reading never reaches the number th
   assert.equal(co.recentDeviation, null);
 });
 
-test('with both switches off the stored median is served as before, the hour\'s own reading included (unchanged, pre-existing)', async () => {
+test('with both switches off no stored median is added after an artifact that takes the offset as an input, and the hour\'s own reading reaches nothing', async () => {
+  // v2.6.0-starling was served the stored median here, the hour's own reading
+  // included: median(0 - 20, 100 - 20) = 30, at DEVIATION_WEIGHT. An artifact
+  // that lists the live features is handed no offset after the model
+  // (artifactLearnsOffset): what it knows of the venue's readings is what
+  // liveFeatureValues builds from those strictly before the hour, here the
+  // 17:00 reading of 0, two hours old. On the flat curve of 20 that is 17.
+  assert.equal(I.artifactLearnsOffset(JSON.parse(fs.readFileSync(path.join(MODELS_DIR, 'model_metadata.json'), 'utf8'))), true);
   const off = await serveFlatCurveCase({});
   assert.equal(off.predictionMethod, 'ml');
-  // median(0 - 20, 100 - 20) = 30: the stored offset, exactly as it was read
-  // before the switches existed.
-  assert.equal(off.recentDeviation.offset, 30);
-  assert.equal(off.recentDeviation.weight, I.DEVIATION_WEIGHT);
+  assert.equal(off.recentDeviation, null);
+  assert.equal(off.liveFeaturesUsedReadings, true, 'the 17:00 reading is among the graph\'s inputs');
+  assert.equal(off.score, 17);
   assert.ok(!('serveMode' in off) && !('nowcast' in off));
+  // The stored median the pool offers includes 19:00's own reading. None of
+  // it reaches the number: a 19:00 reading of 0, or none at all, serves the same.
+  const ownZero = await serveFlatCurveCase({}, { live: [['2026-09-06', 17, 0], ['2026-09-06', 19, 0]] });
+  const ownNone = await serveFlatCurveCase({}, { live: [['2026-09-06', 17, 0]] });
+  assert.equal(ownZero.score, off.score);
+  assert.equal(ownNone.score, off.score);
 });
 
 // ── Through predictBusyness ─────────────────────────────────────────────────
@@ -512,7 +539,7 @@ test('with the switches on, the rule-engine exits answer exactly as they do off,
   }
   const ml = on.out.filter((r) => r.predictionMethod === 'ml');
   assert.ok(ml.every((r) => r.serveMode === 'curve_offset'));
-  assert.ok(ml.every((r) => /^2\.6\.0-starling\+curve_offset(\+nowcast)?$/.test(r.modelVersion)));
+  assert.ok(ml.every((r) => /^2\.8\.0-starling\+curve_offset(\+nowcast)?$/.test(r.modelVersion)));
   assert.ok(ml.every((r) => !r.dataSourcesUsed.includes('ml_model') && !r.dataSourcesUsed.includes('weather')),
     'curve_offset does not claim the model or the weather fed it');
   assert.ok(ml.every((r) => r.scoreCalibration === null));
@@ -552,23 +579,31 @@ test('describeServedArithmetic names the switched arithmetic, and nothing for a 
     // The explicit yes or no agrees with what actually reached the number.
     assert.equal(r.usedLiveReadings, live);
   }
+  // The nowcast on in model mode. The model nowcast tables were fitted on
+  // v2.6.0-starling's output and apply to no other version (nowcastBaseKey),
+  // and this artifact takes the offset as an input, so its numbers carry no
+  // nowcast and no offset after them: the switch changes none of them,
+  // nothing is named, and the yes or no is whether a live reading was among
+  // the graph's inputs.
   const mn = await serveFixture({ CROWD_NOWCAST_ENABLED: 'true' });
-  const withReading = mn.out.filter((r) => r.nowcast);
-  assert.ok(withReading.length > 0);
-  assert.ok(withReading.some((r) => carried(r)), 'the fixture carries a reading at full weight somewhere');
-  assert.ok(withReading.every((r) => describeServedArithmetic(r) === (carried(r) || 'model_live')));
-  for (const r of mn.out.filter((x) => x.predictionMethod === 'ml' && !x.nowcast)) {
-    assert.equal(typeof r.offsetChangedBySwitch, 'boolean');
-    const want = r.offsetChangedBySwitch ? (r.recentDeviation ? 'model_live' : 'model_alone') : null;
-    assert.equal(describeServedArithmetic(r), want);
-    assert.equal(r.usedLiveReadings, Boolean(r.recentDeviation));
+  assert.equal(I.nowcastBaseKey(false, false, GOLDEN.version), null);
+  assert.equal(I.nowcastBaseKey(false, true, GOLDEN.version), null);
+  const mnModel = mn.out.filter((r) => r.predictionMethod === 'ml');
+  assert.equal(mnModel.length, mn.out.length - GOLDEN.ruleRows.length);
+  for (const r of mnModel) {
+    assert.equal(r.nowcast, null);
+    assert.equal(r.recentDeviation, null);
+    assert.equal(r.offsetChangedBySwitch, false);
+    assert.equal(describeServedArithmetic(r), null);
+    assert.equal(r.serveMode, 'model');
+    assert.equal(r.modelVersion, GOLDEN.version, 'no qualifier: no switch changed the number');
+    assert.equal(r.usedLiveReadings, r.liveFeaturesUsedReadings);
   }
-  // Somewhere on the fixture a live offset reached the number while the
-  // switch changed nothing, so no source is named and the yes is the only
-  // account of it.
-  assert.ok(mn.out.some((r) => r.predictionMethod === 'ml' && describeServedArithmetic(r) === null && r.usedLiveReadings === true),
-    'the fixture has an hour whose live offset matched the stored one');
-  for (const r of mn.out.filter((x) => x.predictionMethod === 'ml' && x.nowcast)) assert.equal(r.usedLiveReadings, true);
+  assert.deepEqual(mn.out.map((r) => r.score), off.out.map((r) => r.score), 'the switched-off numbers, row for row');
+  // On the fixture 126 of the 132 model numbers had a reading or an offset in
+  // their inputs, and six had neither.
+  assert.equal(mnModel.filter((r) => r.usedLiveReadings === true).length, 126);
+  assert.equal(mnModel.filter((r) => r.usedLiveReadings === false).length, 6);
 });
 
 test('a reading carried at full weight is attributed as that reading, with its age', () => {
@@ -593,59 +628,75 @@ test('a reading carried at full weight is attributed as that reading, with its a
   assert.equal(describeServedArithmetic(ml({ nowcast: null, offsetChangedBySwitch: false, recentDeviation: { offset: -5 } })), null);
 });
 
-test('through predictBusyness, a reading carried at full weight IS the number, and says so', async () => {
-  // Nowcast only, model mode: the 17:00 reading of 0 is two hours old at
-  // 19:00, and model_qmap carries a two-hour reading at weight 1.
+test('through predictBusyness, a model the nowcast tables were not fitted on is never handed a carried reading: the reading is one of its inputs', async () => {
+  // Nowcast only, model mode. Under v2.6.0-starling the 17:00 reading of 0,
+  // two hours old at 19:00, was carried at weight 1 (model_qmap) and WAS the
+  // number. The tables were fitted on that version's output, so 2.8.0-starling
+  // gets no nowcast: the reading is in its inputs, and the number is the
+  // model's, the same one the switched-off server gives.
   const two = await serveFlatCurveCase({ CROWD_NOWCAST_ENABLED: 'true' });
-  assert.equal(two.nowcast.weight, 1);
-  assert.equal(two.nowcast.lagHours, 2);
-  assert.equal(two.score, 0, 'the number is the reading');
-  assert.equal(crowdEngine.describeServedArithmetic(two), 'live_reading_2h');
-  // A reading an hour old.
-  const one = await serveFlatCurveCase({ CROWD_NOWCAST_ENABLED: 'true' }, { live: [['2026-09-06', 18, 55], ['2026-09-06', 19, 100]] });
-  assert.equal(one.score, 55);
-  assert.equal(crowdEngine.describeServedArithmetic(one), 'live_reading_1h');
+  assert.equal(two.nowcast, null);
+  assert.equal(two.serveMode, 'model');
+  assert.equal(two.modelVersion, GOLDEN.version);
+  assert.equal(two.score, 17, 'the model\'s number, not the reading of 0');
+  assert.equal(two.score, (await serveFlatCurveCase({})).score);
+  assert.equal(crowdEngine.describeServedArithmetic(two), null);
+  assert.equal(two.usedLiveReadings, true, 'and it says a live reading is in it');
+  // A reading an hour old: still the model's number, pulled most of the way to it.
+  const hourOld = [['2026-09-06', 18, 55], ['2026-09-06', 19, 100]];
+  const one = await serveFlatCurveCase({ CROWD_NOWCAST_ENABLED: 'true' }, { live: hourOld });
+  assert.equal(one.nowcast, null);
+  assert.equal(one.score, 51);
+  assert.equal(one.score, (await serveFlatCurveCase({}, { live: hourOld })).score);
+  assert.equal(crowdEngine.describeServedArithmetic(one), null);
+  assert.equal(one.usedLiveReadings, true);
 });
 
-test('a switch that changes only the offset is attributed, even with no nowcast reading', async () => {
+test('for an artifact that takes the offset as an input no switch changes an offset after it: the number is the same on or off, and the yes or no follows its inputs', async () => {
   // Flat curve 20. Yesterday's readings are too old for the nowcast (over
-  // NOWCAST_MAX_LAG_HOURS) but inside the offset's window. Strictly before
-  // 19:00 the median deviation is -20; the stored median, which includes
-  // 19:00's own reading of 100, is 0.
+  // NOWCAST_MAX_LAG_HOURS) but inside the offset's window. Under
+  // v2.6.0-starling the stored median (0, 19:00's own reading included) was
+  // added after the model with the switches off and the strict one (-20) with
+  // the nowcast on, so the switch changed the number and was attributed. This
+  // artifact reads the strict offset as an input either way, and nothing is
+  // added after it.
   const live = [['2026-09-05', 10, 0], ['2026-09-05', 11, 0], ['2026-09-05', 12, 40], ['2026-09-06', 19, 100]];
   const off = await serveFlatCurveCase({}, { live });
-  assert.equal(off.recentDeviation.offset, 0);
+  assert.equal(off.recentDeviation, null);
   assert.ok(!('offsetChangedBySwitch' in off));
   assert.equal(crowdEngine.describeServedArithmetic(off), null);
   const on = await serveFlatCurveCase({ CROWD_NOWCAST_ENABLED: 'true' }, { live });
   assert.equal(on.nowcast, null, 'no reading the nowcast may use');
-  assert.equal(on.recentDeviation.offset, -20);
-  assert.notEqual(on.score, off.score, 'the switch changed the number');
-  assert.equal(on.offsetChangedBySwitch, true);
-  assert.equal(crowdEngine.describeServedArithmetic(on), 'model_live');
+  assert.equal(on.recentDeviation, null);
+  assert.equal(on.score, 17);
+  assert.equal(on.score, off.score, 'the switch changed nothing');
+  assert.equal(on.offsetChangedBySwitch, false);
+  assert.equal(crowdEngine.describeServedArithmetic(on), null);
 
-  // A stored offset and no strict one (one earlier reading is under the
-  // floor): the switched number is the model's with no live readings in it.
+  // One earlier reading, under the offset's floor and too old to be the
+  // newest reading: nothing from a live reading is among the inputs, and the
+  // number is the model's with no live readings in it.
   const lone = [['2026-09-05', 11, 0], ['2026-09-06', 19, 100]];
   const offLone = await serveFlatCurveCase({}, { live: lone });
-  assert.equal(offLone.recentDeviation.offset, 30);
+  assert.equal(offLone.recentDeviation, null);
+  assert.equal(offLone.liveFeaturesUsedReadings, false);
   const onLone = await serveFlatCurveCase({ CROWD_NOWCAST_ENABLED: 'true' }, { live: lone });
   assert.equal(onLone.nowcast, null);
   assert.equal(onLone.recentDeviation, null);
-  assert.equal(onLone.offsetChangedBySwitch, true);
-  assert.notEqual(onLone.score, offLone.score);
-  assert.equal(crowdEngine.describeServedArithmetic(onLone), 'model_alone');
+  assert.equal(onLone.offsetChangedBySwitch, false);
+  assert.equal(onLone.score, 18);
+  assert.equal(onLone.score, offLone.score);
+  assert.equal(crowdEngine.describeServedArithmetic(onLone), null);
 
-  // Where the strict and stored offsets agree, the switch changed nothing and
-  // nothing is claimed.
+  // Two readings yesterday and 19:00's own: the strict offset of the two is
+  // among the inputs, so live readings are in this number. Said as a yes.
   const same = [['2026-09-05', 10, 0], ['2026-09-05', 11, 0], ['2026-09-06', 19, 0]];
   const onSame = await serveFlatCurveCase({ CROWD_NOWCAST_ENABLED: 'true' }, { live: same });
   assert.equal(onSame.nowcast, null);
   assert.equal(onSame.offsetChangedBySwitch, false);
   assert.equal(crowdEngine.describeServedArithmetic(onSame), null);
-  // Nothing is claimed about the arithmetic, yet live readings are in this
-  // number: the strict offset of the two readings moved it. Said as a yes.
-  assert.ok(onSame.recentDeviation, 'a live offset was applied');
+  assert.equal(onSame.recentDeviation, null);
+  assert.equal(onSame.liveFeaturesUsedReadings, true, 'the offset reached the graph');
   assert.equal(onSame.usedLiveReadings, true);
   assert.equal(onLone.usedLiveReadings, false, 'no offset and no reading: a no');
   assert.equal(on.usedLiveReadings, true);
@@ -653,29 +704,35 @@ test('a switch that changes only the offset is attributed, even with no nowcast 
 });
 
 test('each forecast hour says yes or no to live readings, including an hour no source is named for', async () => {
-  // Readings too old for the nowcast but inside the offset window, and 19:00's
-  // own reading. At 18:00 and 19:00 the strict offset (the two 2026-09-05
-  // readings) lands on the stored offset's score, so no source is named, and
-  // a live offset is still in the number. At 20:00 the 19:00 reading is an
-  // hour old and carried.
+  // Readings too old to be the newest reading but inside the offset window,
+  // and 19:00's own reading. The strict offset of the two 2026-09-05 readings
+  // is among every hour's inputs, and at 20:00 so is the 19:00 reading, an
+  // hour old. No source is named for any of them: this artifact's numbers
+  // carry no nowcast and no offset after them, so no switch changed one.
+  // (Under v2.6.0-starling the 20:00 hour was the carried reading and said
+  // 'live_reading_1h'.)
   const same = [['2026-09-05', 10, 0], ['2026-09-05', 11, 0], ['2026-09-06', 19, 0]];
   const on = await serveFlatCurveCase({ CROWD_NOWCAST_ENABLED: 'true' }, { live: same, hourly: [18, 3] });
-  assert.deepEqual(on.map((h) => h.numberSource || null), [null, null, 'live_reading_1h']);
+  assert.deepEqual(on.map((h) => h.numberSource || null), [null, null, null]);
+  assert.ok(on.every((h) => !('numberSource' in h)));
   assert.deepEqual(on.map((h) => h.liveReadings), [true, true, true],
     'a missing source is not a missing live reading');
+  assert.deepEqual(on.map((h) => h.score), [15, 17, 8], '20:00 follows the hour-old reading of 0');
   // Switched off, no hour carries the yes or no.
   const off = await serveFlatCurveCase({}, { live: same, hourly: [18, 3] });
   for (const h of off) assert.ok(!('liveReadings' in h) && !('numberSource' in h), h.hour);
-  assert.deepEqual(off.map((h) => h.score), on.slice(0, 2).map((h) => h.score).concat(off[2].score),
+  assert.deepEqual(off.map((h) => h.score), on.map((h) => h.score),
     'where no source is named the number is the switched-off number');
 });
 
-test('with only the no-curve fallback on, each forecast hour says yes or no to live readings, and the stored offset is a yes', async () => {
+test('with only the no-curve fallback on, each forecast hour says yes or no to live readings, and a reading among the model\'s inputs is a yes', async () => {
   // CROWD_NO_CURVE_FALLBACK is a switch too: while it is on, the strip's
   // hours say what made them, so the venue dashboard can name a peak the
   // category table made. With both serving switches off the model's number
-  // still carries the stored offset, a median of the venue's live readings,
-  // and the hour has to say yes to that, never a no it would be wrong about.
+  // still has the venue's live readings in it (for this artifact among its
+  // inputs; for one that lists no live feature, in the stored offset added
+  // after it), and the hour has to say yes to that, never a no it would be
+  // wrong about.
   const same = [['2026-09-05', 10, 0], ['2026-09-05', 11, 0], ['2026-09-06', 19, 0]];
   const off = await serveFlatCurveCase({}, { live: same, hourly: [18, 3] });
   const fallbackOnly = await serveFlatCurveCase({ CROWD_NO_CURVE_FALLBACK: 'category_curve' }, { live: same, hourly: [18, 3] });
@@ -684,15 +741,20 @@ test('with only the no-curve fallback on, each forecast hour says yes or no to l
     assert.equal(h.predictionMethod, 'ml', h.hour);
     assert.ok(!('numberSource' in h), `${h.hour}: no serving switch named an arithmetic`);
   }
-  assert.deepEqual(fallbackOnly.map((h) => h.liveReadings), [true, true, true], 'the stored offset is in every hour');
+  assert.deepEqual(fallbackOnly.map((h) => h.liveReadings), [true, true, true], 'a live reading is among every hour\'s inputs');
   // One number, read the same way: the switched-off response does not say it
-  // used live readings, and its offset does.
+  // used live readings, and what the graph was handed does.
   const one = await serveFlatCurveCase({}, { live: same });
-  assert.ok(one.recentDeviation, 'the stored offset was applied');
+  assert.equal(one.recentDeviation, null, 'no offset after a model that took it as an input');
+  assert.equal(one.liveFeaturesUsedReadings, true);
   assert.ok(!('usedLiveReadings' in one));
   const { liveReadingsReached } = freshPredictor();
   assert.equal(liveReadingsReached(one), true);
-  assert.equal(liveReadingsReached({ ...one, recentDeviation: null }), false);
+  assert.equal(liveReadingsReached({ ...one, liveFeaturesUsedReadings: false }), false);
+  // A stored offset recorded on the number is a yes on its own (the artifact
+  // that lists no live feature), and neither is a no.
+  assert.equal(liveReadingsReached({ ...one, liveFeaturesUsedReadings: false, recentDeviation: { offset: -5 } }), true);
+  assert.equal(liveReadingsReached({ predictionMethod: 'ml', recentDeviation: null }), false);
   // A switched number's own answer wins, either way.
   assert.equal(liveReadingsReached({ ...one, usedLiveReadings: false }), false);
   assert.equal(liveReadingsReached({ predictionMethod: 'ml', usedLiveReadings: true }), true);
@@ -701,27 +763,34 @@ test('with only the no-curve fallback on, each forecast hour says yes or no to l
   assert.equal(liveReadingsReached(null), false);
 });
 
-test('each forecast hour carries its own source, and a switched-off hour carries none', async () => {
+test('each forecast hour carries its own yes or no, a source only where a switch made the number, and a switched-off hour neither', async () => {
   const OFF_KEYS = ['baselineScore', 'eventsObserved', 'eventsUnavailableReason', 'hour', 'label', 'predictionMethod', 'score'];
   const off = await serveFlatCurveCase({}, { hourly: [17, 5] });
   assert.equal(off.length, 5);
   for (const h of off) assert.deepEqual(Object.keys(h).sort(), OFF_KEYS, h.hour);
   // The stored readings as of 19:00 are 0 at 17:00 and 100 at 19:00. At 17:00
-  // nothing earlier exists, so there is no reading to carry and no strict
-  // offset, where the stored median would have added one: the model alone.
-  // 18:00 and 19:00 carry the 17:00 reading, 20:00 and 21:00 the 19:00 one.
+  // nothing earlier exists. 18:00 and 19:00 have the 17:00 reading among
+  // their inputs (one and two hours old), 20:00 and 21:00 the 19:00 one.
+  // Under v2.6.0-starling those four hours WERE the carried reading (0, 0,
+  // 100, 100) and named it; this artifact's numbers carry no nowcast, so no
+  // source is named and each number is the model's own, moved by the reading:
+  // down to 12 an hour after the 0, up to 71 an hour after the 100 (the flat
+  // curve of 20 plus the serve clamp of 50, and the one-point push).
   const on = await serveFlatCurveCase({ CROWD_NOWCAST_ENABLED: 'true' }, { hourly: [17, 5] });
-  const sources = on.map((h) => h.numberSource || null);
-  assert.deepEqual(sources, ['model_alone', 'live_reading_1h', 'live_reading_2h', 'live_reading_1h', 'live_reading_2h']);
-  // Each carried hour's number is the reading it names.
-  assert.deepEqual(on.slice(1).map((h) => h.score), [0, 0, 100, 100]);
+  assert.deepEqual(on.map((h) => h.numberSource || null), [null, null, null, null, null]);
+  assert.deepEqual(on.map((h) => h.score), [15, 12, 17, 71, 60]);
+  assert.deepEqual(on.map((h) => h.score), off.map((h) => h.score), 'the switched-off numbers');
   // Every switched hour says yes or no to live readings; a source only where
-  // one is named.
-  for (const h of on) {
-    if (h.numberSource) assert.deepEqual(Object.keys(h).sort(), [...OFF_KEYS, 'liveReadings', 'numberSource'].sort());
-    else assert.deepEqual(Object.keys(h).sort(), [...OFF_KEYS, 'liveReadings'].sort());
-  }
+  // one is named, which here is nowhere.
+  for (const h of on) assert.deepEqual(Object.keys(h).sort(), [...OFF_KEYS, 'liveReadings'].sort());
   assert.deepEqual(on.map((h) => h.liveReadings), [false, true, true, true, true]);
+  // Where a switch does make the number, the hour names it: curve_offset
+  // with the nowcast, on the same readings, carries the hour-old reading at
+  // 18:00 and 20:00, and by 21:00 two earlier readings give the curve an offset.
+  const co = await serveFlatCurveCase({ CROWD_SERVE_MODE: 'curve_offset', CROWD_NOWCAST_ENABLED: 'true' }, { hourly: [17, 5] });
+  assert.deepEqual(co.map((h) => h.numberSource || null), ['venue_pattern', 'live_reading_1h', 'venue_pattern', 'live_reading_1h', 'venue_pattern_live']);
+  assert.deepEqual([co[1].score, co[3].score], [0, 100], 'each carried hour\'s number is the reading it names');
+  for (const h of co) assert.deepEqual(Object.keys(h).sort(), [...OFF_KEYS, 'liveReadings', 'numberSource'].sort());
   // The venue dashboard passes each hour's source through to its bars.
   const dash = fs.readFileSync(path.join(__dirname, '..', 'routes', 'venueDashboard.js'), 'utf8');
   assert.match(dash, /todayHourly: todayHourly\.map\(\(\{ baselineScore, \.\.\.bar \}\) => bar\),/);
@@ -868,39 +937,35 @@ test('migration 093 adds the offset readings column additively, in ASCII, and de
   assert.doesNotMatch(sql.replace(/--.*$/gm, ''), /\b(DROP|DELETE|UPDATE|NOT NULL|DEFAULT)\b/i);
 });
 
-// ── The live and sports feature families leave this artifact alone ─────────
+// ── The served artifact, byte for byte, under every switch configuration ───
 //
-// v2.6.0-starling lists neither family, so every response it serves, under
-// every switch configuration production can set, must be what it was before
-// the families existed, and so must every statement it sends. Recorded
-// (sha256 of the fixture's 135 responses, `asOf` left out because it is the
-// wall clock, and of the statements in order) from the code before the
-// families were added. Re-recorded 2026-10-08 for co, conow, now and
-// now_qmapoff when SERVE_MEASURED moved to the month-long measurement: with
-// every confidence field left out, all six configurations hash to what they
-// did before that change, so the confidence figures are the only difference.
-// Re-recorded 2026-10-14 for the same four when the curve_offset nowcast
-// weights at two and three hours went to zero. Against the code before that
-// change, response by response: co, now and now_qmapoff differ only in the
-// confidence population string, which now says the curve_offset weights were
-// chosen on the measured window; conow differs beyond it on exactly the 47
-// responses whose nowcast was a two- or three-hour reading on the
-// curve_offset base, which now carry no nowcast and serve curve + offset, and
-// in nothing else. off and off_qmapoff did not move.
-// Statements re-recorded 2026-11-10 for all six when the neighbour box became a
-// weekday-at-a-time read (getNeighborActivity): with its weekday clause taken
-// out as the harvested clause is, the statements differ only in reading a box
-// once for each weekday it is scored on instead of once, and every response
-// hash above is unchanged under every configuration.
-const PRE_FAMILY = {
-  off: ['2c1c088f1d0937e4b3a71818dddce32051465a48b94f930140259c029f5aa9e1', '5c66f9b090f424651cf27178e3fa8dd287ad9b25c0f0fe0a70334f990dbb796c'],
-  off_qmapoff: ['fec289f0febb8c101c3ef9101bd2dd0d8fb3cc922856fdeab8b6b425394ce4c7', '5c66f9b090f424651cf27178e3fa8dd287ad9b25c0f0fe0a70334f990dbb796c'],
-  co: ['e5cb803c15b0aeea081981984019a424d105cbb34765c3dfed5e67f494a8c945', '80b3c413e5f577ef1f7ff7767c75ca1586818aa3ad8845bd010c0876c4ad9e6b'],
-  conow: ['a5ec0eae71f5186cb819e6bd5d237793c50d7a58f9b63bd815f203a1e493cd0c', '80b3c413e5f577ef1f7ff7767c75ca1586818aa3ad8845bd010c0876c4ad9e6b'],
-  now: ['1af4516bfcab6a88b02e7ca459c3daad52d1fff3ef3fb955acb90ab841508950', '80b3c413e5f577ef1f7ff7767c75ca1586818aa3ad8845bd010c0876c4ad9e6b'],
-  now_qmapoff: ['f46471132de3c93d3df71688b93684899b3d83ec2d6f716f24887b99d0348535', '80b3c413e5f577ef1f7ff7767c75ca1586818aa3ad8845bd010c0876c4ad9e6b'],
+// sha256 of the fixture's 135 responses (`asOf` left out because it is the
+// wall clock) and of the statements in order, under every switch
+// configuration production can set. Until 2026-11-26 this recorded
+// v2.6.0-starling, an artifact that lists neither the live nor the sports
+// family, from the code before the families were added (and proved they left
+// it alone; re-recorded 2026-10-08 and 10-14 for the measured confidence
+// figures and the curve_offset nowcast weights, and 2026-11-10 for the
+// statements when the neighbour box became a weekday-at-a-time read).
+// Re-recorded 2026-11-26 for 2.8.0-starling, which lists both families, by
+// serving the fixture through this code with a schedule holding no games:
+//   * off and off_qmapoff are one record, and now and now_qmapoff another: the
+//     quantile map applies to no version but the one it was fitted on;
+//   * off and now send the same statements (the model path reads the venue's
+//     row with its readings either way, and the schedule once) and differ
+//     only in the keys a switched response adds;
+//   * co and conow send exactly the statements recorded for v2.6.0-starling
+//     (the same hash): the curve_offset path runs no model, so it reads no
+//     schedule. Their responses differ from that record in the version.
+const RECORDED = {
+  off: ['6d26f634078b01ba7ec4ce1fd59343ccef57f89699b953af0f8494c623314d37', '977432f8bd4fad5a94ca588f21bab570e5ea192a65b478baab79a28fa21fd19c'],
+  off_qmapoff: ['6d26f634078b01ba7ec4ce1fd59343ccef57f89699b953af0f8494c623314d37', '977432f8bd4fad5a94ca588f21bab570e5ea192a65b478baab79a28fa21fd19c'],
+  co: ['b49b32c55a8135f3b4221b9327f424c13df915d4f63cc87cdafa6811ec48bab8', '80b3c413e5f577ef1f7ff7767c75ca1586818aa3ad8845bd010c0876c4ad9e6b'],
+  conow: ['052962d4b4c068867ba9ad59347b25c36b6106b3113a6038e33ed19a0ed57603', '80b3c413e5f577ef1f7ff7767c75ca1586818aa3ad8845bd010c0876c4ad9e6b'],
+  now: ['e3567e19b428d4f8855943155a1eee34cae73999919da865ae65f945971bc8d7', '977432f8bd4fad5a94ca588f21bab570e5ea192a65b478baab79a28fa21fd19c'],
+  now_qmapoff: ['e3567e19b428d4f8855943155a1eee34cae73999919da865ae65f945971bc8d7', '977432f8bd4fad5a94ca588f21bab570e5ea192a65b478baab79a28fa21fd19c'],
 };
-const PRE_FAMILY_ENV = {
+const RECORDED_ENV = {
   off: {},
   off_qmapoff: { CROWD_QMAP_ENABLED: 'false' },
   co: { CROWD_SERVE_MODE: 'curve_offset' },
@@ -909,30 +974,34 @@ const PRE_FAMILY_ENV = {
   now_qmapoff: { CROWD_NOWCAST_ENABLED: 'true', CROWD_QMAP_ENABLED: 'false' },
 };
 
-test('an artifact that lists no live or sports feature serves byte for byte as before, under every switch configuration', async () => {
+test('the served artifact serves byte for byte what was recorded for it, under every switch configuration', async () => {
   const crypto = require('crypto');
   const sha = (x) => crypto.createHash('sha256').update(x).digest('hex');
   const meta = JSON.parse(fs.readFileSync(path.join(MODELS_DIR, 'model_metadata.json'), 'utf8'));
-  assert.equal(I.artifactReadsLiveFeatures(meta), false);
-  assert.equal(I.artifactReadsSportsFeatures(meta), false);
-  assert.equal(I.artifactLearnsOffset(meta), false);
-  for (const [name, env] of Object.entries(PRE_FAMILY_ENV)) {
+  // What the record below is a record of: an artifact that lists both
+  // families and so takes the offset as an input.
+  assert.equal(I.artifactReadsLiveFeatures(meta), true);
+  assert.equal(I.artifactReadsSportsFeatures(meta), true);
+  assert.equal(I.artifactLearnsOffset(meta), true);
+  for (const [name, env] of Object.entries(RECORDED_ENV)) {
     const { out, sql, version } = await serveFixture(env);
-    if (version !== GOLDEN.version) assert.fail(`the served artifact is ${version}; re-record PRE_FAMILY for it`);
-    assert.equal(sha(JSON.stringify(out, (k, v) => (k === 'asOf' ? null : v))), PRE_FAMILY[name][0], `${name}: responses`);
+    if (version !== GOLDEN.version) assert.fail(`the served artifact is ${version}; re-record RECORDED for it`);
+    assert.equal(sha(JSON.stringify(out, (k, v) => (k === 'asOf' ? null : v))), RECORDED[name][0], `${name}: responses`);
     // 2026-09-28: the two neighbour statements gained one clause, leaving
     // harvested venues out of the box (HARVESTED_STATUS in mlPredictor.js).
-    // It is the only change: with it taken back out, the statements hash to
-    // what was recorded, and the responses above did not move. 2026-11-10:
-    // the box statement gained a second, its weekday (the box is read a
-    // weekday at a time), taken out the same way; see the note above
-    // PRE_FAMILY for what that re-recording changed.
+    // 2026-11-10: the box statement gained a second, its weekday (the box is
+    // read a weekday at a time). Both are taken out before hashing, as they
+    // were for the record this one replaced, so the curve_offset statements
+    // still hash to what that record held.
     const stripped = sql.map((s) => s.replace(/\r?\n[ \t]*AND v\.besttime_status IS DISTINCT FROM 'harvested'/g, '').replace(/\r?\n[ \t]*AND b\.day_of_week = \$4/g, ''));
     assert.ok(sql.every((s, i) => s === stripped[i] || /FROM ml_venues v\s+JOIN ml_venue_baselines b/.test(s)),
       `${name}: the harvested clause reached a statement other than the neighbour box`);
     assert.ok(sql.some((s, i) => s !== stripped[i]), `${name}: the neighbour box no longer leaves harvested venues out`);
-    assert.equal(sha(JSON.stringify(stripped)), PRE_FAMILY[name][1], `${name}: statements`);
-    assert.ok(sql.every((s) => !/ml_sports_events/.test(s)), `${name}: the schedule is never read`);
+    assert.equal(sha(JSON.stringify(stripped)), RECORDED[name][1], `${name}: statements`);
+    // The schedule: read once, and cached, wherever the model runs; never on
+    // the curve_offset path, which runs no model.
+    const modelRuns = env.CROWD_SERVE_MODE !== 'curve_offset';
+    assert.equal(sql.filter((s) => /ml_sports_events/.test(s)).length, modelRuns ? 1 : 0, `${name}: schedule reads`);
   }
 });
 

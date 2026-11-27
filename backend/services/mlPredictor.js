@@ -1024,6 +1024,12 @@ function verifyModelShape(session_, meta) {
 // and publishing 87 when the measured figure is 33 is the largest instance of
 // that in this repo.
 //
+// Those are v2.6.0-starling's figures. 2.8.0-starling, the November 2026
+// retrain, carries the same two populations: realtime_served within-15 92.6%
+// on 1,481,472 rows, and a blended 96.8% over all 3,533,480, of which
+// 2,052,008 are weekly snapshots. The rule is the same one: the served slice
+// is what is published, never the blend.
+//
 // SO THIS READS THE SERVED SLICE AND NOTHING ELSE. The trainer writes
 // training_metrics_by_population with three keys (all_rows, realtime_served,
 // weekly_anchor); realtime_served is `is_realtime == 1 AND baseline > 0`, the
@@ -1587,15 +1593,19 @@ function reconstructTwoHeadScore(profile, deviation, clamp) {
 //      the mixed-axis corpus and is the artifact that flag exists to catch.
 // All four layers now agree, so crowdEngine.ML_BASELINE_AXIS_VERIFIED is TRUE
 // as of v2.6.0-starling and describePredictionSupport may return basis
-// 'model_holdout' with supported: true for the ML path. routes/crowd.js still
-// publishes the provenance of every number it serves, because the point was
-// never the hedge — it was that an ML answer is labeled by what stands behind
-// it rather than asserted, and that is as true when the label is good news.
+// 'model_holdout' with supported: true for the ML path. It stays true under
+// 2.8.0-starling, the November 2026 retrain: the same venue-local corpus with
+// the live readings up to 2026-11-11 added, and the same PART 3 holds on it.
+// routes/crowd.js still publishes the provenance of every number it serves,
+// because the point was never the hedge — it was that an ML answer is labeled
+// by what stands behind it rather than asserted, and that is as true when the
+// label is good news.
 //
 // WHAT THE FLIP DOES NOT COVER, because the caution still applies here: the
 // confidence integer. It is training_metrics_by_population.realtime_served
-// .within_15 (33.3%), NOT the blended 87.3% that mixes in weekly rows whose
-// label equals the baseline by construction — see readServedAccuracy below.
+// .within_15 (33.3% on v2.6.0-starling, 92.6% on 2.8.0-starling), NOT the
+// blended figure (87.3%, then 96.8%) that mixes in weekly rows whose label
+// equals the baseline by construction — see readServedAccuracy below.
 // A verified axis makes the measurement describable; it does not make a
 // different, larger number true.
 //
@@ -4918,12 +4928,28 @@ const MONTH_SUPPORT_MEASURED = Object.freeze({
 // after the first study, which no choice here was made on: MAE -3.27 and
 // -7.17, exact level +9.4 and +5.8, every interval clear of zero.
 //
+// 2.8.0-STARLING'S OWN TABLE, MEASURED 2026-11-26, before that artifact
+// shipped. A retrain builds a new table from its own training frame, so the
+// figures above say nothing about it. The same script, with
+// --allow-version=2.8.0-starling --from=2026-11-12, over the Philadelphia,
+// Lehigh and Miami rows of the November export: on every live reading of
+// 2026-11-12..11-25 whose venue this gate serves (159,163 readings, 1,609
+// venues, the fourteen days whose live readings were held out of that
+// artifact's training), each venue's curve withheld, table minus rule engine
+// with date-block 95% intervals: MAE 10.82 against 18.46 (-7.64 [-8.04,
+// -7.26]), exact level 58.7% against 38.2% (+20.5 [17.7, 23.1]), within one
+// level 95.2% against 85.3% (+10.0 [8.9, 11.1]). Each city clears both tests
+// on its own: MAE -7.21 in Philadelphia, -7.29 in Lehigh, -12.97 in Miami,
+// exact level +19.3, +20.9 and +26.5. So the constant below names
+// 2.8.0-starling, and v2.6.0-starling's table is served beside nothing.
+//
 // WHAT IT TAKES, every one of these, or the rule engine answers exactly as it
 // always has:
 //   * the switch: "category_curve", exactly. Anything else that is set is
 //     logged once and left off, the way serveMode treats CROWD_SERVE_MODE;
 //   * the artifact the table was measured on (NO_CURVE_FALLBACK_FITTED_ON). A
-//     retrain's table is a different table, and nobody has measured it;
+//     retrain's table is a different table, and nobody has measured it until
+//     the constant is moved on a measurement like the two above;
 //   * 200 or more Google reviews, read off the two fields buildFeatureMap reads
 //     but without its median fill: a count nobody gave us is not 200;
 //   * the corpus gap. A refused or failed baseline lookup never found out
@@ -4955,19 +4981,21 @@ const MONTH_SUPPORT_MEASURED = Object.freeze({
 const NO_CURVE_FALLBACK_SWITCH = 'category_curve';
 const NO_CURVE_FALLBACK_METHOD = crowdEngine.NO_CURVE_FALLBACK_METHOD;
 const NO_CURVE_FALLBACK_MIN_REVIEWS = 200;
-const NO_CURVE_FALLBACK_FITTED_ON = '2.6.0-starling';
+const NO_CURVE_FALLBACK_FITTED_ON = '2.8.0-starling';
 
 // WHAT THE CONFIDENCE FIGURE IS for a number the table made: the table's own
 // within-15 on the live readings it serves, each venue scored with its own
-// curve withheld, over 2026-09-01..10-12 in the three collected cities.
-// Published with its own population string, the way SERVE_MEASURED is, so it
-// can never be read as the model's figure or the switches'. Until 2026-10-14
-// it was the gated policy's 41.3% on 4,248 readings from three days of Lehigh
-// and Miami; over the month the table's own numbers are within 15 points
-// 37.1% of the time (the policy's 35.6%), so the card stopped claiming the
-// three-day figure.
-const NO_CURVE_FALLBACK_POPULATION = 'live readings 2026-09-01..10-12 (Philadelphia to 10-12, Lehigh and Miami to 10-08; read-only production exports of 2026-10-08 and 2026-10-14), each venue scored with its own curve withheld; this table on the readings of venues with 200+ Google reviews whose first three Google types name one of its categories';
-const NO_CURVE_FALLBACK_MEASURED = Object.freeze({ within15: 37.1, rows: 133071 });
+// curve withheld, in the three cities the gate was studied in. Published with
+// its own population string, the way SERVE_MEASURED is, so it can never be
+// read as the model's figure or the switches'. It belongs to one artifact's
+// table. v2.6.0-starling's was within 15 points 37.1% of the time on the
+// 133,071 readings of 2026-09-01..10-12 (the policy's 35.6%; until 2026-10-14
+// the card carried the gated policy's 41.3% on 4,248 readings from three days
+// of Lehigh and Miami). 2.8.0-starling's is within 15 points 76.0% of the
+// time on the 159,163 readings of 2026-11-12..11-25, where the rule engine is
+// 48.2% (the gated policy over every reading, 224,827 of them: 70.1%).
+const NO_CURVE_FALLBACK_POPULATION = 'live readings 2026-11-12..11-25 (Philadelphia, Lehigh and Miami; read-only production export of 2026-11-25, the fourteen days whose live readings were held out of training), each venue scored with its own curve withheld; this table on the readings of venues with 200+ Google reviews whose first three Google types name one of its categories';
+const NO_CURVE_FALLBACK_MEASURED = Object.freeze({ within15: 76.0, rows: 159163 });
 
 // THE FIRST THREE GOOGLE TYPES, because those are the types the table was
 // measured on. The study read each venue's category with guessCategory over

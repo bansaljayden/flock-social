@@ -6,9 +6,11 @@
 // whose feature_names lists the two families, reads the offset row with its
 // readings, the curve an hour earlier and the game schedule, and hands the
 // graph exactly the vector scripts/ml/train/bandEval.js replays for the same
-// reading (the vector the band gate scores). The artifact is v2.6.0-starling's
-// metadata with the eleven names appended, and the graph is replaced by a
-// stand-in that records its input and answers a delta of zero.
+// reading (the vector the band gate scores). The artifact is the shipped one,
+// with whichever of the eleven names it does not list appended (all of them
+// while v2.6.0-starling shipped; none since 2.8.0-starling, which lists both
+// families), and the graph is replaced by a stand-in that records its input
+// and answers a delta of zero.
 //
 // It also pins that such an artifact is not handed the trailing offset a
 // second time after the model (artifactLearnsOffset), and that its numbers say
@@ -29,6 +31,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+// One open of the shipped graph for the six fresh predictors below (see the
+// helper); each still gets its own session object, which is what lets a case
+// replace `run` on it.
+require('./helpers/sharedOnnxSession');
 const B = require('../scripts/ml/train/bandEval');
 const crowdEngine = require('../services/crowdEngine');
 const FX = require('./helpers/bandEvalFixture');
@@ -73,8 +79,9 @@ test('predictBusyness hands a live-and-sports artifact the vector the band repla
     assert.equal(await predictor.init(), true);
     const I = predictor._internals;
     const meta = I.getMetadata();
-    const extra = [...I.LIVE_FEATURE_NAMES, ...I.SPORTS_FEATURE_NAMES];
+    const extra = [...I.LIVE_FEATURE_NAMES, ...I.SPORTS_FEATURE_NAMES].filter((n) => !meta.feature_names.includes(n));
     meta.feature_names = [...meta.feature_names, ...extra];
+    assert.equal(new Set(meta.feature_names).size, meta.feature_names.length, 'no name twice');
     assert.equal(I.artifactReadsLiveFeatures(), true);
     assert.equal(I.artifactReadsSportsFeatures(), true);
     assert.deepEqual(I.missingFeatureNames(meta), [], 'serving builds every name the artifact lists');
@@ -140,11 +147,16 @@ test('predictBusyness hands a live-and-sports artifact the vector the band repla
 
 const SWITCHES = ['CROWD_SERVE_MODE', 'CROWD_NOWCAST_ENABLED', 'CROWD_QMAP_ENABLED', 'CROWD_NO_CURVE_FALLBACK'];
 
-// The fixture through predictBusyness under `env`, for v2.6.0-starling's
-// metadata with the live family appended, the graph a stand-in that records
-// its input. Each response comes back with the vector its graph was handed
-// (null where no graph ran: a rule-engine exit or the curve_offset side).
-// `version` replaces the artifact's version, as a retrained artifact's would.
+// The fixture through predictBusyness under `env`, for the shipped metadata
+// with the live family in it (appended where the artifact does not list it),
+// the graph a stand-in that records its input. Each response comes back with
+// the vector its graph was handed (null where no graph ran: a rule-engine exit
+// or the curve_offset side).
+// The artifact's version is the one the model nowcast tables were fitted on
+// (NOWCAST_MODEL_FITTED_ON) unless `version` names another: that is the
+// version the shipped artifact carried when these cases were written, and the
+// only one under which a model number can carry a nowcast beside a reading in
+// its inputs. `version` is a retrained artifact's, which gets no nowcast.
 async function serveLiveArtifact(env, { version = null } = {}) {
   const fx = FX.buildFixture();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-live-readings-'));
@@ -170,8 +182,8 @@ async function serveLiveArtifact(env, { version = null } = {}) {
     assert.equal(await predictor.init(), true);
     const I = predictor._internals;
     const meta = I.getMetadata();
-    meta.feature_names = [...meta.feature_names, ...I.LIVE_FEATURE_NAMES];
-    if (version) meta.model_version = version;
+    meta.feature_names = [...meta.feature_names, ...I.LIVE_FEATURE_NAMES.filter((n) => !meta.feature_names.includes(n))];
+    meta.model_version = version || I.NOWCAST_MODEL_FITTED_ON;
     assert.equal(I.artifactLearnsOffset(), true);
     const session = I.getSession();
     const inputName = meta.onnx_input_name || 'input';
@@ -209,13 +221,15 @@ async function serveLiveArtifact(env, { version = null } = {}) {
 
 for (const [label, env, version = null] of [
   ['with every switch off', {}],
-  ['as production serves today (model, nowcast on)', { CROWD_SERVE_MODE: 'model', CROWD_NOWCAST_ENABLED: 'true' }],
+  ['with the model and the nowcast on', { CROWD_SERVE_MODE: 'model', CROWD_NOWCAST_ENABLED: 'true' }],
   ['under model_when_fresh with the nowcast on', { CROWD_SERVE_MODE: 'model_when_fresh', CROWD_NOWCAST_ENABLED: 'true' }],
   ['under model_when_fresh with the nowcast off', { CROWD_SERVE_MODE: 'model_when_fresh' }],
   // The November ship: a retrained version, which the model nowcast tables
   // were not fitted on (nowcastBaseKey), so its model side carries no nowcast
   // and the reading in its inputs is the only live reading in its numbers.
   ['under model_when_fresh with the nowcast on, for a retrained version', { CROWD_SERVE_MODE: 'model_when_fresh', CROWD_NOWCAST_ENABLED: 'true' }, '2.8.0-retrained'],
+  // And the shipped version itself, as production serves it.
+  ['with the model and the nowcast on, for the shipped version, as production serves it', { CROWD_SERVE_MODE: 'model', CROWD_NOWCAST_ENABLED: 'true' }, '2.8.0-starling'],
 ]) {
   test(`a live-feature artifact's number says yes to live readings exactly when one reached it, ${label}`, async () => {
     const { rows, I, liveReadingsReached } = await serveLiveArtifact(env, { version });

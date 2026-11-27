@@ -18,7 +18,7 @@
 //     another artifact version;
 //   * the answer: the table's value rounded and clamped, its tag, a null model
 //     version, its sources, baselineScore, and the figure it publishes
-//     (within-15 37.1 on 133,071 readings) with its population;
+//     (within-15 76.0 on 159,163 readings) with its population;
 //   * the row: guessCategory over the first three Google types, the ones the
 //     table was measured on, never the whole list, and only when those types
 //     name one of its categories (an airport, a hotel or no types at all is
@@ -45,7 +45,8 @@
 //   * the re-measure a retrain needs before its table ships:
 //     scripts/ml/train/noCurveFallbackEval.js refuses another artifact's table
 //     by default, and --allow-version=<v> scores exactly the artifact named v,
-//     its own table, while production keeps serving the table beside 2.6.0 only.
+//     its own table, while production keeps serving the table beside the
+//     artifact it was measured with (2.8.0-starling) only.
 //
 // __tests__/noCurveFallbackSurfaces.test.js takes the same number through the
 // real routes. No network, no database. Run: node --test  (from backend/)
@@ -325,11 +326,11 @@ test('switched on, a venue with 200+ reviews and no row at all gets the table\'s
     const v = venue();
     const r = await p.predictBusyness(v, WX, TS);
     const value = Math.round(tableValue('bar'));
-    assert.equal(value, 67, 'bar, Friday 9 PM, on the shipped table (66.6)');
+    assert.equal(value, 62, 'bar, Friday 9 PM, on the shipped table (61.6)');
     assert.deepStrictEqual(r, {
       score: value,
       label: crowdEngine.getLabel(value),
-      confidence: 37,
+      confidence: 76,
       factors: {},
       dataSourcesUsed: ['google_places', 'category_curve'],
       predictionMethod: METHOD,
@@ -339,8 +340,8 @@ test('switched on, a venue with 200+ reviews and no row at all gets the table\'s
         means: 'measured_accuracy',
         metric: 'within_15_rule_engine_category_table',
         population: p._internals.NO_CURVE_FALLBACK_POPULATION,
-        populationRows: 133071,
-        measuredPercent: 37.1,
+        populationRows: 159163,
+        measuredPercent: 76.0,
         weatherPenalty: 0,
       },
       eventsObserved: false,
@@ -579,8 +580,10 @@ test('an unknown category key or a value that is not a finite number keeps today
 });
 
 test('another artifact\'s table has not been measured, so another version keeps today\'s answer', async () => {
-  assert.equal(META.model_version, '2.6.0-starling', 'the shipped artifact is the one the table was measured on');
-  for (const version of ['2.7.0-candidate', '2.6.0', '', undefined]) {
+  assert.equal(META.model_version, '2.8.0-starling', 'the shipped artifact is the one the table was measured on');
+  // The artifact before it too: v2.6.0-starling's table was measured, but it
+  // is not the table this artifact carries.
+  for (const version of ['2.9.0-candidate', '2.8.0', '2.6.0-starling', '', undefined]) {
     await withPredictor({
       env: { [SWITCH]: ON },
       mutateMeta: (m) => ({ ...m, model_version: version }),
@@ -1503,7 +1506,7 @@ test('the coverage block calls the fallback on only while the table can be serve
     assert.equal(c.noCurveFallback, true);
     assert.equal(c.noCurveFallbackSwitch, true);
     assert.equal(c.noCurveFallbackOff, null);
-    assert.equal(c.noCurveFallbackFittedOn, '2.6.0-starling');
+    assert.equal(c.noCurveFallbackFittedOn, '2.8.0-starling');
   });
   // Off: nothing set, nothing to explain.
   await withPredictor({}, async (p) => {
@@ -1514,7 +1517,7 @@ test('the coverage block calls the fallback on only while the table can be serve
   });
   // The switch set beside another artifact: the panel's answer and the gate's
   // are the same answer, so the venue keeps the rule engine.
-  for (const version of ['2.7.0-candidate', '2.6.0', '']) {
+  for (const version of ['2.9.0-candidate', '2.8.0', '2.6.0-starling', '']) {
     await withPredictor({ env: { [SWITCH]: ON }, mutateMeta: (m) => ({ ...m, model_version: version }) }, async (p, db) => {
       const c = p.predictionCoverage();
       assert.equal(c.noCurveFallback, false, JSON.stringify(version));
@@ -1539,23 +1542,24 @@ test('the coverage block calls the fallback on only while the table can be serve
   });
 });
 
-test('the published figure is pinned: within-15 37.1 on 133,071 readings, with what it was measured on', async () => {
+test('the published figure is pinned: within-15 76.0 on 159,163 readings, with what it was measured on', async () => {
   await withPredictor({ env: { [SWITCH]: ON } }, async (p) => {
     const I = p._internals;
-    assert.deepStrictEqual({ ...I.NO_CURVE_FALLBACK_MEASURED }, { within15: 37.1, rows: 133071 });
+    assert.deepStrictEqual({ ...I.NO_CURVE_FALLBACK_MEASURED }, { within15: 76.0, rows: 159163 });
     assert.ok(Object.isFrozen(I.NO_CURVE_FALLBACK_MEASURED));
-    assert.match(I.NO_CURVE_FALLBACK_POPULATION, /2026-09-01\.\.10-12/);
+    assert.match(I.NO_CURVE_FALLBACK_POPULATION, /2026-11-12\.\.11-25/);
     assert.match(I.NO_CURVE_FALLBACK_POPULATION, /Philadelphia/);
     assert.match(I.NO_CURVE_FALLBACK_POPULATION, /Lehigh and Miami/);
     assert.match(I.NO_CURVE_FALLBACK_POPULATION, /own curve withheld/);
     assert.match(I.NO_CURVE_FALLBACK_POPULATION, /200\+ Google reviews/);
     // The figure is the table's own, on the readings of venues the gate
-    // serves (2026-10-14; the gated policy's 41.3 on three September days
-    // was published until then).
+    // serves, for the artifact the table ships in: 2.8.0-starling's on the
+    // fourteen days held out of its training (v2.6.0-starling's was 37.1 on
+    // 133,071 readings of 2026-09-01..10-12).
     assert.match(I.NO_CURVE_FALLBACK_POPULATION, /first three Google types name one of its categories/);
     assert.notEqual(I.NO_CURVE_FALLBACK_POPULATION, I.SERVE_MEASURED_POPULATION);
     assert.equal(I.NO_CURVE_FALLBACK_MIN_REVIEWS, 200);
-    assert.equal(I.NO_CURVE_FALLBACK_FITTED_ON, '2.6.0-starling');
+    assert.equal(I.NO_CURVE_FALLBACK_FITTED_ON, '2.8.0-starling');
     assert.equal(I.NO_CURVE_FALLBACK_SWITCH, ON);
     assert.equal(I.NO_CURVE_FALLBACK_METHOD, METHOD);
     // The integer on the card is the measured figure, reconstructible from
@@ -1565,7 +1569,7 @@ test('the published figure is pinned: within-15 37.1 on 133,071 readings, with w
       const r = await p.predictBusyness(venue(), weather, TS);
       const m = r.confidenceMeasurement;
       assert.equal(r.confidence, Math.round(m.measuredPercent) - m.weatherPenalty);
-      assert.equal(r.confidence, 37);
+      assert.equal(r.confidence, 76);
       assert.equal(m.weatherPenalty, 0);
     }
   });
@@ -1626,7 +1630,7 @@ test('crowdEngine hedges it as a category prior, says its confidence is measured
 // ---------------------------------------------------------------------------
 
 const EVAL = require.resolve('../scripts/ml/train/noCurveFallbackEval');
-const CANDIDATE = '2.8.0-starling';
+const CANDIDATE = '2.9.0-starling';
 
 test('the no-curve eval refuses a retrained artifact by default, and --allow-version=<its version> scores that artifact\'s own table while production keeps refusing it', async () => {
   const os = require('os');
@@ -1634,7 +1638,7 @@ test('the no-curve eval refuses a retrained artifact by default, and --allow-ver
   const exporter = require('../scripts/ml/train/export_training_data');
   const evalScript = require(EVAL);
   const FITTED = META.model_version;
-  assert.equal(FITTED, '2.6.0-starling', 'the shipped artifact is the one the table was measured on');
+  assert.equal(FITTED, '2.8.0-starling', 'the shipped artifact is the one the table was measured on');
 
   // The flag, read and checked on its own.
   assert.equal(evalScript.parseArgs(['--csv=a.csv']).allowVersion, null, 'off unless given');
@@ -1643,22 +1647,22 @@ test('the no-curve eval refuses a retrained artifact by default, and --allow-ver
   assert.throws(() => evalScript.parseArgs(['--csv=a.csv', '--allow-versions=x']), /unknown option --allow-versions/);
   assert.deepStrictEqual(evalScript.versionGate(FITTED, FITTED), { analysisOnly: false });
   assert.throws(() => evalScript.versionGate(CANDIDATE, FITTED),
-    /the loaded artifact is 2\.8\.0-starling; the switch serves the table only beside 2\.6\.0-starling, so this would score a table production never shows/);
+    /the loaded artifact is 2\.9\.0-starling; the switch serves the table only beside 2\.8\.0-starling, so this would score a table production never shows/);
   assert.deepStrictEqual(evalScript.versionGate(CANDIDATE, FITTED, CANDIDATE), { analysisOnly: true });
   // The flag admits only the artifact it names, never "any version".
-  assert.throws(() => evalScript.versionGate(CANDIDATE, FITTED, '2.8.1-starling'), /names another artifact than the one loaded \(2\.8\.0-starling\)/);
-  assert.throws(() => evalScript.versionGate(FITTED, FITTED, CANDIDATE), /names another artifact than the one loaded \(2\.6\.0-starling\)/);
+  assert.throws(() => evalScript.versionGate(CANDIDATE, FITTED, '2.9.1-starling'), /names another artifact than the one loaded \(2\.9\.0-starling\)/);
+  assert.throws(() => evalScript.versionGate(FITTED, FITTED, CANDIDATE), /names another artifact than the one loaded \(2\.8\.0-starling\)/);
 
-  // End to end, on a candidate whose table differs from 2.6.0's at the one
+  // End to end, on a candidate whose table differs from 2.8.0's at the one
   // slot scored: a bar on a Friday at 9 PM with no curve and 900 reviews.
   const date = '2026-11-20';
   const hour = 21;
   const y = 40;
   const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
   const key = `bar_${dow}_${hour}`;
-  assert.ok(Number.isFinite(META.category_baselines[key]), `2.6.0's table has a ${key} cell`);
+  assert.ok(Number.isFinite(META.category_baselines[key]), `2.8.0's table has a ${key} cell`);
   assert.notEqual(Math.abs(Math.round(META.category_baselines[key]) - y), Math.abs(5 - y),
-    '2.6.0\'s table must score this reading differently from the candidate\'s, or the check below proves nothing');
+    '2.8.0\'s table must score this reading differently from the candidate\'s, or the check below proves nothing');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-nocurve-eval-'));
   const models = path.join(dir, 'models');
   fs.mkdirSync(models);
@@ -1700,13 +1704,13 @@ test('the no-curve eval refuses a retrained artifact by default, and --allow-ver
     // never opens a --csv: here, one that does not exist.
     const unread = [`--csv=${path.join(dir, 'never-read.csv')}`, `--models=${models}`, `--out=${out}`];
     await assert.rejects(() => evalScript.main(unread),
-      /the loaded artifact is 2\.8\.0-starling; the switch serves the table only beside 2\.6\.0-starling/);
-    await assert.rejects(() => evalScript.main([...unread, '--allow-version=2.8.1-starling']),
-      /names another artifact than the one loaded \(2\.8\.0-starling\)/);
+      /the loaded artifact is 2\.9\.0-starling; the switch serves the table only beside 2\.8\.0-starling/);
+    await assert.rejects(() => evalScript.main([...unread, '--allow-version=2.9.1-starling']),
+      /names another artifact than the one loaded \(2\.9\.0-starling\)/);
     await assert.rejects(() => evalScript.main(args),
-      /the loaded artifact is 2\.8\.0-starling; the switch serves the table only beside 2\.6\.0-starling/);
-    await assert.rejects(() => evalScript.main([...args, '--allow-version=2.8.1-starling']),
-      /--allow-version=2\.8\.1-starling names another artifact than the one loaded \(2\.8\.0-starling\)/);
+      /the loaded artifact is 2\.9\.0-starling; the switch serves the table only beside 2\.8\.0-starling/);
+    await assert.rejects(() => evalScript.main([...args, '--allow-version=2.9.1-starling']),
+      /--allow-version=2\.9\.1-starling names another artifact than the one loaded \(2\.9\.0-starling\)/);
     assert.equal(fs.existsSync(out), false, 'a refused run writes no report');
     report = await evalScript.main([...args, `--allow-version=${CANDIDATE}`]);
   } finally {
@@ -1732,7 +1736,7 @@ test('the no-curve eval refuses a retrained artifact by default, and --allow-ver
   }
 
   // What production serves is untouched: an artifact that says it is
-  // 2.8.0-starling, loaded by the server with the switch on, still sends a
+  // 2.9.0-starling, loaded by the server with the switch on, still sends a
   // venue with no curve to the rule engine.
   await withPredictor({
     env: { [SWITCH]: ON },

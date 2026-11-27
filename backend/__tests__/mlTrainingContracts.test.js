@@ -71,7 +71,8 @@ test('review_count is filled the same way in training and in serving', () => {
   // Serving must follow the ARTIFACT, not the trainer's current source: a model
   // trained on the zero fill has to be served the zero fill, or every cold venue
   // moves under weights that never saw that value. So the metadata key is the
-  // switch, and the shipped v2.6.0-starling, which predates it, keeps its zero.
+  // switch: v2.6.0-starling, which predates it, kept its zero, and the shipped
+  // 2.8.0-starling carries the key and is served the median.
   assert.match(PREPARE_PY, /median_review_count/,
     'the trainer no longer computes a review_count median');
   assert.ok(!/\['review_count'\]\.fillna\(0\)/.test(PREPARE_PY),
@@ -380,8 +381,21 @@ test('the score quantile map is one table in two languages, and both default OFF
   const pyFit = QUICK_EVAL_PY.match(/QMAP_FITTED_ON = '([^']+)'/);
   assert.ok(jsFit && pyFit, 'both sides must record the artifact the table was fitted on');
   assert.equal(jsFit[1], pyFit[1], 'the two sides disagree about which model the table belongs to');
-  assert.equal(jsFit[1], METADATA.model_version,
-    'the shipped artifact is not the one this table was fitted on — refit it or do not enable it');
+  // "Refit it or do not enable it." While the table was the shipped
+  // artifact's (v2.6.0-starling) this was an equality. 2.8.0-starling ships
+  // with no table of its own, so the second half is what has to hold, and on
+  // both sides: its gate ran with the map off and recorded that, and the serve
+  // path applies the map to the fitted version and no other.
+  assert.equal(jsFit[1], '2.6.0-starling');
+  if (jsFit[1] !== METADATA.model_version) {
+    assert.equal(METADATA.ship_gate.score_qmap_enabled, false,
+      'the shipped artifact is not the one this table was fitted on, and its gate scored it through the table');
+    assert.equal(METADATA.ship_gate.score_qmap_fitted_on, null,
+      'a gate run with the map off records no table');
+    const applied = PREDICTOR_JS.match(/qmapEnabled\(\) && \(metadata\.model_version \|\| ''\) === QMAP_FITTED_ON/g) || [];
+    assert.equal(applied.length, 3,
+      'every place the serve path decides whether the map applies must check the artifact it was fitted on');
+  }
 
   // One flag name, read the same way on both sides, defaulting off.
   assert.match(PREDICTOR_JS,

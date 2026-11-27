@@ -242,6 +242,10 @@ function makeFixturePool(fx, moment, { keepReadings = 3, keepOffsetReadings = 24
       return { rows: [row] };
     }
     if (/FROM venue_feedback/.test(sql)) return { rows: [{ avg_crowd: null, count: 0, avg_error_mapped: null, avg_error_legacy: null }] };
+    // The game schedule, which an artifact that lists a sports feature reads
+    // once (mlPredictor SPORTS_SQL): no games, the schedule the replay scores
+    // this fixture with when it is handed none (bandEval prepareRows).
+    if (/FROM ml_sports_events/.test(sql)) return { rows: [] };
     unknown.push(sql.slice(0, 120));
     return { rows: [] };
   };

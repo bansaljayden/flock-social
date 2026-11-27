@@ -143,15 +143,26 @@ test('the vector is ordered by metadata.feature_names, value by value', () => {
   };
   const approx = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-4, `${msg}: ${a} vs ${b}`);
 
+  // 2.8.0-starling lists neither the calendar columns (its run dropped all
+  // twelve) nor is_realtime (out of the feature set since 2026-09-25), so the
+  // two this test used to read off the vector have no position in it. The map
+  // the vector is ordered from still carries both, for an artifact that lists
+  // them, and they are read there.
+  const map = _internals.buildFeatureMap(
+    venueWithBaseline(), WEATHER_CAMEL, ts, events, feedback, 50, { count: 3, mean: 42 });
+  for (const name of ['month', 'is_realtime']) {
+    assert.ok(!META.feature_names.includes(name), `${name} is listed again: read it off the vector`);
+  }
+
   assert.equal(vector[idx('hour')], ts.getHours());
   assert.equal(vector[idx('day_of_week')], ts.getDay());
-  assert.equal(vector[idx('month')], ts.getMonth() + 1);
+  assert.equal(map.month, ts.getMonth() + 1);
   approx(vector[idx('temperature')], 18, 'temperature');
   approx(vector[idx('wind_speed')], 4, 'wind_speed');
   assert.equal(vector[idx('is_raining')], 1);
   assert.equal(vector[idx('weather_light_rain')], 1, 'conditionId 500 is light rain');
   assert.equal(vector[idx('weather_clear')], 0);
-  assert.equal(vector[idx('is_realtime')], 1, 'live predictions are realtime quality');
+  assert.equal(map.is_realtime, 1, 'live predictions are realtime quality');
   assert.equal(vector[idx('is_dinner_hour')], 1, '19h is dinner');
   assert.equal(vector[idx('has_nearby_event')], 1);
   assert.equal(vector[idx('large_event_nearby')], 1, '8000 > 5000');
@@ -168,6 +179,16 @@ test('the vector is ordered by metadata.feature_names, value by value', () => {
   // legacy raw-ordinal error. A model that declares mapped gets mapped.
   const expectedErr = META.feedback_error_semantics === 'mapped' ? 11 : -7;
   approx(vector[idx('avg_prediction_error')], expectedErr, 'feedback error semantics');
+  // The two families 2.8.0-starling added, at their own positions: with no
+  // stored readings and no schedule handed in, no reading (age at its
+  // missing value) and no game (the arena distance at its cap).
+  for (const name of _internals.LIVE_FEATURE_NAMES) {
+    assert.equal(vector[idx(name)], _internals.LIVE_FEATURE_DEFAULTS[name], name);
+  }
+  assert.equal(vector[idx('last_live_age_h')], _internals.LIVE_MISSING_AGE_H);
+  const noGame = _internals.sportsFeatureValues(null, 40.71, -74.0, '2026-08-14');
+  for (const name of _internals.SPORTS_FEATURE_NAMES) assert.equal(vector[idx(name)], noGame[name], name);
+  assert.equal(vector[idx('sports_game_today')], 0);
   // Every position is a finite number — NaN in a Float32Array would sail
   // straight into the model.
   for (let i = 0; i < vector.length; i++) {

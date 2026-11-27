@@ -190,7 +190,12 @@ test('whatever artifact is on disk is classified, and its blend is never the ans
     // weekly slice is the majority of the rows and is close to tautological.
     const byPop = META.training_metrics_by_population;
     if (byPop.weekly_anchor) {
-      assert.ok(byPop.weekly_anchor.rows > onDisk.rows * 2, 'the blend is majority weekly rows');
+      // The majority of the artifact's own rows. This asked for twice the
+      // served slice while v2.6.0-starling was on disk (1,565,912 weekly rows
+      // against 369,076 served, 81% of its 1,934,988). 2.8.0-starling trains
+      // on four times the live readings: 2,052,008 weekly rows of 3,533,480,
+      // 58%, against 1,481,472 served. Still the majority, which is the claim.
+      assert.ok(byPop.weekly_anchor.rows > byPop.all_rows.rows / 2, 'the blend is majority weekly rows');
       assert.ok(byPop.weekly_anchor.within_15 > 99,
         'a weekly row\'s label equals its baseline by construction, so the model gets it free');
     }

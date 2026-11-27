@@ -14,7 +14,9 @@
 //
 // Serving needs no change for it: orderFeatureVector builds the vector from the
 // artifact's own feature_names, so an artifact that does not list is_realtime
-// never reads the 1 buildFeatureMap still sets for v2.6.0-starling.
+// (2.8.0-starling is the first shipped one) never reads the 1
+// buildFeatureMap still sets for v2.6.0-starling, the artifact a rollback
+// restores.
 //
 // Run: node --test  (from backend/)
 // ---------------------------------------------------------------------------
@@ -52,7 +54,13 @@ test('an artifact without is_realtime in feature_names builds a vector without i
   const without = I.orderFeatureVector(features, ['day_of_week', 'hour']);
   assert.deepEqual(Array.from(withIt), [5, 20, 1]);
   assert.deepEqual(Array.from(without), [5, 20], 'the flag serving sets is dropped by name, not by position');
-  // The shipped artifact still lists it, which is why buildFeatureMap keeps the key.
+  // The shipped 2.8.0-starling does not list it, so the 1 serving still sets
+  // reaches no position of its vector. (v2.6.0-starling listed it, which is
+  // why buildFeatureMap keeps the key.)
   const meta = require('../scripts/ml/models/model_metadata.json');
-  assert.ok(meta.feature_names.includes('is_realtime'), 'the shipped v2.6.0-starling lists it');
+  assert.ok(!meta.feature_names.includes('is_realtime'), 'the shipped 2.8.0-starling does not list it');
+  const zeros = Object.fromEntries(meta.feature_names.map((n) => [n, 0]));
+  const shipped = I.orderFeatureVector({ ...zeros, is_realtime: 1 }, meta.feature_names);
+  assert.equal(shipped.length, meta.feature_names.length);
+  assert.ok(Array.from(shipped).every((v) => v === 0), 'the flag reached a position of the shipped vector');
 });

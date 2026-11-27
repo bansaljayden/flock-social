@@ -57,8 +57,15 @@ const PROFILE_NAMES = [
   'is_dinner_hour', 'is_weekend', 'price_level', 'rating', 'refined_category_baseline',
   'venue_category_encoded',
 ].sort();
+// "Servable" on this path leaves out the live and sports families, which the
+// shipped vocabulary has carried since 2.8.0-starling: scoreTwoHead gathers no
+// live or sports context, so a two-head artifact that lists either is refused
+// at load (pinned near the end of this file), and a candidate the path can
+// serve lists neither.
+const NOT_ON_THIS_PATH = new Set(['is_realtime',
+  ...mlPredictor._internals.LIVE_FEATURE_NAMES, ...mlPredictor._internals.SPORTS_FEATURE_NAMES]);
 const DEVIATION_NAMES = [
-  ...META.feature_names.filter((n) => n !== 'is_realtime'),
+  ...META.feature_names.filter((n) => !NOT_ON_THIS_PATH.has(n)),
   'baseline_busyness', PROFILE_FEATURE,
 ].sort();
 

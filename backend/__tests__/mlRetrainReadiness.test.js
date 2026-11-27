@@ -27,7 +27,7 @@
 //      from 2026-11-05 it was the mix, `model_when_fresh+nowcast`).
 //
 // No database, no network, no model is fitted: the scored artifact is the
-// tracked v2.6.0-starling ONNX, replayed. Run: node --test  (from backend/)
+// tracked one (2.8.0-starling), replayed. Run: node --test  (from backend/)
 // ---------------------------------------------------------------------------
 
 process.env.TZ = 'UTC';
@@ -124,11 +124,19 @@ test('--incumbent-serve=curve_offset+nowcast scores the incumbent as rule (b) un
 test('the rows file carries what the runbook needs to report the paper\'s configuration on the same readings', async () => {
   await withFixtureCsv(async (csv, dir) => {
     const rowsOut = path.join(dir, 'band_rows.csv');
+    // A schedule with no games: the tracked artifact reads the sports
+    // features, main() refuses to score such an artifact without a schedule,
+    // and a clean checkout has no train/sports_events.csv. And the window,
+    // named: a report's default starts the day after the scored artifact's
+    // live training data ended (2026-11-12 for the tracked one), which is
+    // after every reading of this fixture.
+    const sportsCsv = path.join(dir, 'sports_events.csv');
+    fs.writeFileSync(sportsCsv, 'is_home,event_local_date,event_local_time,venue_lat,venue_lon\n');
     const quiet = console.log;
     console.log = () => {};
     try {
       await B.main([`--train=${csv}`, '--holdout=-', `--model=${MODELS_DIR}`, `--incumbent=${MODELS_DIR}`,
-        '--incumbent-serve=curve_offset+nowcast', `--rows-out=${rowsOut}`]);
+        '--incumbent-serve=curve_offset+nowcast', `--sports=${sportsCsv}`, `--from=${FX.DATES[0]}`, `--rows-out=${rowsOut}`]);
     } finally {
       console.log = quiet;
     }

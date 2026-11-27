@@ -32,6 +32,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+// Every through-predictBusyness case here loads a fresh predictor, several
+// times over; this makes the shipped graph one open (see the helper).
+require('./helpers/sharedOnnxSession');
 const B = require('../scripts/ml/train/bandEval');
 const crowdEngine = require('../services/crowdEngine');
 const FX = require('./helpers/bandEvalFixture');
@@ -69,7 +72,20 @@ function freshPredictor() {
 }
 
 const I = freshPredictor()._internals;
-const NAMES = META.feature_names;
+// THE ARTIFACT THE MONTH AVERAGE IS FOR. MONTH_SUPPORT names one artifact,
+// v2.6.0-starling, which listed the month and its two angles. The shipped
+// artifact, 2.8.0-starling, lists no calendar column and is not named, so the
+// average has nothing in it to act on. The cases about the average itself run
+// on the named artifact's shape: the shipped metadata under that version, with
+// the three month names in its sorted list. While the shipped artifact is the
+// named one, that shape is the shipped metadata itself.
+const MONTH_ARTIFACT = '2.6.0-starling';
+const MONTH_META = META.model_version === MONTH_ARTIFACT ? META : {
+  ...META,
+  model_version: MONTH_ARTIFACT,
+  feature_names: [...new Set([...META.feature_names, 'month', 'month_sin', 'month_cos'])].sort(),
+};
+const NAMES = MONTH_META.feature_names;
 const SLOT = { month: NAMES.indexOf('month'), sin: NAMES.indexOf('month_sin'), cos: NAMES.indexOf('month_cos') };
 
 function vectorWithMonth(month) {
@@ -111,19 +127,28 @@ test('MONTH_SUPPORT names the months the artifact was trained on, and no artifac
 });
 
 test('monthSupportFor: the trained months for a month outside them, and nothing otherwise', () => {
+  assert.ok(SLOT.month >= 0 && SLOT.sin >= 0 && SLOT.cos >= 0, 'the named artifact reads the month and both its angles');
   for (const month of [1, 6, 9, 11, 12]) {
-    assert.deepEqual(I.monthSupportFor(META, vectorWithMonth(month)), { months: I.MONTH_SUPPORT['2.6.0-starling'], slots: SLOT }, `month ${month}`);
+    assert.deepEqual(I.monthSupportFor(MONTH_META, vectorWithMonth(month)), { months: I.MONTH_SUPPORT['2.6.0-starling'], slots: SLOT }, `month ${month}`);
   }
-  for (const month of [3, 4, 5]) assert.equal(I.monthSupportFor(META, vectorWithMonth(month)), null, `month ${month} was trained on`);
-  assert.equal(I.monthSupportFor({ ...META, model_version: '2.7.0-test' }, vectorWithMonth(11)), null, 'another artifact');
-  assert.equal(I.monthSupportFor({ ...META, feature_names: NAMES.filter((n) => n !== 'month') }, vectorWithMonth(11)), null, 'no month slot');
+  for (const month of [3, 4, 5]) assert.equal(I.monthSupportFor(MONTH_META, vectorWithMonth(month)), null, `month ${month} was trained on`);
+  assert.equal(I.monthSupportFor({ ...MONTH_META, model_version: '2.7.0-test' }, vectorWithMonth(11)), null, 'another artifact');
+  assert.equal(I.monthSupportFor({ ...MONTH_META, feature_names: NAMES.filter((n) => n !== 'month') }, vectorWithMonth(11)), null, 'no month slot');
   assert.equal(I.monthSupportFor(null, vectorWithMonth(11)), null);
-  assert.equal(I.monthSupportFor(META, null), null);
+  assert.equal(I.monthSupportFor(MONTH_META, null), null);
+  // The shipped artifact, when it is not the named one: no vector of its own
+  // is averaged, in any month, and the named version alone does not make it
+  // one (it has no month slot).
+  if (META !== MONTH_META) {
+    const shipped = new Float32Array(META.feature_names.length).fill(1.25);
+    assert.equal(I.monthSupportFor(META, shipped), null, 'the shipped artifact is not named');
+    assert.equal(I.monthSupportFor({ ...META, model_version: MONTH_ARTIFACT }, shipped), null, 'and has no month to average over');
+  }
 });
 
 test('monthSupportBatch: one row per trained month, its month and angles as buildFeatureMap sets them, every other slot as built', async () => {
   const v = vectorWithMonth(11);
-  const s = I.monthSupportFor(META, v);
+  const s = I.monthSupportFor(MONTH_META, v);
   const batch = I.monthSupportBatch(v, s);
   assert.ok(batch instanceof Float32Array);
   assert.equal(batch.length, s.months.length * v.length);
@@ -483,6 +508,11 @@ test('a zero-curve hour whose earlier lookup failed, answered since by a whole-c
     await withEnv({ ...PRODUCTION, CROWD_ZERO_CURVE_MODEL: 'true' }, async () => {
       const predictor = freshPredictor();
       assert.equal(await predictor.init(), true);
+      // The switch serves only beside the artifact it was measured on
+      // (ZERO_CURVE_FITTED_ON), which the shipped one is no longer. What this
+      // case pins is the lookup's bookkeeping, so the loaded artifact carries
+      // that version for the length of it.
+      predictor._internals.getMetadata().model_version = predictor._internals.ZERO_CURVE_FITTED_ON;
       const venue = { ...r.venue, place_id: alias };
       const failed = await predictor.predictBusyness(venue, r.weather, r.ts);
       assert.equal(failed.predictionMethod, 'rule_engine_baseline_error', 'a lookup that failed never read the row');
@@ -542,6 +572,10 @@ test('a zero from a lookup that found no row stays the rule engine\'s, though an
     await withEnv({ ...PRODUCTION, CROWD_ZERO_CURVE_MODEL: 'true' }, async () => {
       predictor = freshPredictor();
       assert.equal(await predictor.init(), true);
+      // Under the version the switch serves beside, as in the case above, so
+      // the rule engine's answer below is the bookkeeping's doing and not the
+      // switch standing aside for another artifact.
+      predictor._internals.getMetadata().model_version = predictor._internals.ZERO_CURVE_FITTED_ON;
       const answer = await predictor.predictBusyness({ ...r.venue, place_id: alias }, r.weather, r.ts);
       assert.ok(primed > 0, 'the slot was primed while the request was in flight');
       assert.equal(predictor._internals.baselineProvenanceFor(alias, r.ts.getDay(), r.ts.getHours()).basis, 'baseline_row_written',
@@ -563,13 +597,19 @@ test('bandEval --fit fits on the arithmetic as shipped, whatever the two switche
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-servingfixes-fit-'));
   const csv = path.join(dir, 'fixture.csv');
   FX.writeFixtureCsv(csv, fx);
+  // A schedule with no games: the shipped artifact reads the sports features,
+  // and a clean checkout has no train/sports_events.csv. And the window, named:
+  // a report's default starts the day after the scored artifact's live
+  // training data ended, which for the shipped one is after this fixture.
+  const sportsCsv = path.join(dir, 'sports_events.csv');
+  fs.writeFileSync(sportsCsv, 'is_home,event_local_date,event_local_time,venue_lat,venue_lon\n');
   const fit = async (env, name) => {
     const out = path.join(dir, `${name}.json`);
     await withEnv(env, async () => {
       const quiet = console.log;
       console.log = () => {};
       try {
-        await B.main([`--train=${csv}`, '--holdout=-', `--model=${MODELS_DIR}`, '--fit', '--qmap=false', '--score-from=2026-09-06', `--out=${out}`]);
+        await B.main([`--train=${csv}`, '--holdout=-', `--model=${MODELS_DIR}`, `--sports=${sportsCsv}`, `--from=${FX.DATES[0]}`, '--fit', '--qmap=false', '--score-from=2026-09-06', `--out=${out}`]);
       } finally {
         console.log = quiet;
       }
