@@ -35,6 +35,8 @@ from model_files import has_onnx
 from prepare_features import serving_population_mask
 # realtime_flags is re-exported: eval_two_head.py imports it from here.
 from prepare_features import realtime_flags  # noqa: F401
+# Which training rows are masked copies of realtime rows (FLOCK_LIVE_MASK_COPIES=on).
+from prepare_features import masked_copy_blocks, masked_copy_flags
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -511,6 +513,14 @@ def main():
     train_baseline = train_data['baseline']
     train_y_actual = train_data['y_actual']
     feature_cols = train_data['feature_cols']
+    # The training diagnostic below sets the popular_times baseline beside
+    # training_metrics, which train_model.py measures on the ORIGINAL rows of a
+    # matrix that carries masked copies of its realtime rows
+    # (FLOCK_LIVE_MASK_COPIES=on). The baseline is measured on those same rows:
+    # the first `original` of them (masked_copy_blocks requires that order),
+    # which is every row of a pickle prepared without the switch.
+    original_rows = masked_copy_blocks(masked_copy_flags(train_data))['original']
+    train_baseline, train_y_actual = train_baseline[:original_rows], train_y_actual[:original_rows]
     del train_data  # the rest of the training pickle is not read here
 
     logger.info('Loading holdout features + trained model...')

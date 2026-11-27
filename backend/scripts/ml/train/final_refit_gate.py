@@ -30,9 +30,10 @@ from pathlib import Path
 MODELS_DIR = Path(__file__).parent.parent / 'models'
 META = MODELS_DIR / 'model_metadata.json'
 
-# The recipe: what must be identical between the gated run and its refit. Two more parts of it
+# The recipe: what must be identical between the gated run and its refit. Three more parts of it
 # are records rather than strings and have their own checks below: the anchor weights
-# (sample_weight_policy) and the unknown-provenance policy (corpus_contract.unknown_provenance).
+# (sample_weight_policy), the unknown-provenance policy (corpus_contract.unknown_provenance) and
+# the masked copies of the realtime rows (corpus_contract.live_mask_copies).
 POLICY_KEYS = ('weather_policy', 'calendar_policy', 'dead_slot_policy', 'run_length_policy',
                'live_feature_policy', 'sports_features', 'dropped_features')
 
@@ -106,6 +107,31 @@ def unknown_provenance_problems(refit_contract: dict, gated_contract: dict) -> l
     return []
 
 
+def live_mask_copies_problems(refit_contract: dict, gated_contract: dict) -> list:
+    """Whether masked copies of the realtime rows trained (FLOCK_LIVE_MASK_COPIES), read off
+    corpus_contract.live_mask_copies as prepare_features.py records it.
+
+    The record is written only when the switch is on ({policy: 'on', offset_only, no_reading,
+    ...}); metadata without it was prepared with the switch off, which is every artifact from
+    before the switch existed, so a missing record reads as 'off' and two missing records match.
+    A model trained with the copies has another training matrix and another loss, so the policy
+    must match. The counts are what each frame held: the refit's are larger, and they are not
+    compared. A record that is present but is not that shape is a problem, never a match.
+    """
+    def policy(contract):
+        if 'live_mask_copies' not in contract:
+            return 'off'
+        rec = contract['live_mask_copies']
+        return rec.get('policy') if isinstance(rec, dict) else None
+
+    r, g = policy(refit_contract), policy(gated_contract)
+    if r not in ('on', 'off') or g not in ('on', 'off'):
+        return [f'corpus_contract.live_mask_copies.policy is not recorded as on or off (refit {r!r}, gated {g!r})']
+    if r != g:
+        return [f'corpus_contract.live_mask_copies.policy differs: refit {r!r} vs gated {g!r}']
+    return []
+
+
 def problems_with(refit: dict, gated: dict, gated_blob: bytes) -> list:
     """Every reason the gated verdict may not be carried onto this refit. Empty means it may."""
     out = []
@@ -136,6 +162,7 @@ def problems_with(refit: dict, gated: dict, gated_blob: bytes) -> list:
         if rc.get(k) != gc.get(k):
             out.append(f'corpus_contract.{k} differs: refit {rc.get(k)!r} vs gated {gc.get(k)!r}')
     out.extend(unknown_provenance_problems(rc, gc))
+    out.extend(live_mask_copies_problems(rc, gc))
     out.extend(weight_policy_problems(refit.get('sample_weight_policy'), gated.get('sample_weight_policy')))
     if 'training_metrics' not in refit:
         out.append('train_model.py has not run on the refit (no training_metrics)')

@@ -336,6 +336,10 @@ def load_reference_pickle() -> dict:
         raise SystemExit(f'{path.name} keeps X beside it ({name}): within_city_eval.py rebuilds '
                          'the frame and copies X in memory and does not support that layout. '
                          'Run it on a frame that keeps X in the pickle.')
+    # The rebuild makes one row per source row and is compared with the pickle
+    # row for row; masked copies of the realtime rows are refused by name here,
+    # before the rebuild, rather than as a row-count mismatch after it.
+    pf.refuse_masked_copies(ref, 'within_city_eval.py')
     return ref
 
 

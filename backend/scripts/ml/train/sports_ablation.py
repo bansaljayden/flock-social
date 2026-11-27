@@ -47,6 +47,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from quick_eval import metrics, reconstruct, date_block_bootstrap, realtime_flags  # noqa: E402
 from features_io import load_features, x_is_external  # noqa: E402
+from prepare_features import refuse_masked_copies  # noqa: E402
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -96,6 +97,8 @@ def main():
         raise SystemExit(f'features_train.pkl keeps X beside it ({tr.get("X_file")}): '
                          'sports_ablation.py fits in memory and does not support that '
                          'layout. Run it on a frame that keeps X in the pickle.')
+    # Its fits and its forward split read every pickle row as one source row.
+    refuse_masked_copies(tr, 'sports_ablation.py')
     ho = load_features(os.path.join(SCRIPT_DIR, 'features_holdout.pkl'), mmap=False, verify=True)
 
     cols = list(tr['feature_cols'])

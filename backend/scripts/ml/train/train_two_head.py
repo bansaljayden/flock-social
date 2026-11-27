@@ -131,6 +131,7 @@ from xgboost import XGBRegressor
 
 from features_io import load_features, x_is_external
 from prepare_features import MIN_REALTIME_ROWS, realtime_flags, serving_population_mask
+from prepare_features import refuse_masked_copies
 from train_model import (FIXED_PARAMS, PER_CITY_MIN_ROWS, RANDOM_STATE,
                          FoldCategoryBaselines, LabelContractError, LeakageError,
                          _metrics, assert_delta_label, assert_group_disjoint,
@@ -659,6 +660,9 @@ def main():
         raise SystemExit(f'features_train.pkl keeps X beside it ({data.get("X_file")}): '
                          'train_two_head.py fits in memory and does not support that '
                          'layout. Run it on a frame that keeps X in the pickle.')
+    # Both heads, their folds and every reported population read each pickle
+    # row as one source row.
+    refuse_masked_copies(data, 'train_two_head.py')
 
     X = data['X']
     feature_cols = list(data['feature_cols'])

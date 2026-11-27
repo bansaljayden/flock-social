@@ -48,6 +48,13 @@ X beside the pickle: a features_train.pkl whose X lives in features_train.X.npy
 (features_io.py) is memory-mapped, and every fit and predict then reads it a row
 chunk at a time (RowChunks, predict_rows), with the same booster and the same
 model_metadata.json as an X held in the pickle. See the block above RowChunks.
+
+Masked copies: a features_train.pkl prepared with FLOCK_LIVE_MASK_COPIES=on
+carries copies of its realtime rows with the reading-based live features at
+their missing values, marked by the per-row key `masked_copy`. They train in
+every fit and are predicted out of fold, and every number this script has
+always reported is still measured on the original rows. See the block above
+assert_masked_copies.
 """
 
 import json
@@ -74,6 +81,12 @@ from xgboost import XGBRegressor
 # per-fold refit below has to key its cells exactly the way the map it replaces
 # was keyed, and a second copy of those key lists is a second thing to drift.
 from prepare_features import serving_population_mask, realtime_flags, CAT_KEYS, REFINED_KEYS
+# The masked copies are defined in prepare_features.py, which writes them: which
+# rows get which copy, the columns masked, the missing values and the row order.
+# Read from there for the same reason as the mask above.
+from prepare_features import (CorpusContractError, LIVE_MISSING_AGE_H, LIVE_READING_FEATURES,
+                              MASKED_COPY_CODES, live_mask_copy_sources, masked_copy_blocks,
+                              masked_copy_flags)
 from features_io import load_features
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
@@ -150,7 +163,7 @@ def assert_no_forbidden_features(feature_cols) -> None:
         )
 
 
-def assert_no_label_shaped_feature(X, feature_cols, probes) -> dict:
+def assert_no_label_shaped_feature(X, feature_cols, probes, rows=None) -> dict:
     """Value-level leak guard: catch a forbidden quantity that arrived renamed.
 
     The name guard above only knows the names round 10 knew. This one compares
@@ -158,8 +171,15 @@ def assert_no_label_shaped_feature(X, feature_cols, probes) -> dict:
     refuses any column that reproduces one of them on essentially every row —
     which is what a re-derived `baseline_busyness` looks like no matter what it
     is called. Deterministic subsample so two runs of the same data agree.
+
+    `rows`, when given, scans the first `rows` rows only: the original rows of a
+    matrix that carries masked copies after them. A copy holds constants where
+    its source row held a reading, so a reading-based column that reproduced
+    the target on every original row would match on far fewer of the copies,
+    and counted together the share could fall under the threshold. The sample
+    is then the one the same matrix without its copies would get.
     """
-    n = X.shape[0]
+    n = X.shape[0] if rows is None else int(rows)
     if n > COPY_DETECTION_SAMPLE:
         idx = np.random.default_rng(RANDOM_STATE).choice(n, COPY_DETECTION_SAMPLE, replace=False)
         idx.sort()
@@ -281,7 +301,7 @@ def assert_delta_label(y, y_actual, baseline, label_type: str) -> None:
 
 
 def assert_weighting_matches_provenance(sample_weight, is_realtime, provenance,
-                                        run_length_divisor=None) -> dict:
+                                        run_length_divisor=None, masked_copy=None) -> dict:
     """Sample weights must follow the pipeline's tiering, not the other way round.
 
     prepare_features.py sets weekly < vendor-forecast < live-observed, with the
@@ -294,6 +314,12 @@ def assert_weighting_matches_provenance(sample_weight, is_realtime, provenance,
     readings under FLOCK_RUN_LENGTH_WEIGHTS=on, 1 everywhere else. The tier is
     then weight x divisor, still one number per tier, and only a live row may
     carry a divisor above 1.
+
+    `masked_copy` (2026-11-27) marks the masked copies of realtime rows. A copy
+    carries its source row's weight, divisor and provenance, so it sits in its
+    source's tier and is held to that tier's one weight like any row. The
+    summary describes the loss, so each tier's rows, weight share and weight
+    sum count the copies; `masked_copy_rows` says how many of the rows they are.
     """
     if sample_weight is None:
         raise LabelContractError(
@@ -322,6 +348,11 @@ def assert_weighting_matches_provenance(sample_weight, is_realtime, provenance,
                 f'{int((div[~live] != 1).sum())} row(s) that are not live readings carry a '
                 'run-length divisor above 1. Only a live reading can repeat a vendor update.')
         tier_w = w * div
+    copies = None
+    if masked_copy is not None and np.asarray(masked_copy).any():
+        copies = np.asarray(masked_copy) != 0
+        if len(copies) != len(w):
+            raise LabelContractError('masked_copy must be aligned with sample_weight.')
     tiers = {'weekly_anchor': ~rt}
     if prov is not None:
         tiers['realtime_vendor_forecast'] = rt & (prov == 'forecast')
@@ -345,6 +376,8 @@ def assert_weighting_matches_provenance(sample_weight, is_realtime, provenance,
         if run_length_divisor is not None and name != 'weekly_anchor':
             summary[name]['rows_divided_by_run_length'] = int((div[mask] > 1).sum())
             summary[name]['weight_sum'] = round(float(w[mask].sum()), 3)
+        if copies is not None:
+            summary[name]['masked_copy_rows'] = int(copies[mask].sum())
 
     order = [k for k in ('weekly_anchor', 'realtime_vendor_forecast', 'realtime_observed',
                          'realtime') if k in summary]
@@ -356,6 +389,112 @@ def assert_weighting_matches_provenance(sample_weight, is_realtime, provenance,
             'live observation teaches the model to reproduce BestTime, not reality.')
     logger.info('Sample-weight tiers: %s', json.dumps(summary))
     return summary
+
+
+# ---------------------------------------------------------------------------
+# Masked copies of the realtime rows (FLOCK_LIVE_MASK_COPIES, 2026-11-27)
+# ---------------------------------------------------------------------------
+# prepare_features.append_live_mask_copies may append, after the matrix's own
+# rows, copies of its realtime rows with the reading-based live features at the
+# values serving sends when it has no reading (the block above that function).
+# A copy trains in every fit, sits in its source row's city, so the split is
+# the one the original rows give, and is predicted out of fold like any row.
+#
+# Until then this file could count one pickle row as one source row, and did so
+# in the places below. Each now counts ORIGINAL rows:
+#
+#   * the metrics: training_metrics, the three populations earlier artifacts
+#     and mlPredictor read (all_rows, realtime_served, weekly_anchor; the card's
+#     confidence is realtime_served.within_15), training_loco_per_city and
+#     training_city_rows. The copies are reported beside them, as
+#     realtime_offset_only and realtime_no_reading.
+#   * the subset rule in FoldCategoryBaselines: no cell may hold more matrix
+#     rows than the pre-filter frame its aggregates were fitted on. A copy is a
+#     second row of its source's cell, so the rule is held on the original
+#     rows, exactly as strictly as before.
+#   * the leak scan, where the copies' constants would dilute a real match
+#     under its threshold, and the per-fold feature shifts.
+#   * the early-stopping split, sized and scored on original rows, and the
+#     hyperparameter search, which scores every validation row once and is
+#     refused on a matrix with copies.
+#
+# That is sound only if a row marked as a copy IS one, so the mark is not taken
+# on its word. assert_masked_copies rebuilds, from the original rows alone,
+# which rows get which copy (prepare_features.live_mask_copy_sources, the
+# function that made them), and requires every copy to equal its source row in
+# every per-row value this script holds: the masked columns at their missing
+# values and nothing else changed. A row carrying the mark that is not such a
+# copy stops the run, and no environment variable waives any of it.
+def _same_rows(a, b) -> bool:
+    a, b = np.asarray(a), np.asarray(b)
+    return bool(np.array_equal(a, b, equal_nan=a.dtype.kind == 'f'))
+
+
+def assert_masked_copies(masked_copy, X, feature_cols, is_realtime, per_row) -> dict:
+    """Every row marked a masked copy is the copy prepare_features writes of its source row.
+
+    `per_row` is {name: array} of the other per-row values this script reads
+    (label, baseline, weight, city, ...); None values are skipped. Returns the
+    row counts, or None for a matrix with no copies.
+    """
+    flags = np.asarray(masked_copy)
+    if not flags.any():
+        return None
+    try:
+        blocks = masked_copy_blocks(flags)
+    except CorpusContractError as err:
+        raise LabelContractError(str(err)) from err
+    n0, n_b, n_c = blocks['original'], blocks['offset_only'], blocks['no_reading']
+    cols = list(feature_cols)
+    absent = [c for c in LIVE_READING_FEATURES if c not in cols]
+    if absent:
+        raise LabelContractError(
+            f'features_train.pkl marks {n_b + n_c} rows as masked copies, but the feature '
+            f'matrix has no {absent}: there is nothing a copy could have masked.')
+    idx_b, idx_c = live_mask_copy_sources(X, cols, is_realtime, rows=n0)
+    if (len(idx_b), len(idx_c)) != (n_b, n_c):
+        raise LabelContractError(
+            f'features_train.pkl marks {n_b} offset-only and {n_c} no-reading masked copies, '
+            f'but its {n0} original rows call for {len(idx_b)} and {len(idx_c)} (one offset-only '
+            'copy per realtime row with a reading and an offset, one no-reading copy per '
+            'realtime row with either). The marked rows are not the copies '
+            'prepare_features.py writes.')
+    src = np.concatenate([idx_b, idx_c])
+    for name, values in per_row.items():
+        if values is None:
+            continue
+        values = np.asarray(values)
+        if not _same_rows(values[n0:], values[src]):
+            raise LabelContractError(
+                f'A masked copy must carry its source row\'s {name}, and at least one does not. '
+                'Everything but the masked live features is the source row\'s by definition; '
+                'a copy with another label, weight or city is a new training row under a '
+                'copy\'s mark.')
+    every_copy = {cols.index('last_live_dev'): 0.0,
+                  cols.index('last_live_age_h'): float(LIVE_MISSING_AGE_H)}
+    no_reading_only = {cols.index('recent_offset'): 0.0, cols.index('recent_offset_n'): 0.0}
+    for j, name in enumerate(cols):
+        col = np.asarray(X[:, j])
+        copies, source = col[n0:], col[src]
+        if j in every_copy:
+            ok = bool((copies == every_copy[j]).all())
+        elif j in no_reading_only:
+            ok = (_same_rows(copies[:n_b], source[:n_b])
+                  and bool((copies[n_b:] == no_reading_only[j]).all()))
+        else:
+            ok = _same_rows(copies, source)
+        if not ok:
+            raise LabelContractError(
+                f'Feature {name} of at least one masked copy is not what prepare_features.py '
+                'writes: last_live_dev 0 and last_live_age_h '
+                f'{LIVE_MISSING_AGE_H} on every copy, recent_offset and recent_offset_n 0 on '
+                'the no-reading copies, and every other column the source row\'s.')
+    logger.info('Masked copies OK: %d offset-only and %d no-reading copies after %d original '
+                'rows, each equal to its source row outside the masked live features. '
+                'Metrics below are measured on the original rows; the copies are reported '
+                'as their own two populations.', n_b, n_c, n0)
+    return {'original_rows': n0, 'offset_only': n_b, 'no_reading': n_c,
+            'matrix_rows': int(len(flags))}
 
 
 # ---------------------------------------------------------------------------
@@ -428,13 +567,25 @@ class FoldCategoryBaselines:
     category cell, silently, and produce better-looking numbers that mean
     nothing. The aggregate rebuild (`sums` re-derived from the rows themselves)
     is what makes that structural rather than trusted.
+
+    `masked_copy` marks the masked copies of realtime rows (the block above
+    assert_masked_copies), 0 on an original row. The rebuild above is made over
+    every row, copies included; the rule that the matrix rows are a subset of
+    the rows the aggregates were fitted on is held on the original rows.
     """
 
-    def __init__(self, cell_stats, cities, feature_cols, y_actual):
+    def __init__(self, cell_stats, cities, feature_cols, y_actual, masked_copy=None):
         self.active = False
         self.reason = None
         self.version = None
         self.col_index = {}
+        # The original rows, or None when every row is one.
+        self.original = None
+        if masked_copy is not None and np.asarray(masked_copy).any():
+            self.original = np.asarray(masked_copy) == 0
+            if len(self.original) != len(y_actual):
+                raise LabelContractError(
+                    f'masked_copy has {len(self.original)} entries for {len(y_actual)} rows.')
         present = [c for c in CATEGORY_FEATURES if c in feature_cols]
         if not present:
             self.reason = ('the feature matrix carries neither category_baseline nor '
@@ -557,7 +708,19 @@ class FoldCategoryBaselines:
                 raise LeakageError(
                     f'category_cell_stats[{name!r}].rows_sums do not match the label sums '
                     'implied by row_cell/row_group on this pickle\'s own rows.')
-            if (rows_counts > counts).any():
+            # The subset rule, on the ORIGINAL rows. With no masked copies those
+            # are every row and rows_counts, just shown equal to the rebuild, is
+            # their count. A masked copy is a second row of its source's cell, so
+            # with copies the count is rebuilt over the rows marked original
+            # (each copy is checked against its source row before this runs:
+            # assert_masked_copies) and those are held to the same rule.
+            if self.original is None:
+                original_counts = rows_counts
+            else:
+                original_counts = np.bincount(
+                    flat[finite & self.original],
+                    minlength=len(self.groups) * n_cells).reshape(rows_counts.shape)
+            if (original_counts > counts).any():
                 raise LeakageError(
                     f'category_cell_stats[{name!r}] has more rows in a cell than the '
                     'pre-filter aggregates do. The matrix rows must be a subset of the '
@@ -708,12 +871,17 @@ class FoldCategoryBaselines:
         return worst
 
     def fold_shift(self, X, fold_cols):
-        """How far this fold's map moved the two features, for the metadata."""
+        """How far this fold's map moved the two features, for the metadata.
+        Measured on the original rows: a masked copy repeats its source row's
+        two values, so counting it would weigh the realtime rows up to three
+        times in a figure earlier artifacts report per row."""
         out = {}
         for name, j in self.col_index.items():
             before = np.asarray(X[:, j], dtype=np.float64)
             after = np.asarray(fold_cols[j], dtype=np.float64)
             diff = np.abs(after - before)
+            if self.original is not None:
+                diff = diff[self.original]
             out[name] = {'rows_changed_pct': round(float(np.mean(diff > 1e-6) * 100), 2),
                          'mean_abs_shift': round(float(diff.mean()), 4),
                          'max_abs_shift': round(float(diff.max()), 4)}
@@ -1032,7 +1200,7 @@ def reconstruct(raw_delta, baseline, clamp) -> np.ndarray:
 
 
 def evaluate_city_cv(model, X, y, folds, baseline, y_actual, sample_weight, clamp,
-                     fold_cats=None, chunk_rows=None) -> tuple:
+                     fold_cats=None, chunk_rows=None, report_rows=None) -> tuple:
     """Leave-one-city-out out-of-fold predictions, on the ABSOLUTE scale.
 
     Each fold refits from scratch (clone drops the fitted state) WITH the sample
@@ -1051,6 +1219,13 @@ def evaluate_city_cv(model, X, y, folds, baseline, y_actual, sample_weight, clam
     is fitted from RowChunks and predicted by predict_rows, the map written into
     each chunk's copy, so neither X[tr] nor X[va] is ever made whole. Same
     boosters and out-of-fold predictions as the second branch.
+
+    `report_rows` is a boolean mask of the rows the returned metrics describe:
+    the original rows of a matrix that carries masked copies (the block above
+    assert_masked_copies). Every row still trains in the folds it is not held
+    out of and is predicted out of fold, and `absolute` is returned for every
+    row; only the overall and per-city numbers are cut to the mask. None
+    measures every row.
     """
     oof = np.full(len(y), np.nan)
     per_city = {}
@@ -1110,13 +1285,18 @@ def evaluate_city_cv(model, X, y, folds, baseline, y_actual, sample_weight, clam
         raise ValueError(f'{int(np.isnan(oof).sum())} out-of-fold predictions are NaN.')
 
     absolute = reconstruct(oof, baseline, clamp)
-    overall = _metrics(y_actual, absolute)
+    if report_rows is None:
+        overall = _metrics(y_actual, absolute)
+    else:
+        overall = _metrics(np.asarray(y_actual)[report_rows], absolute[report_rows])
     # Per-fold numbers, so a fold that is a whole city of 48 rows is visible as
     # noise instead of being blended into the headline (audit finding 16). Below
     # the floor the row count is still reported; the metrics are not, because a
     # 48-row R2 is not a measurement.
     city_metrics = {}
     for c, idx in per_city.items():
+        if report_rows is not None:
+            idx = idx[report_rows[idx]]
         if len(idx) < PER_CITY_MIN_ROWS:
             city_metrics[c] = {'rows': int(len(idx)),
                                'note': f'fewer than {PER_CITY_MIN_ROWS} rows — not measured'}
@@ -1125,7 +1305,7 @@ def evaluate_city_cv(model, X, y, folds, baseline, y_actual, sample_weight, clam
     return overall, absolute, city_metrics, shifts
 
 
-def slice_report(y_actual, absolute, is_realtime, baseline) -> dict:
+def slice_report(y_actual, absolute, is_realtime, baseline, masked_copy=None) -> dict:
     """The same numbers, split by the population they describe.
 
     `training_metrics` is a blend that is ~84% weekly popular_times snapshots
@@ -1135,11 +1315,46 @@ def slice_report(y_actual, absolute, is_realtime, baseline) -> dict:
     production actually scores with this model are the realtime ones with a
     baseline. Both are reported, each labelled with its own row count, so
     nobody has to guess which population a number came from.
+
+    `masked_copy` marks the masked copies of realtime rows (the block above
+    assert_masked_copies). The three populations are then measured on the
+    original rows, as they always were, so each still means what it meant in
+    earlier artifacts and realtime_served is still what mlPredictor publishes.
+    The copies are two more populations: realtime_offset_only and
+    realtime_no_reading, the served rows scored as the model sees them with the
+    newest reading masked, and with no reading at all.
     """
+    copy_masks = {}
+    all_rows_note = 'every training row (weekly anchor + realtime)'
+    if masked_copy is not None and np.asarray(masked_copy).any():
+        code = np.asarray(masked_copy)
+        full_y, full_abs = np.asarray(y_actual), np.asarray(absolute)
+        full_served_rt = serving_population_mask(baseline) & np.asarray(is_realtime).astype(bool)
+        copy_masks = {
+            'realtime_offset_only': (
+                full_served_rt & (code == MASKED_COPY_CODES['offset_only']),
+                'masked copies of realtime_served rows that have a reading and an offset, with '
+                'the newest reading masked (last_live_dev 0, last_live_age_h missing) and the '
+                'trailing offset kept: the rows as the model is served them when the newest '
+                'reading is too old to use. Out of fold, like every row; not in all_rows or '
+                'realtime_served.'),
+            'realtime_no_reading': (
+                full_served_rt & (code == MASKED_COPY_CODES['no_reading']),
+                'masked copies of realtime_served rows that have a reading or an offset, with '
+                'all four reading-based live features at their missing values: the rows as the '
+                'model is served them when the venue has no reading. Out of fold, like every '
+                'row; not in all_rows or realtime_served.'),
+        }
+        original = code == 0
+        y_actual, absolute = full_y[original], full_abs[original]
+        is_realtime, baseline = np.asarray(is_realtime)[original], np.asarray(baseline)[original]
+        all_rows_note = ('every original training row (weekly anchor + realtime); the masked '
+                         'copies of realtime rows are reported apart, as realtime_offset_only '
+                         'and realtime_no_reading')
     served = serving_population_mask(baseline)
     rt = np.asarray(is_realtime).astype(bool)
     out = {'all_rows': {'rows': int(len(y_actual)),
-                        'population': 'every training row (weekly anchor + realtime)',
+                        'population': all_rows_note,
                         **_metrics(y_actual, absolute)}}
     masks = {
         'realtime_served': (rt & served,
@@ -1157,6 +1372,13 @@ def slice_report(y_actual, absolute, is_realtime, baseline) -> dict:
             continue
         out[name] = {'rows': int(mask.sum()), 'population': note,
                      **_metrics(y_actual[mask], absolute[mask])}
+    for name, (mask, note) in copy_masks.items():
+        if int(mask.sum()) < 100:
+            out[name] = {'rows': int(mask.sum()), 'population': note,
+                         'note': 'fewer than 100 rows — not measured'}
+            continue
+        out[name] = {'rows': int(mask.sum()), 'population': note,
+                     **_metrics(full_y[mask], full_abs[mask])}
     return out
 
 
@@ -1346,32 +1568,38 @@ def run_hyperparameter_search(base_model, X, y, cv, groups, sample_weight) -> tu
 # ---------------------------------------------------------------------------
 # Early stopping
 # ---------------------------------------------------------------------------
-def early_stopping_split(groups, rows_fraction=0.15) -> tuple:
+def early_stopping_split(groups, rows_fraction=0.15, counted=None) -> tuple:
     """Whole cities, never a random row split.
 
     A random split would put the same venue's Tuesday 9 PM on both sides and the
     stopping round would be chosen against rows the model had already seen.
     Deterministic: cities in name order, accumulated until the fraction is met.
+
+    `counted` is a boolean mask of the rows the fraction is counted on (the
+    original rows of a matrix with masked copies), so the cities held out are
+    the ones the same matrix without its copies holds out. The masks returned
+    still cover every row.
     """
     g = np.asarray(groups)
+    sized = g if counted is None else g[counted]
     names = sorted(set(g.tolist()))
     if len(names) < 3:
         raise ValueError('Early stopping needs at least 3 cities so the held-out set '
                          'can be whole cities and still leave a training set.')
-    target = rows_fraction * len(g)
+    target = rows_fraction * len(sized)
     held, total = [], 0
     for name in names:
         if total >= target or len(held) >= len(names) - 2:
             break
         held.append(name)
-        total += int((g == name).sum())
+        total += int((sized == name).sum())
     val = np.isin(g, held)
     return ~val, val, held
 
 
 def fit_with_early_stopping(base_model, params, X, y, groups, sample_weight,
                             baseline, y_actual, clamp, rounds, fold_cats=None,
-                            chunk_rows=None) -> tuple:
+                            chunk_rows=None, report_rows=None) -> tuple:
     """Choose n_estimators on held-out CITIES, scored with the gate's own metric.
 
     The eval metric is MAE on the reconstructed absolute scale — the same
@@ -1382,8 +1610,17 @@ def fit_with_early_stopping(base_model, params, X, y, groups, sample_weight,
     The category label-means are refitted on this split's training side too, for
     the same reason they are refitted per CV fold: otherwise the stopping round
     is chosen against held-out cities that helped build their own features.
+
+    `report_rows` (the original rows of a matrix with masked copies): the cities
+    are chosen by their original rows and the stopping metric is scored on the
+    held-out cities' original rows, which is what the gate scores. The masked
+    copies of the other cities train; those of the held-out cities are on
+    neither side.
     """
-    tr, va, held = early_stopping_split(groups)
+    tr, va, held = early_stopping_split(groups, counted=report_rows)
+    if report_rows is not None:
+        va = va & report_rows
+    counted_rows = len(y) if report_rows is None else int(np.asarray(report_rows).sum())
     va_baseline = np.asarray(baseline, dtype=np.float64)[va]
     va_actual = np.asarray(y_actual, dtype=np.float64)[va]
 
@@ -1428,7 +1665,7 @@ def fit_with_early_stopping(base_model, params, X, y, groups, sample_weight,
     best_iter = int(probe.best_iteration) + 1
     logger.info('Early stopping: held out %s (%d rows, %.1f%%), stopped at %d of %d '
                 'rounds on gate-aligned MAE %.4f',
-                held, int(va.sum()), va.sum() / len(y) * 100, best_iter,
+                held, int(va.sum()), va.sum() / counted_rows * 100, best_iter,
                 params['n_estimators'], float(probe.best_score))
     info = {
         'enabled': True,
@@ -1452,7 +1689,14 @@ def fit_with_early_stopping(base_model, params, X, y, groups, sample_weight,
 
 
 def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, clamp,
-                  device, threads, fold_cats=None, chunk_rows=None) -> tuple:
+                  device, threads, fold_cats=None, chunk_rows=None, report_rows=None) -> tuple:
+    """Fit the shipped model on every row, then measure it leave-one-city-out.
+
+    `report_rows` is a boolean mask of the original rows when the matrix carries
+    masked copies (the block above assert_masked_copies), else None: the copies
+    train in every fit, and the metrics returned, the early-stopping split and
+    its metric are measured on the original rows.
+    """
     logger.info('\n=== Training XGBoost ===')
     start = time.time()
 
@@ -1476,6 +1720,13 @@ def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, cl
                 'RandomizedSearchCV fits every candidate on whole in-memory copies of the '
                 'matrix, which is what keeping X outside the pickle avoids. Search on a frame '
                 'that keeps X in the pickle, or leave the search off.')
+        if report_rows is not None:
+            raise ValueError(
+                'FLOCK_HYPERPARAM_SEARCH=true, but the matrix carries masked copies of its '
+                'realtime rows (FLOCK_LIVE_MASK_COPIES=on): RandomizedSearchCV scores every '
+                'validation row once, so it would rank candidates on the copies as well as '
+                'on the rows the gate scores. Search on a frame prepared with the switch off, '
+                'or leave the search off.')
         logger.info('Running the grouped randomized search (%d candidates x %d folds)...',
                     SEARCH_ITERATIONS, cv.get_n_splits())
         params, hp_info = run_hyperparameter_search(base_model, X, y, cv, groups, sample_weight)
@@ -1503,7 +1754,8 @@ def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, cl
     if es_rounds > 0:
         best_iter, es_info = fit_with_early_stopping(
             base_model, params, X, y, groups, sample_weight, baseline, y_actual,
-            clamp, es_rounds, fold_cats=fold_cats, chunk_rows=chunk_rows)
+            clamp, es_rounds, fold_cats=fold_cats, chunk_rows=chunk_rows,
+            report_rows=report_rows)
         params = {**params, 'n_estimators': best_iter}
     if hp_info.get('searched_this_run') is False:
         # The fixed path's note names every value that is not the v2.3.0 search's;
@@ -1540,7 +1792,7 @@ def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, cl
     logger.info('Computing leave-one-city-out metrics...')
     metrics, absolute, per_city, cat_shifts = evaluate_city_cv(
         model, X, y, folds, baseline, y_actual, sample_weight, clamp,
-        fold_cats=fold_cats, chunk_rows=chunk_rows)
+        fold_cats=fold_cats, chunk_rows=chunk_rows, report_rows=report_rows)
     elapsed = time.time() - start
 
     logger.info('City CV RMSE: %.4f, MAE: %.4f, R2: %.4f',
@@ -1556,7 +1808,34 @@ def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, cl
 # feature_cols for a pickle written before is_realtime was carried.
 TRAINER_KEYS = ('X', 'y', 'feature_cols', 'cities', 'baseline', 'y_actual', 'sample_weight',
                 'label_provenance', 'label_type', 'is_realtime', 'run_length_divisor',
-                'category_cell_stats')
+                'category_cell_stats', 'masked_copy')
+
+
+def assert_copies_match_metadata(copies, metadata: dict) -> None:
+    """The pickle's masked copies and corpus_contract.live_mask_copies are one prepare run's.
+
+    prepare_features.py writes the record only under FLOCK_LIVE_MASK_COPIES=on,
+    with the copy counts and the count of source rows; no record means no
+    copies. `copies` is assert_masked_copies' result (None for none).
+    """
+    record = (metadata.get('corpus_contract') or {}).get('live_mask_copies')
+    if record is None:
+        recorded = None
+    elif isinstance(record, dict) and record.get('policy') == 'on':
+        recorded = (record.get('offset_only'), record.get('no_reading'), record.get('source_rows'))
+    else:
+        raise LabelContractError(
+            f'model_metadata.json corpus_contract.live_mask_copies is {record!r}, not the record '
+            'prepare_features.py writes under FLOCK_LIVE_MASK_COPIES=on.')
+    held = (copies['offset_only'], copies['no_reading'], copies['original_rows']) if copies else None
+    if recorded is not None and recorded[:2] == (0, 0) and held is None:
+        return   # the switch was on and no realtime row had a reading or an offset to mask
+    if recorded != held:
+        raise LabelContractError(
+            'features_train.pkl and model_metadata.json disagree about the masked copies '
+            f'(offset-only, no-reading, source rows): the pickle holds {held}, the metadata '
+            f'records {recorded}; None is none. They are from different prepare_features.py '
+            'runs. Re-run prepare_features.py.')
 
 
 def main():
@@ -1651,11 +1930,26 @@ def main():
     # ── contracts ────────────────────────────────────────────────────────────
     assert_no_forbidden_features(feature_cols)
     assert_delta_label(y, y_actual, baseline, label_type)
+    # Masked copies of the realtime rows (FLOCK_LIVE_MASK_COPIES=on), absent from
+    # every pickle prepared without the switch. Each is checked against its
+    # source row here, before anything below counts rows; from here on
+    # `original` is the mask of original rows, or None when every row is one.
+    masked_copy = masked_copy_flags(data)
+    copies = None
+    if masked_copy.any():
+        copies = assert_masked_copies(masked_copy, X, feature_cols, realtime_flags(data), {
+            'y': y, 'y_actual': y_actual, 'baseline': baseline, 'sample_weight': sample_weight,
+            'run_length_divisor': data.get('run_length_divisor'), 'cities': cities,
+            'label_provenance': provenance, 'is_realtime': realtime_flags(data)})
+    assert_copies_match_metadata(copies, metadata)
+    original = (masked_copy == 0) if copies else None
+    if not copies:
+        masked_copy = None
     leak_scan = assert_no_label_shaped_feature(X, feature_cols, {
         'baseline_busyness': baseline,
         'busyness_pct (the label)': y_actual,
         'delta_label (the target)': y,
-    })
+    }, rows=copies['original_rows'] if copies else None)
 
     # The carried key (prepare_features.realtime_flags), never a zero fill: the
     # weight tiers and the realtime_served slice mlPredictor publishes as the
@@ -1665,7 +1959,8 @@ def main():
         raise ValueError(f'is_realtime has {len(is_realtime)} rows but y has {n}. Re-run '
                          'prepare_features.py.')
     weight_tiers = assert_weighting_matches_provenance(sample_weight, is_realtime, provenance,
-                                                       data.get('run_length_divisor'))
+                                                       data.get('run_length_divisor'),
+                                                       masked_copy=masked_copy)
 
     logger.info('Data shape: %s, Label type: %s, Label range: [%.1f, %.1f]',
                 X.shape, label_type, y.min(), y.max())
@@ -1675,10 +1970,15 @@ def main():
 
     unique_cities = np.unique(cities)
     n_cities = len(unique_cities)
-    city_rows = {str(c): int(np.sum(cities == c)) for c in unique_cities}
+    # Rows per city are ORIGINAL rows: training_city_rows and the thin-fold
+    # warning below describe the corpus, and a masked copy is a second row of a
+    # reading already counted. With no copies these are every row.
+    counted_cities = cities if original is None else cities[original]
+    n_counted = len(counted_cities)
+    city_rows = {str(c): int(np.sum(counted_cities == c)) for c in unique_cities}
     logger.info('Cities (%d): %s', n_cities, ', '.join(str(c) for c in unique_cities))
     for c, count in city_rows.items():
-        logger.info('  %s: %d rows (%.1f%%)', c, count, count / n * 100)
+        logger.info('  %s: %d rows (%.1f%%)', c, count, count / n_counted * 100)
     if n_cities < 3:
         raise ValueError(f'Only {n_cities} cities — leave-one-city-out needs at least 3.')
     thin = {c: r for c, r in city_rows.items() if r < 1000}
@@ -1698,7 +1998,7 @@ def main():
     folds = assert_group_disjoint(cv, X, y, cities)
 
     fold_cats = FoldCategoryBaselines(data.get('category_cell_stats'), cities,
-                                      feature_cols, y_actual)
+                                      feature_cols, y_actual, masked_copy=masked_copy)
     # Before any fold is fitted: prove the refit is the shipped map minus a city,
     # and nothing else. Raises rather than reporting a confounded number.
     shipped_repro = fold_cats.verify_reproduces_shipped(X)
@@ -1706,9 +2006,9 @@ def main():
     (model, metrics, absolute, per_city, params, hp_info, es_info, elapsed,
      cat_shifts) = train_xgboost(
         X, y, cv, folds, cities, baseline, y_actual, sample_weight, clamp, device,
-        threads, fold_cats=fold_cats)
+        threads, fold_cats=fold_cats, report_rows=original)
 
-    slices = slice_report(y_actual, absolute, is_realtime, baseline)
+    slices = slice_report(y_actual, absolute, is_realtime, baseline, masked_copy=masked_copy)
 
     logger.info('\n*** XGBoost Results (leave-one-city-out, absolute scale) ***')
     for name, block in slices.items():
@@ -1749,6 +2049,13 @@ def main():
                        'that fold\'s own training rows — see training_contracts.'
                        'category_baselines_refit_per_fold.'),
     }
+    if copies:
+        metadata['training_metrics']['population'] += (
+            ' The matrix also carries masked copies of its realtime rows '
+            '(FLOCK_LIVE_MASK_COPIES=on): they train in every fold and are predicted out of '
+            'fold, but "every training row" here is every ORIGINAL row. The copies are '
+            'measured apart, in training_metrics_by_population.realtime_offset_only and '
+            '.realtime_no_reading; see training_contracts.masked_copies.')
     metadata['training_metrics_by_population'] = slices
     metadata['training_loco_per_city'] = per_city
     metadata['cv_method'] = f'GroupKFold(n_splits={n_cities}) - leave-one-city-out'
@@ -1842,6 +2149,29 @@ def main():
             'prepare_features has no folds. What it leaks is the reported CV number, '
             'and this is where that is closed.'),
     }
+    if copies:
+        # Written only for a matrix that carries masked copies; training_contracts
+        # is replaced whole each run, so a later run without them leaves no trace.
+        metadata['training_contracts']['masked_copies'] = {
+            **copies,
+            'checked': ('every row marked a masked copy equals its source row in the label, '
+                        'the baseline, the sample weight, the run-length divisor, the city, '
+                        'the provenance and every feature except the masked live features, '
+                        'which hold their missing values; the counts are the ones the '
+                        'original rows call for and the ones corpus_contract.live_mask_copies '
+                        'records'),
+            'trained': 'in the shipped fit and in every fold they are not held out of',
+            'measured_on_original_rows': [
+                'training_metrics', 'training_metrics_by_population.all_rows / realtime_served '
+                '/ weekly_anchor', 'training_loco_per_city', 'training_city_rows',
+                'the leak scan', 'the per-fold category feature shifts',
+                'the category cell subset rule (no cell holds more original rows than the '
+                'pre-filter frame)', 'the early-stopping split and its metric'],
+            'measured_apart': ['training_metrics_by_population.realtime_offset_only',
+                               'training_metrics_by_population.realtime_no_reading'],
+            'counted_with_copies': ['training_contracts.sample_weight_tiers (the loss as it '
+                                    'was trained; masked_copy_rows per tier)'],
+        }
 
     # allow_nan=False: Python happily writes (and reads) a bare NaN / Infinity
     # token, JSON.parse does not. A single non-finite number anywhere in this file

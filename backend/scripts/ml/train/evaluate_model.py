@@ -31,6 +31,9 @@ from features_io import load_features
 # An X kept beside features_train.pkl is refitted and predicted a row chunk at a
 # time, by the same code train_model.py fits it with.
 from train_model import RowChunks, city_codes, predict_rows, reads_in_chunks
+# Which rows of features_train.pkl are masked copies of realtime rows
+# (FLOCK_LIVE_MASK_COPIES=on), read where they are defined.
+from prepare_features import masked_copy_blocks, masked_copy_flags
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -248,7 +251,7 @@ def main():
     # candidate's size: label_source, observed_date, category_cell_stats, ...).
     train_data = {k: v for k, v in train_data.items()
                   if k in ('X', 'y', 'cities', 'baseline', 'y_actual', 'sample_weight',
-                           'label_type', 'hour', 'venue_category')}
+                           'label_type', 'hour', 'venue_category', 'masked_copy')}
     X_train_all, y_train_all = train_data['X'], train_data['y']
     train_cities = train_data.get('cities')
     train_baseline = train_data.get('baseline')
@@ -303,6 +306,49 @@ def main():
         m.fit(X_train_all[train_idx], y_train_all[train_idx],
               sample_weight=train_weight[train_idx])
         val_pred_all[val_idx] = m.predict(X_train_all[val_idx])
+
+    # Masked copies of the realtime rows (FLOCK_LIVE_MASK_COPIES=on; a pickle
+    # prepared without the switch has none). They trained in every fold above
+    # they were not held out of and were predicted out of fold. Everything this
+    # script reports from here on is measured on the ORIGINAL rows, as
+    # train_model.py measures it, so the numbers, the per-city table and the
+    # plots describe one row per reading; the two copy populations are measured
+    # apart, just below. The original rows come first (masked_copy_blocks
+    # requires that order), so the cut is a slice of each per-row array.
+    copy_blocks = masked_copy_blocks(masked_copy_flags(train_data))
+    copy_metrics = None
+    if copy_blocks['offset_only'] or copy_blocks['no_reading']:
+        n_original = copy_blocks['original']
+        copy_metrics = {}
+        start = n_original
+        for kind in ('offset_only', 'no_reading'):
+            rows = slice(start, start + copy_blocks[kind])
+            start += copy_blocks[kind]
+            if copy_blocks[kind] < 100:
+                copy_metrics[f'realtime_{kind}'] = {'rows': copy_blocks[kind],
+                                                    'note': 'fewer than 100 rows — not measured'}
+            elif is_delta:
+                copy_metrics[f'realtime_{kind}'] = {'rows': copy_blocks[kind], **compute_metrics(
+                    train_y_actual[rows],
+                    np.clip(train_baseline[rows] + np.clip(val_pred_all[rows], -30, 30), 0, 100))}
+            else:
+                copy_metrics[f'realtime_{kind}'] = {'rows': copy_blocks[kind], **compute_metrics(
+                    y_train_all[rows], np.clip(val_pred_all[rows], 0, 100))}
+        logger.info('The matrix carries %d offset-only and %d no-reading masked copies of its '
+                    'realtime rows; the numbers below are measured on its %d original rows.',
+                    copy_blocks['offset_only'], copy_blocks['no_reading'], n_original)
+        for name, block in copy_metrics.items():
+            logger.info('  %s: %s', name, block)
+        val_pred_all, y_train_all = val_pred_all[:n_original], y_train_all[:n_original]
+        X_train_all, train_cities = X_train_all[:n_original], train_cities[:n_original]
+        if train_baseline is not None:
+            train_baseline = train_baseline[:n_original]
+        if train_y_actual is not None:
+            train_y_actual = train_y_actual[:n_original]
+        if train_hours is not None:
+            train_hours = train_hours[:n_original]
+        if train_categories is not None:
+            train_categories = train_categories[:n_original]
 
     if is_delta:
         # Reconstruct absolute predictions: baseline + clamp(delta, -30, 30)
@@ -475,6 +521,10 @@ def main():
         'holdout_cities': ['miami', 'tokyo', 'barcelona'],
         'label_type': label_type,
     }
+    if copy_metrics is not None:
+        # Only for a matrix with masked copies: `validation` and
+        # `validation_baseline` above are its original rows, these are the copies.
+        metadata['evaluation']['validation_masked_copies'] = copy_metrics
     if baseline_metrics is not None:
         mae_delta = baseline_metrics['mae'] - val_metrics['mae']
         r2_delta = val_metrics['r2'] - baseline_metrics['r2']

@@ -528,6 +528,53 @@ row's slot, its own label included, is changed and none of the row's values
 may move). The export needed no change for them: every column they read is
 already in it.
 
+**Masked copies of the realtime rows (2026-11-27): `FLOCK_LIVE_MASK_COPIES=on`,
+off by default.** With no reading, serving sends the four reading-based live
+features at their missing values (`last_live_dev` 0, `last_live_age_h` 99,
+`recent_offset` 0, `recent_offset_n` 0). The live feed stopped on 2026-11-25,
+so that is the state production serves in now, and 2.8.0-starling almost never
+trained on it: 98.4% of its 1,481,472 realtime training rows had a reading or
+an offset. With the switch on, `prepare_features.py` appends masked copies of
+the realtime training rows to `features_train.pkl`, after the original rows:
+
+- **offset only**: the newest reading masked (`last_live_dev` 0,
+  `last_live_age_h` 99), the offset kept; one for each row with both a reading
+  and an offset.
+- **no reading**: all four at their missing values; one for each row with a
+  reading or an offset.
+
+`curve_prev_hour`, the label, the baseline, the sample weight and every other
+value are the source row's. A per-row `masked_copy` key marks the rows (0
+original, 1 offset only, 2 no reading) and `corpus_contract.live_mask_copies`
+records the policy and both counts; with the switch off neither is written and
+the outputs are what they were. The weights are the source rows', so realtime
+rows carry more of the loss than `sample_weight_policy` records for the
+original rows; the record's `realtime_loss_share` is the share trained with.
+`training_rows` stays the count of original rows.
+
+`train_model.py` checks every copy against its source row, trains on all of
+them, and still measures `training_metrics`, the three populations and the
+per-city tables on original rows, with the copies reported beside them as
+`realtime_offset_only` and `realtime_no_reading`. `evaluate_model.py` and
+`quick_eval.py` read the original rows the same way, and `final_refit_gate.py`
+requires a refit to be prepared with the gated run's policy. The holdout
+pickle gets no copies. In-memory preparation only: the streamed mode refuses
+the switch, and so does `FLOCK_LIVE_FEATURES=off`. The side experiments
+(`train_two_head.py`, `sports_ablation.py`, `within_city_eval.py`) refuse a
+pickle that carries copies. The variable goes on the `prepare_features.py`
+command alone, beside that run's other preparation switches; every later step
+reads the mark in the pickle, not the variable.
+`train/test_live_mask_copies.py` pins all of it.
+
+What it was measured to do, once (exploratory, chosen on the November
+verdict's own days): within 10 points on a held-out fortnight went from 84.5%
+to 87.1% with no readings and from 87.1% to 88.7% with only an old offset, at
+a cost of 0.13 points with the feed on. That run used a post-processing script
+and a patched copy of the trainer, not this switch. It is the reason to train
+a candidate, not a result: a candidate trained with the switch is gated like
+any other, by the same point gate and band gate, with no threshold, criterion
+or comparator changed.
+
 Fixed before the run (2026-09-26): the neighbour features' training arithmetic
 (cause 7) is serving's; `__tests__/mlNeighborParity.test.js` pins it.
 

@@ -202,6 +202,12 @@ DEAD_SLOT_POLICY = _policy('FLOCK_DEAD_SLOT_POLICY', 'require', {'require', 'war
 # The live features (add_live_features) are on; 'off' drops all five, for the
 # ablation that measures them.
 LIVE_FEATURE_POLICY = _policy('FLOCK_LIVE_FEATURES', 'on', {'on', 'off'})
+# Masked copies of the realtime training rows, off by default: 'on' appends,
+# for each such row, a copy with its newest reading masked and a copy with
+# every reading-based input at the value serving sends when it has no reading.
+# See the block above append_live_mask_copies.
+LIVE_MASK_COPIES_ENV = 'FLOCK_LIVE_MASK_COPIES'
+LIVE_MASK_COPIES_POLICY = _policy(LIVE_MASK_COPIES_ENV, 'off', {'off', 'on'})
 
 # Smoke-test escape hatch for the realtime-row floor. A real retrain must never
 # set this; it exists so the pipeline can be exercised on a synthetic fixture.
@@ -3851,6 +3857,324 @@ def train_pickle_dict(cols: Dict, x_entry: Dict, sample_weight: np.ndarray, run_
     }
 
 
+# ---------------------------------------------------------------------------
+# MASKED COPIES OF THE REALTIME ROWS (2026-11-27): FLOCK_LIVE_MASK_COPIES=on.
+#
+# Four of the five live features are built from the venue's past live
+# readings. With no reading, serving sends their missing values
+# (mlPredictor.LIVE_FEATURE_DEFAULTS: last_live_dev 0, last_live_age_h
+# LIVE_MISSING_AGE_H, recent_offset 0, recent_offset_n 0); with a newest
+# reading older than NOWCAST_MAX_LAG_HOURS but still inside the offset window,
+# it sends the first two missing and the offset. 2.8.0-starling trained on
+# almost none of either state: 98.4% of its 1,481,472 realtime training rows
+# had a reading or an offset. The live feed stopped on 2026-11-25, and those
+# are the states production has served in since.
+#
+# With the switch on, the training matrix gains copies of its realtime rows
+# (is_realtime == 1) in those two states:
+#
+#   copy B, "offset only" (code 1)  last_live_dev 0 and last_live_age_h
+#       LIVE_MISSING_AGE_H, the offset kept. Made only for a row with BOTH a
+#       reading (last_live_age_h != LIVE_MISSING_AGE_H) and an offset
+#       (recent_offset_n > 0): with no offset it would be copy C, and with no
+#       reading it would be the row itself.
+#   copy C, "no reading" (code 2)   all four at their missing values. Made
+#       only for a row with a reading OR an offset: a row with neither already
+#       is this row.
+#
+# curve_prev_hour is the curve, not a reading, and is never touched. Every
+# other per-row value is the source row's: label, baseline, y_actual, sample
+# weight, run-length divisor, city, date. The order is every original row,
+# then every copy B, then every copy C, each in source-row order, and
+# `masked_copy` (int8, one per row) carries the code, 0 for an original row.
+#
+# THE WEIGHTS ARE THE SOURCE ROWS', so the realtime share of the loss rises
+# above the share sample_weight_policy solved on the original rows. The record
+# written to corpus_contract.live_mask_copies carries the share the matrix
+# trains with (realtime_loss_share), beside the two copy counts.
+#
+# WHAT A READER MUST KNOW. A copy is one more row of its source's city and
+# category cell. category_cell_stats grows with it (row_group, row_cell, and
+# rows_sums / rows_counts recounted over the grown rows), while the fitted sums
+# and counts stay the pre-filter frame's: a cell may now hold more matrix rows
+# than the frame it was fitted on, and train_model.py holds only the ORIGINAL
+# rows to that subset rule. It also checks every copy against its source row
+# (assert_masked_copies there) and keeps every metric it has always reported
+# on original rows, with the two copy populations reported beside them.
+# training_rows in model_metadata.json stays the count of original rows.
+#
+# OFF WRITES NOTHING NEW: no masked_copy key, no record. A pickle or metadata
+# without them was prepared with the switch off, which is every one written
+# before the switch existed; masked_copy_flags reads such a pickle as all
+# original rows, and final_refit_gate.py reads a missing record as 'off'.
+#
+# Two refusals (require_live_mask_copies_possible). FLOCK_LIVE_FEATURES=off
+# removes the columns the copies mask. And the streamed preparation sizes and
+# writes X to its .npy before the copies could be counted, so the switch is
+# implemented for the in-memory preparation only. The holdout pickle never
+# gets copies. test_live_mask_copies.py pins all of the above.
+# ---------------------------------------------------------------------------
+MASKED_COPY_KEY = 'masked_copy'
+MASKED_COPY_CODES = {'original': 0, 'offset_only': 1, 'no_reading': 2}
+# The live features built from readings; curve_prev_hour is the fifth and is
+# the curve.
+LIVE_READING_FEATURES = ('last_live_dev', 'last_live_age_h', 'recent_offset', 'recent_offset_n')
+# train_pickle_dict's keys, by whether they hold one value per row. A key added
+# there must be named in one of these, or append_live_mask_copies stops: a
+# per-row key it did not grow would pair every copy with nothing.
+TRAIN_PICKLE_ROW_KEYS = ('X', 'y', 'y_actual', 'baseline', 'sample_weight', 'run_length_divisor',
+                         'cities', 'hour', 'venue_category', 'label_provenance', 'label_source',
+                         'vendor_forecast_pct', 'observed_date', 'weather_observed', 'is_realtime')
+TRAIN_PICKLE_FRAME_KEYS = ('feature_cols', 'label_type', 'category_cell_stats')
+
+
+def require_live_mask_copies_possible(streamed: bool = False) -> None:
+    """FLOCK_LIVE_MASK_COPIES=on needs the columns it masks and the in-memory preparation."""
+    if LIVE_MASK_COPIES_POLICY != 'on':
+        return
+    if LIVE_FEATURE_POLICY == 'off':
+        raise CorpusContractError(
+            f'{LIVE_MASK_COPIES_ENV}=on with FLOCK_LIVE_FEATURES=off: the masked copies set '
+            f'{", ".join(LIVE_READING_FEATURES)} to their missing values, and '
+            'FLOCK_LIVE_FEATURES=off drops those columns. Unset one of the two.')
+    if streamed:
+        raise CorpusContractError(
+            f'{LIVE_MASK_COPIES_ENV}=on is implemented for the in-memory preparation only, and '
+            'this export is being prepared in the streamed mode (FLOCK_PREP_STREAM, or more than '
+            'FLOCK_PREP_STREAM_MIN_ROWS training rows): the streamed mode sizes X and writes it '
+            'to features_train.X.npy before the copies could be counted. Prepare in memory '
+            f'(FLOCK_PREP_STREAM=0 where the frame fits), or leave {LIVE_MASK_COPIES_ENV} off.')
+
+
+def _live_reading_state(X, feature_cols: List[str], is_realtime, rows: int = None) -> Dict:
+    """Per row of X (its first `rows` rows when given): realtime, has a reading, has an offset."""
+    cols = list(feature_cols)
+    missing = [c for c in LIVE_READING_FEATURES if c not in cols]
+    if missing:
+        raise CorpusContractError(
+            f'the feature matrix has no {missing}: masked copies are copies of the realtime rows '
+            'with the reading-based live features at their missing values, and these columns '
+            'are not in it (FLOCK_LIVE_FEATURES=off drops them).')
+    n = X.shape[0] if rows is None else int(rows)
+    realtime = np.asarray(is_realtime)[:n] == 1
+    has_reading = np.asarray(X[:n, cols.index('last_live_age_h')]) != LIVE_MISSING_AGE_H
+    has_offset = np.asarray(X[:n, cols.index('recent_offset_n')]) > 0
+    return {'realtime': realtime, 'has_reading': has_reading, 'has_offset': has_offset}
+
+
+def live_mask_copy_sources(X, feature_cols: List[str], is_realtime,
+                           rows: int = None) -> Tuple[np.ndarray, np.ndarray]:
+    """(rows copy B is made of, rows copy C is made of), each ascending.
+
+    The one definition of which rows get which copy: append_live_mask_copies
+    makes the copies from it and train_model.assert_masked_copies finds each
+    copy's source row with it (`rows` = the count of original rows there)."""
+    s = _live_reading_state(X, feature_cols, is_realtime, rows)
+    return (np.flatnonzero(s['realtime'] & s['has_reading'] & s['has_offset']),
+            np.flatnonzero(s['realtime'] & (s['has_reading'] | s['has_offset'])))
+
+
+def _rows_then(values, src: np.ndarray, key: str):
+    """A per-row array followed by its rows `src`, in the array's own type."""
+    if isinstance(values, np.ndarray):
+        return np.concatenate([values, values[src]])
+    if isinstance(values, pd.api.extensions.ExtensionArray):
+        return type(values)._concat_same_type([values, values.take(src)])
+    raise CorpusContractError(
+        f'features_train.pkl[{key!r}] is a {type(values).__name__}, neither a NumPy nor a pandas '
+        'array: the masked copies cannot be appended to it.')
+
+
+def cell_stats_with_copies(cell_stats: Dict, src: np.ndarray, y_actual, copies: Dict) -> Dict:
+    """category_cell_stats for a matrix that gained the rows `src` after its own.
+
+    row_group and each block's row_cell grow by those rows; rows_sums and
+    rows_counts are recounted over every row of the grown matrix, from the
+    grown y_actual train_model.FoldCategoryBaselines rebuilds them from; `rows`
+    follows. sums and counts, fitted on the pre-filter frame, are untouched.
+    """
+    row_group = np.asarray(cell_stats['row_group'])
+    n = len(row_group)
+    y = np.asarray(y_actual, dtype=np.float64)
+    if len(y) != n + len(src):
+        raise CorpusContractError(
+            f'category_cell_stats indexes {n} rows and {len(src)} copies were made, but y_actual '
+            f'has {len(y)} rows.')
+    finite = np.isfinite(y)
+    grown_group = np.concatenate([row_group, row_group[src]])
+    out: Dict = {k: v for k, v in cell_stats.items() if k not in ('category', 'refined')}
+    out['rows'] = int(len(grown_group))
+    out['row_group'] = grown_group
+    out['masked_copies'] = {'offset_only': int(copies['offset_only']),
+                            'no_reading': int(copies['no_reading'])}
+    for name in ('category', 'refined'):
+        block = cell_stats[name]
+        row_cell = np.asarray(block['row_cell'])
+        grown_cell = np.concatenate([row_cell, row_cell[src]])
+        shape = np.asarray(block['rows_counts']).shape
+        size = shape[0] * shape[1]
+        flat = grown_group.astype(np.int64) * shape[1] + grown_cell
+        own = np.bincount(flat[:n][finite[:n]], minlength=size).reshape(shape)
+        if not np.array_equal(own, block['rows_counts']):
+            raise CorpusContractError(
+                f'category_cell_stats[{name!r}].rows_counts are not the counts of the rows it '
+                'indexes: the statistics and the matrix are not row-aligned, and the copies '
+                'would be counted in the wrong cells.')
+        out[name] = dict(
+            block, row_cell=grown_cell,
+            rows_sums=np.bincount(flat[finite], weights=y[finite], minlength=size).reshape(shape),
+            rows_counts=np.bincount(flat[finite], minlength=size).reshape(shape).astype(np.int64))
+    return out
+
+
+def append_live_mask_copies(train_data: Dict) -> Tuple[Dict, Dict]:
+    """features_train.pkl's dict with the masked copies appended (the block above).
+
+    Returns a new dict (the given one is not changed) and the record
+    model_metadata.json carries as corpus_contract.live_mask_copies.
+    """
+    if 'X' not in train_data:
+        raise CorpusContractError(
+            'the masked copies need X in the pickle; this one names an X file beside it '
+            f'(the streamed preparation). {LIVE_MASK_COPIES_ENV}=on is implemented for the '
+            'in-memory preparation only.')
+    unknown = [k for k in train_data if k not in TRAIN_PICKLE_ROW_KEYS + TRAIN_PICKLE_FRAME_KEYS]
+    if unknown:
+        raise CorpusContractError(
+            f'features_train.pkl has key(s) {unknown} that append_live_mask_copies does not know '
+            'to be per-row or not. Name each in TRAIN_PICKLE_ROW_KEYS or TRAIN_PICKLE_FRAME_KEYS.')
+    X = train_data['X']
+    n = int(X.shape[0])
+    feature_cols = list(train_data['feature_cols'])
+    short = {k: len(train_data[k]) for k in TRAIN_PICKLE_ROW_KEYS
+             if k in train_data and len(train_data[k]) != n}
+    if short:
+        raise CorpusContractError(f'per-row key(s) of features_train.pkl are not {n} rows long: {short}.')
+
+    state = _live_reading_state(X, feature_cols, train_data['is_realtime'])
+    idx_b, idx_c = live_mask_copy_sources(X, feature_cols, train_data['is_realtime'])
+    src = np.concatenate([idx_b, idx_c])
+    n_b, n_c = int(len(idx_b)), int(len(idx_c))
+    total = n + n_b + n_c
+
+    # X, column at a time into the column-major layout it already has: the
+    # original rows, then their copies, then the masked values over the copies.
+    grown = np.empty((total, X.shape[1]), dtype=np.float32, order='F')
+    for j in range(X.shape[1]):
+        grown[:n, j] = X[:, j]
+        grown[n:, j] = X[src, j]
+    at = {c: feature_cols.index(c) for c in LIVE_READING_FEATURES}
+    grown[n:, at['last_live_dev']] = 0
+    grown[n:, at['last_live_age_h']] = LIVE_MISSING_AGE_H
+    grown[n + n_b:, at['recent_offset']] = 0
+    grown[n + n_b:, at['recent_offset_n']] = 0
+
+    out: Dict = {}
+    for k, v in train_data.items():
+        if k == 'X':
+            out[k] = grown
+        elif k == 'category_cell_stats':
+            out[k] = None   # keeps its place; filled once y_actual has grown
+        elif k in TRAIN_PICKLE_ROW_KEYS:
+            out[k] = _rows_then(v, src, k)
+        else:
+            out[k] = v
+    copies = {'offset_only': n_b, 'no_reading': n_c}
+    out['category_cell_stats'] = cell_stats_with_copies(
+        train_data['category_cell_stats'], src, out['y_actual'], copies)
+    flags = np.zeros(total, dtype=np.int8)
+    flags[n:n + n_b] = MASKED_COPY_CODES['offset_only']
+    flags[n + n_b:] = MASKED_COPY_CODES['no_reading']
+    out[MASKED_COPY_KEY] = flags
+
+    w = np.asarray(out['sample_weight'], dtype=np.float64)
+    realtime = np.asarray(out['is_realtime']) == 1
+    record = {
+        'policy': 'on',
+        'env': LIVE_MASK_COPIES_ENV,
+        **copies,
+        'source_rows': n,
+        'matrix_rows': total,
+        'realtime_rows': int(state['realtime'].sum()),
+        'realtime_rows_with_reading': int((state['realtime'] & state['has_reading']).sum()),
+        'realtime_rows_with_offset': int((state['realtime'] & state['has_offset']).sum()),
+        'realtime_rows_at_missing_values': int(
+            (state['realtime'] & ~state['has_reading'] & ~state['has_offset']).sum()),
+        'realtime_loss_share': round(float(w[realtime].sum() / w.sum()), 4) if w.sum() else None,
+        'masked_copy_codes': dict(MASKED_COPY_CODES),
+        'what': ('copies of the realtime training rows, appended after them: offset_only has '
+                 'last_live_dev and last_live_age_h at their missing values and the offset kept '
+                 '(rows with both a reading and an offset); no_reading has all four '
+                 'reading-based live features at their missing values (rows with a reading or '
+                 'an offset). Every other value, the label and the sample weight included, is '
+                 'the source row\'s. training_rows and sample_weight_policy describe the '
+                 'source rows; realtime_loss_share here is the share the matrix trains with.'),
+    }
+    logger.warning(
+        'MASKED COPIES (%s=on): %d realtime rows (%d with a reading, %d with an offset, %d already '
+        'at the missing values) gained %d offset-only and %d no-reading copies; the matrix is %d '
+        'rows over %d source rows, realtime rows at %s of the loss.',
+        LIVE_MASK_COPIES_ENV, record['realtime_rows'], record['realtime_rows_with_reading'],
+        record['realtime_rows_with_offset'], record['realtime_rows_at_missing_values'], n_b, n_c,
+        total, n, record['realtime_loss_share'])
+    return out, record
+
+
+def with_live_mask_copies(train_data: Dict) -> Tuple[Dict, Dict]:
+    """main()'s last step on features_train.pkl's dict, by FLOCK_LIVE_MASK_COPIES:
+    'on' gives the dict with the copies appended and their record; 'off' gives
+    back the very dict it was handed, and None."""
+    if LIVE_MASK_COPIES_POLICY != 'on':
+        return train_data, None
+    return append_live_mask_copies(train_data)
+
+
+def masked_copy_flags(data: Dict) -> np.ndarray:
+    """masked_copy per row of a features pickle (int8): 0 an original row, 1 an
+    offset-only copy, 2 a no-reading copy.
+
+    A pickle without the key was prepared with FLOCK_LIVE_MASK_COPIES off (every
+    training pickle written before 2026-11-27, and every holdout pickle) and
+    reads as all original rows.
+    """
+    n = len(data['y'])
+    if MASKED_COPY_KEY not in data:
+        return np.zeros(n, dtype=np.int8)
+    flags = np.asarray(data[MASKED_COPY_KEY])
+    if (flags.shape != (n,) or flags.dtype.kind not in 'iu'
+            or not np.isin(flags, list(MASKED_COPY_CODES.values())).all()):
+        raise CorpusContractError(
+            f'features pickle key {MASKED_COPY_KEY!r} must hold one of {sorted(MASKED_COPY_CODES.values())} '
+            f'for each of its {n} rows (got {flags.dtype}{flags.shape}). Re-run prepare_features.py.')
+    return flags.astype(np.int8, copy=False)
+
+
+def masked_copy_blocks(flags) -> Dict:
+    """{'original': n, 'offset_only': n, 'no_reading': n}, after requiring the
+    order append_live_mask_copies writes: every original row, then every
+    offset-only copy, then every no-reading copy. A reader may then take the
+    original rows as the first `original` rows."""
+    flags = np.asarray(flags).astype(np.int8, copy=False)
+    if not flags.any():
+        return {'original': int(len(flags)), 'offset_only': 0, 'no_reading': 0}
+    if (flags[1:] < flags[:-1]).any():
+        raise CorpusContractError(
+            f'{MASKED_COPY_KEY} is not original rows, then offset-only copies, then no-reading '
+            'copies. prepare_features.py writes them in that order; this pickle was not '
+            'written by it.')
+    counts = np.bincount(flags, minlength=3)
+    return {name: int(counts[code]) for name, code in MASKED_COPY_CODES.items()}
+
+
+def refuse_masked_copies(data: Dict, who: str) -> None:
+    """For a script that reads every row of features_train.pkl as one source row."""
+    if MASKED_COPY_KEY in data and np.asarray(data[MASKED_COPY_KEY]).any():
+        raise SystemExit(
+            f'features_train.pkl carries masked copies of its realtime rows '
+            f'({LIVE_MASK_COPIES_ENV}=on): {who} reads every pickle row as one source row and '
+            'does not support them. Run it on a frame prepared with the switch off.')
+
+
 def holdout_pickle_dict(holdout_df: pd.DataFrame, feature_cols: List[str]) -> Dict:
     return {
         'X': feature_matrix(holdout_df, feature_cols),
@@ -3883,8 +4207,14 @@ def write_model_metadata(*, time_holdout: Dict, final_refit, weekly_weight_polic
                          holdout_weather_stats: Dict, calendar_stats: Dict, holdout_calendar_stats: Dict,
                          label_stats: Dict, holdout_label_stats: Dict, weather_imputation: Dict,
                          event_type_stats: Dict, unknown_provenance_record: Dict, constant_cols: List[str],
-                         dead_slot_record: Dict, category_baseline_fit: Dict) -> None:
-    """Merge this feature build into models/model_metadata.json."""
+                         dead_slot_record: Dict, category_baseline_fit: Dict,
+                         live_mask_copies: Dict = None) -> None:
+    """Merge this feature build into models/model_metadata.json.
+
+    `live_mask_copies` is append_live_mask_copies' record under
+    FLOCK_LIVE_MASK_COPIES=on, else None, and then no key is written: metadata
+    without corpus_contract.live_mask_copies is a build with the switch off.
+    """
     # Category/refined baseline lookups shipped to Node for inference.
     # Round 10: these are now the EXACT maps used to build the training
     # features (see build_category_baseline_maps) instead of a second,
@@ -3956,6 +4286,7 @@ def write_model_metadata(*, time_holdout: Dict, final_refit, weekly_weight_polic
             'dead_slot_policy': DEAD_SLOT_POLICY,
             'run_length_policy': RUN_LENGTH_POLICY,
             'live_feature_policy': LIVE_FEATURE_POLICY,
+            **({'live_mask_copies': live_mask_copies} if live_mask_copies else {}),
             'sports_features': sports_features_enabled(),
             'weather_code_recovery': {
                 'train': weather_stats,
@@ -4014,6 +4345,9 @@ def write_model_metadata(*, time_holdout: Dict, final_refit, weekly_weight_polic
 
 
 def main():
+    # FLOCK_LIVE_MASK_COPIES=on beside FLOCK_LIVE_FEATURES=off stops here, before
+    # anything is read (main_streamed makes the same call for its own refusal).
+    require_live_mask_copies_possible()
     logger.info('Loading training data...')
     train_path = SCRIPT_DIR / 'training_data.csv'
     if not train_path.exists():
@@ -4262,6 +4596,13 @@ def main():
     train_data = train_pickle_dict(
         train_pickle_columns(train_df), {'X': feature_matrix(train_df, feature_cols)},
         train_df['sample_weight'].values, run_divisor, feature_cols, cell_stats)
+    # FLOCK_LIVE_MASK_COPIES=on: the masked copies of the realtime rows, appended
+    # to every per-row key now that the frame's features, labels and weights are
+    # final (the block above append_live_mask_copies). Off, this is the dict
+    # just built and no record. The holdout pickle below never gets copies.
+    train_data, live_mask_copies = with_live_mask_copies(train_data)
+    if live_mask_copies:
+        category_baseline_fit['per_fold_inputs_indexed_rows'] = train_data['category_cell_stats']['rows']
     with open(SCRIPT_DIR / 'features_train.pkl', 'wb') as f:
         pickle.dump(train_data, f)
 
@@ -4278,8 +4619,12 @@ def main():
         holdout_label_stats=holdout_label_stats, weather_imputation=weather_imputation,
         event_type_stats=event_type_stats, unknown_provenance_record=unknown_provenance_record,
         constant_cols=constant_cols, dead_slot_record=dead_slot_record,
-        category_baseline_fit=category_baseline_fit)
+        category_baseline_fit=category_baseline_fit, live_mask_copies=live_mask_copies)
 
+    if live_mask_copies:
+        logger.info(f'features_train.pkl holds {live_mask_copies["matrix_rows"]} rows: the '
+                    f'{len(train_df)} below and {live_mask_copies["offset_only"]} offset-only and '
+                    f'{live_mask_copies["no_reading"]} no-reading masked copies of its realtime rows.')
     logger.info(f'Saved features_train.pkl ({len(train_df)} rows, {len(feature_cols)} features)')
     logger.info(f'Saved features_holdout.pkl ({len(holdout_df)} rows)')
     logger.info(f'Saved model_metadata.json')
@@ -5095,6 +5440,9 @@ def main_streamed(train_path: Path, why: str) -> None:
     import time
     import features_io
 
+    # The masked copies are made by the in-memory preparation only: refused
+    # here, before the first of the three passes over the export.
+    require_live_mask_copies_possible(streamed=True)
     require_proven_pandas(pd.__version__)
     chunk_rows = _env_count(PREP_CHUNK_ROWS_ENV, DEFAULT_PREP_CHUNK_ROWS)
     pkl_path = SCRIPT_DIR / 'features_train.pkl'
