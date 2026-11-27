@@ -332,6 +332,8 @@ export default function ResearchPage() {
             <p className="lp-lead">
               Start with the {SUMMARY_PAGES}-page summary. The full paper covers both
               studies in detail, including what did not work.
+              The paper is still open. We're still improving the crowd model, and
+              we'll update the paper when that work is done.
             </p>
             <div className="rs-paper-actions">
               <a className="lp-btn lp-btn-cream" href={SUMMARY_URL} target="_blank" rel="noopener noreferrer">
