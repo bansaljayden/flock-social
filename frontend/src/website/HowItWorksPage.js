@@ -353,19 +353,17 @@ export default function HowItWorksPage() {
                 “Happening here”.
               </p>
               <p>
-                A <a href="/flux">Flux</a> box over the door, still a prototype,
-                is being built to show which tables are free, seated, waiting on
-                a server or ready to clear.
+                We’re building <a href="/flux">Flux</a>, a box over the door
+                that shows which tables are free, seated, waiting on a server or
+                ready to clear.
               </p>
               {/* Roost has been on sale in the venue dashboard since venue
                   billing went on (2026-11-10), and this asked a venue to write
                   in early until 2026-11-18. It now says where Roost is sold,
-                  in the homepage venue card's words. No venue is charged yet,
-                  as the homepage also says. */}
+                  in the homepage venue card's words. */}
               <p>
                 Roost, the paid plan, adds your own hour-by-hour forecast and the
-                advisor above. It is sold in the venue dashboard. No venue is
-                being charged yet.
+                advisor above. It is sold in the venue dashboard.
               </p>
             </div>
             <figure className="lp-plate hw-venues-plate">

@@ -207,7 +207,7 @@ export default function AiPage() {
               sizes={WIDE}
               className="ai-wide"
               alt="Inputs such as the hour, the temperature, rain and events nearby go in. On the chart, the forecast rises above the venue’s usual week toward the peak and runs through the dots that mark what happened. A counter reads 800 of 800 trees, the size of the previous version, and each tree fixes what the ones before it got wrong. Out comes the usual week plus a correction: busyness for each hour, 0 to 100."
-              caption="A schematic of the previous version, not real readings. The version serving today has 2,000 trees."
+              caption="How Starling builds a forecast. The picture counts 800 trees, and today’s Starling has 2,000."
             />
             <div className="ai-pair">
               <Figure
@@ -228,21 +228,21 @@ export default function AiPage() {
 
         <section className="lp-sec lp-sec-paper" aria-labelledby="ai-h-estimate">
           <div className="lp-wrap">
-            <h2 id="ai-h-estimate">A forecast is a guess, and it says so</h2>
+            <h2 id="ai-h-estimate">On the night, the venue has the last word</h2>
           </div>
           <div className="lp-wrap ai-split">
             <div className="ai-text">
               <p>
-                Flock marks the forecast as an estimate. When a venue knows better on
-                the night, its owner can set the live number from their dashboard.
-                Groups see it credited to the place, like “the cafe says”, and it lasts 90 minutes.
+                When a venue knows better on the night, its owner sets the live
+                number from the dashboard. Groups see it credited to the place,
+                like “the cafe says”, and it lasts 90 minutes.
               </p>
             </div>
             <Figure
               img={FIGURES.band}
               sizes="(min-width: 960px) 600px, calc(100vw - 40px)"
               alt="A chart of one evening’s busyness from 6 PM to midnight, the forecast inside a shaded band marked as an estimate. At 9 the venue sets 86, 22 points above the forecast, and its number lasts 90 minutes."
-              caption="An illustration of one evening, not real readings."
+              caption="One evening: at 9 the venue sets its own number."
             />
           </div>
         </section>
@@ -259,7 +259,7 @@ export default function AiPage() {
               </p>
               <p>
                 It was trained on generated frames and 28 public thermal datasets,
-                then tested on footage it never saw. It hasn’t run in a venue yet.
+                then tested on footage it never saw. Venue trials come next.
               </p>
             </div>
             <Figure
@@ -267,7 +267,7 @@ export default function AiPage() {
               sizes={WIDE}
               className="ai-wide"
               alt="Owl's path through a frame: a 160 by 120 thermal frame goes in, through the network's layers, and out comes a 40 by 30 map where each person is a peak. Here it finds 3 people."
-              caption="This thermal frame is generated, not a picture of real people."
+              caption="A generated thermal frame."
             />
             <div className="ai-pair">
               <Figure
@@ -343,7 +343,7 @@ export default function AiPage() {
               <h2 id="ai-h-more">See how they did</h2>
               <p className="lp-lead ai-more-lead">
                 The paper on the research page tests Starling and Owl on data
-                neither one trained on, including where they fell short.
+                neither one trained on.
               </p>
               <div className="lp-cta-row">
                 <a className="lp-btn lp-btn-cream lp-btn-lg" href="/research">Read the research</a>

@@ -130,7 +130,20 @@ describe('the page only sells things that exist', () => {
     const sentences = venueCard.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+|<[^>]*>|"/);
     const naming = sentences.filter((s) => /\bevents?\b/i.test(s));
     expect(naming.length).toBeGreaterThan(0);
-    for (const s of naming) expect(s).toMatch(/verified/i);
+    // Since 2026-11-27 the plan card states the condition once, in the line
+    // that introduces its list ("Every verified venue gets these free:"),
+    // where each item used to end with "once verified". An item of that list
+    // carries the condition through that line; every other sentence that
+    // names events still has to say it itself.
+    const underVerified = /Every verified venue gets these free:<\/p>\s*<ul className="lp-list">([\s\S]*?)<\/ul>/.exec(venueCard);
+    expect(underVerified).not.toBeNull();
+    const listed = underVerified[1].replace(/\s+/g, ' ');
+    let inTheList = 0;
+    for (const s of naming) {
+      if (listed.includes(`>${s.trim()}<`)) { inTheList += 1; continue; }
+      expect(s).toMatch(/verified/i);
+    }
+    expect(inTheList).toBe(1);
   });
 
   test('the surviving venue claims each name a route that exists', () => {
@@ -177,8 +190,11 @@ describe('the page only sells things that exist', () => {
     // an unverified one with nothing (incoming-flocks, intelligence) or refuse
     // it (review replies), and promotions show only for verified venues.
     expect(venueCard).toMatch(/Once your venue is verified, a free account/);
-    expect(venueCard).toMatch(/in their vote, once verified/);
-    expect(venueCard).toMatch(/people who went, once verified/);
+    // The plan card says it once, above its list (2026-11-27), where each
+    // item used to end with "once verified".
+    expect(venueCard).toMatch(/Every verified venue gets these free:/);
+    expect(venueCard).toMatch(/See the flocks with you in their vote</);
+    expect(venueCard).toMatch(/Reply to reviews from people who went</);
     expect(api).toMatch(/replyToReview/);
 
     // "Your own hour-by-hour forecast, from the model the app runs"
@@ -279,20 +295,19 @@ describe('the page only sells things that exist', () => {
     expect(dashboard).toContain('Last {tw.windowDays} days.');
   });
 
-  test('llms.txt sells Roost as it is sold: on sale, with no venue charged yet', () => {
+  test('llms.txt sells Roost as it is sold: on sale in the venue dashboard', () => {
     // It once said "Venues are the side Flock charges. Roost ... is $99 a
     // month ... bought on flockcorp.com" while VENUE_BILLING_ENABLED was unset
     // and checkout could not run, so it moved to "will be". The variable went
     // on 2026-11-10 and Roost has been on sale in the venue dashboard since;
-    // "will be" stayed until 2026-11-13. Now: on sale, and still no venue
-    // charged (pre-cutoff venues sit in their notice window, new ones in the
-    // trial), which /about says too.
+    // "will be" stayed until 2026-11-13. Now: on sale. The sheet also said "no
+    // venue is being charged today" until 2026-11-27, when the site stopped
+    // listing what has not happened yet.
     const llms = fs.readFileSync(path.join(REPO, 'frontend', 'public', 'llms.txt'), 'utf8')
       .replace(/\s+/g, ' ');
     expect(llms).not.toMatch(/Venues are the side Flock charges/);
     expect(llms).not.toMatch(/Roost, the venue plan, will be/);
     expect(llms).toContain('Roost, the venue plan, is $99 a month or $990 a year per location, on sale in the venue dashboard on flockcorp.com since November 10, 2026, with a 14-day free trial');
-    expect(llms).toContain('No venue is being charged today');
   });
 
   test('the homepage venue card says where Roost is sold, not that it is not on sale', () => {
@@ -304,14 +319,15 @@ describe('the page only sells things that exist', () => {
   test('/how-it-works says where Roost is sold, not that a venue can write in early', () => {
     // It said "No venue is being charged yet. Want in early? Write to ..."
     // after Roost went on sale in the venue dashboard (2026-11-10). It now
-    // says where Roost is sold in the homepage venue card's words, and keeps
-    // "no venue is being charged yet", which the homepage pricing line and
-    // /about still say. The page is prerendered from this file, so crawlers
+    // says where Roost is sold in the homepage venue card's words. "No venue
+    // is being charged yet" came off this page and the homepage pricing line
+    // on 2026-11-27. The page is prerendered from this file, so crawlers
     // get the same words (scripts/build-cloudflare.js PRERENDER).
     const page = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'website', 'HowItWorksPage.js'), 'utf8')
       .replace(/\s+/g, ' ');
     expect(page).not.toMatch(/Want in early/);
-    expect(page).toContain('Roost, the paid plan, adds your own hour-by-hour forecast and the advisor above. It is sold in the venue dashboard. No venue is being charged yet.');
+    expect(page).toContain('Roost, the paid plan, adds your own hour-by-hour forecast and the advisor above. It is sold in the venue dashboard.');
+    expect(page).not.toMatch(/being charged yet/);
   });
 
   test('the SOS email on the page is the one the backend sends', () => {

@@ -253,23 +253,27 @@ describe('what the two pages say', () => {
   const flux = [readerText(FluxPage), ...data.STEPS.flatMap((s) => [s.title, s.caption]), ...Object.values(data.LABELS)].join(' ');
   const ai = readerText(AiPage);
 
-  test('Flux is a prototype, and says what is not done', () => {
-    expect(flux).toContain('It’s a prototype.');
-    expect(flux).toContain('hasn’t been printed yet');
+  test('Flux says once where it stands, and claims no venue', () => {
+    // Until 2026-11-27 the page carried one "hasn’t ... yet" line per part. It now
+    // states the stage once, as what exists: a working unit on the bench and
+    // a case designed in 3D. Nothing on either page says Flux runs in a venue.
+    expect(flux).toContain('We’re building it now.');
+    expect(flux).toContain('A working unit runs on our bench, and the case on this page is its 3D design.');
+    expect(flux).not.toMatch(/runs in (a|your|every) venue|installed in/i);
     // The doorway sensor has never counted real people. It was wired and
     // reading at the sensor session's check of 2026-10-21, and the page said
     // so until 2026-11-26; since the bench session of 2026-11-24 it is switched
     // off on the Pi (DOOR_SENSOR=off) until shorter wires arrive.
-    expect(flux).toContain('It looks down at a doorway from under the case to count people walking in and out. It hasn’t counted people in a real doorway yet.');
+    expect(flux).toContain('It looks down at a doorway from under the case to count people walking in and out.');
     expect(flux).not.toContain('wired up and reading');
     expect(flux).not.toContain('It hasn’t been wired up yet.');
-    expect(flux).toContain('It hasn’t run in a venue yet.');
-    expect(ai).toContain('It hasn’t run in a venue yet.');
-    expect(flux).toContain('A mockup of the planned build');
-    expect(flux).toContain('This frame is generated, not a picture of real people.');
+    expect(flux).toContain('Venue trials come next.');
+    expect(ai).toContain('Venue trials come next.');
+    expect(flux).toContain('The planned build with its back off, made from the CAD.');
+    expect(flux).toContain('One frame through Owl, made from generated heat.');
   });
 
-  test('the table camera says what the privacy policy says, no more, and that it is not fitted yet', () => {
+  test('the table camera says what the privacy policy says, no more, and speaks of fitting it in the future', () => {
     // The camera went into the case design and into the privacy policy's
     // "Table camera (optional, off by default)" on 2026-10-28. The page
     // describes it in the policy's own terms and stops there.
@@ -278,7 +282,7 @@ describe('what the two pages say', () => {
     expect(flux).toContain('A small color camera, connected by USB, in the pill beside the heat camera.');
     expect(flux).toContain('off unless the venue turns it on');
     expect(flux).toContain('a cover sits over its lens except during a check');
-    expect(flux).toContain('It hasn’t been fitted to a unit yet.');
+    expect(flux).toContain('Once the table camera is fitted, a venue will be able to turn it');
     expect(flux).toContain('blacks out anything warm and deletes it on the box');
     expect(flux).toContain('the venue sees the log on its Tables tab');
     expect(flux).toContain('No images, video or identities leave it.');
@@ -335,19 +339,19 @@ describe('what the two pages say', () => {
 
   test('the "106 inputs" line stays out, and Owl on the Pi keeps its limits', () => {
     // Owl runs on the Pi inside Flux as of the sensor log of 2026-10-21 (10:21
-    // EDT), so both pages say so; it has not run in a venue, and both say that
-    // too. Its training data is the 28 public sets in models/NOTICE.md.
+    // EDT), so both pages say so; it has not run in a venue, and both say venue
+    // trials come next. Its training data is the 28 public sets in models/NOTICE.md.
     // "Runs on the sensor", the figure line C-112 ruled out, stays out.
     expect(flux).toContain('It runs on the Raspberry Pi inside Flux, so each frame is counted on the box that took it.');
     // The meter is bought and designed in, and not yet plugged in (checked on
     // the Pi 2026-10-21: nothing answers at its address, the log says sound=mic).
-    expect(flux).toContain('A small decibel meter, already bought and built into the case design, measures how loud the room is.');
-    expect(flux).toContain('Until it’s plugged in, the working unit uses a microphone that gives a rough louder-or-quieter level.');
+    expect(flux).toContain('A small decibel meter, built into the case design, measures how loud the room is.');
+    expect(flux).toContain('The working unit listens through a microphone today.');
     for (const text of [flux, ai]) {
       expect(text).not.toMatch(/\b106\b/);
       expect(text).not.toMatch(/runs on the sensor/i);
       expect(text).toMatch(/runs on\s+the Raspberry Pi inside/);
-      expect(text).toContain('It hasn’t run in a venue yet.');
+      expect(text).toContain('Venue trials come next.');
       expect(text).toContain('28 public thermal datasets');
       expect(text).not.toMatch(/(five|six) public/);
     }

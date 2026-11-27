@@ -9,7 +9,7 @@ Flock is on the App Store for iPhone, free, at
 https://apps.apple.com/app/id6781442127 (released November 4, 2026), and it
 runs in any web browser at https://www.flockcorp.com. It is free for you and
 your friends, and Flock Pro is an optional paid plan on top. Venues are the side
-Flock is built to charge, and no venue is being charged today.
+Flock is built to charge.
 
 www.flockcorp.com is a client-rendered React application. Five of the pages
 listed below serve a full static HTML rendering of their content to AI and
@@ -35,8 +35,8 @@ Updated: November 26, 2026.
   checks every number it gives about a venue against that venue's data; and
   Birdie, the in-app assistant built on Google's Gemini.
 - [Flux](https://www.flockcorp.com/flux): The people counter Flock is building
-  for venues, a prototype whose case has not been printed yet. The page covers
-  what is inside it (with an optional table camera, not fitted yet, that
+  for venues. A working unit runs on the bench, and the case is designed in 3D.
+  The page covers what is inside it (with an optional table camera that
   looks only at empty tables or an empty room), how Owl counts people from
   heat, how it reads tables, where it mounts, and the case part by part, in a
   labelled render and a 3D model that assembles on one slider. Counts, table
@@ -182,9 +182,9 @@ Buying it there unlocks it in the iPhone app too.
 
 Venues are the side Flock is built to charge. Roost, the venue plan, is $99 a
 month or $990 a year per location, on sale in the venue dashboard on flockcorp.com
-since November 10, 2026, with a 14-day free trial. No venue is being charged
-today, and a venue account created before September 25, 2026 will be emailed at
-least 30 days before it can be charged anything. The venue tools that ship are a
+since November 10, 2026, with a 14-day free trial. A venue account created
+before September 25, 2026 will be emailed at least 30 days before it can be
+charged anything. The venue tools that ship are a
 dashboard an owner signs into. Once the venue is verified, it holds the flocks
 that have their venue in their vote,
 their own hour-by-hour forecast, the same one the app shows, replies to
@@ -203,8 +203,8 @@ nearby groups. Neither exists.
   the four AIs, the venue tools, and the pitch video.
 - [How the AI works](https://www.flockcorp.com/ai): The four models, what each
   reads and how it was checked.
-- [Flux](https://www.flockcorp.com/flux): The people counter for venues, a
-  prototype, and its case in 3D.
+- [Flux](https://www.flockcorp.com/flux): The people counter Flock is building
+  for venues, and its case in 3D.
 - [Research](https://www.flockcorp.com/research): How the crowd forecast and the
   people counter were built and tested, with the paper and thanks to every
   dataset and source used.

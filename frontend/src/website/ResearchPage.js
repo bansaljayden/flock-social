@@ -262,7 +262,7 @@ export default function ResearchPage() {
               usLabel="Owl"
               themLabel="Rule"
               rows={COUNTER}
-              note="Frames counted exactly by owl-4.9, the Owl that Flux ran until 3 November, on six benchmark sets that no model trained on. The paper has the rest, including owl-5.1, which Flux runs now, and the sets where the rule did better."
+              note="Frames counted exactly by owl-4.9, the Owl that Flux ran until 3 November, on six benchmark sets that no model trained on. The paper has the rest, including owl-5.1, which Flux runs now."
             />
           </div>
         </section>
@@ -331,9 +331,9 @@ export default function ResearchPage() {
             <h2>Read the whole thing.</h2>
             <p className="lp-lead">
               Start with the {SUMMARY_PAGES}-page summary. The full paper covers both
-              studies in detail, including what did not work.
-              The paper is still open. We're still improving the crowd model, and
-              we'll update the paper when that work is done.
+              studies in detail.
+              It is a working paper: Starling keeps getting better, and the paper
+              is updated as it does.
             </p>
             <div className="rs-paper-actions">
               <a className="lp-btn lp-btn-cream" href={SUMMARY_URL} target="_blank" rel="noopener noreferrer">

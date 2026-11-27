@@ -875,9 +875,9 @@ export default function LandingPage() {
               card while they decide.
             </p>
             <p className="lp-venues-note">
-              A <a href="/flux">Flux</a> box over the door, still a prototype, is
-              being built to show which tables are free, seated, waiting on a
-              server or ready to clear.
+              We’re building <a href="/flux">Flux</a>, a box over the door that
+              shows which tables are free, seated, waiting on a server or ready
+              to clear.
             </p>
             <div className="lp-venues-actions">
               <a className="lp-btn lp-btn-cream" href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>
@@ -908,8 +908,8 @@ export default function LandingPage() {
           <h2 id="lp-h-pricing">Free for your friend group.</h2>
           <p className="lp-lead lp-pricing-lead">
             {proOffer
-              ? 'Planning with your friends is free, with no ads. Flock Pro is optional, for whoever plans the most. Venues are where Flock will make its money, and none is being charged yet.'
-              : 'Planning with your friends is free, with no ads. Venues are where Flock will make its money, and none is being charged yet.'}
+              ? 'Planning with your friends is free, with no ads. Flock Pro is optional, for whoever plans the most. Venues are where Flock will make its money.'
+              : 'Planning with your friends is free, with no ads. Venues are where Flock will make its money.'}
           </p>
           </div>
           <img
@@ -958,12 +958,12 @@ export default function LandingPage() {
                   constant (venuePricingDecision.test.js), and Stripe's is
                   what the dashboard shows. */}
               <div className="lp-plan-price">Free account<small>Roost, the paid plan, is sold in the venue dashboard</small></div>
-              <p className="lp-plan-note">Roost adds your own hour-by-hour forecast.</p>
+              <p className="lp-plan-note">Roost adds your own hour-by-hour forecast. Every verified venue gets these free:</p>
               <ul className="lp-list">
-                <li>See the flocks with you in their vote, once verified</li>
-                <li>Put deals on your card once your venue is verified</li>
-                <li>List your events there too, once verified</li>
-                <li>Reply to reviews from people who went, once verified</li>
+                <li>See the flocks with you in their vote</li>
+                <li>Put deals on your card</li>
+                <li>List your events there too</li>
+                <li>Reply to reviews from people who went</li>
               </ul>
               <a className="lp-btn lp-btn-navy" href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>
                 Email us

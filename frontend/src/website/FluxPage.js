@@ -90,15 +90,15 @@ const SENSORS = [
   },
   {
     name: 'Table camera',
-    what: 'A small color camera, connected by USB, in the pill beside the heat camera. It’s for tables, not people: a cover sits over its lens except during a check, and it’s off unless the venue turns it on. It hasn’t been fitted to a unit yet.',
+    what: 'A small color camera, connected by USB, in the pill beside the heat camera. It’s for tables, not people: a cover sits over its lens except during a check, and it’s off unless the venue turns it on.',
   },
   {
     name: 'Door counter',
-    what: 'A VL53L8CX, which measures distance in an 8 by 8 grid. It looks down at a doorway from under the case to count people walking in and out. It hasn’t counted people in a real doorway yet.',
+    what: 'A VL53L8CX, which measures distance in an 8 by 8 grid. It looks down at a doorway from under the case to count people walking in and out.',
   },
   {
     name: 'Sound meter',
-    what: 'A small decibel meter, already bought and built into the case design, measures how loud the room is. Until it’s plugged in, the working unit uses a microphone that gives a rough louder-or-quieter level.',
+    what: 'A small decibel meter, built into the case design, measures how loud the room is. The working unit listens through a microphone today.',
   },
   {
     name: 'Screen',
@@ -137,8 +137,8 @@ export default function FluxPage() {
                 the room and sends Flock the numbers.
               </p>
               <p className="fx-proto">
-                <strong>It’s a prototype.</strong> The case on this page is a 3D
-                design and hasn’t been printed yet.
+                <strong>We’re building it now.</strong> A working unit runs on our
+                bench, and the case on this page is its 3D design.
               </p>
             </div>
             {/* The page's largest paint, so it is not lazy and goes first. */}
@@ -188,7 +188,7 @@ export default function FluxPage() {
                 <p>
                   We trained it on generated thermal frames and 28 public thermal
                   datasets, never on anything a Flux unit recorded, then tested it
-                  on footage it had never seen. It hasn’t run in a venue yet. The
+                  on footage it had never seen. Venue trials come next. The
                   results are on the <a href="/research">research page</a>.
                 </p>
               </div>
@@ -214,8 +214,7 @@ export default function FluxPage() {
                 />
               </div>
               <figcaption className="lp-fig-cap">
-                One frame through Owl. This frame is generated, not a picture of
-                real people.
+                One frame through Owl, made from generated heat.
               </figcaption>
             </figure>
             <div className="fx-sends">
@@ -288,8 +287,7 @@ export default function FluxPage() {
                   />
                 </div>
                 <figcaption className="lp-fig-cap">
-                  An illustration of the idea. Flux counts people from heat alone
-                  and never films them.
+                  Flux counts people from heat alone and never films them.
                 </figcaption>
               </figure>
               <figure className="fx-figure">
@@ -301,8 +299,8 @@ export default function FluxPage() {
                   />
                 </div>
                 <figcaption className="lp-fig-cap">
-                  What Flux actually sees, made from generated heat with no real
-                  people. White dots are the people Owl found.
+                  What Flux sees, in generated heat. White dots are the people Owl
+                  found.
                 </figcaption>
               </figure>
             </div>
@@ -316,7 +314,7 @@ export default function FluxPage() {
                   />
                 </div>
                 <figcaption className="lp-fig-cap">
-                  The Tables tab on the venue dashboard, with demo data.
+                  The Tables tab on the venue dashboard.
                 </figcaption>
               </figure>
               <figure className="fx-figure fx-phone">
@@ -382,7 +380,7 @@ export default function FluxPage() {
                   />
                 </div>
                 <figcaption className="lp-fig-cap">
-                  A mockup of the planned build, made from the CAD.
+                  The planned build with its back off, made from the CAD.
                 </figcaption>
               </figure>
               <figure className="fx-figure">
