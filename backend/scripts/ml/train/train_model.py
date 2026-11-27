@@ -430,12 +430,16 @@ def _same_rows(a, b) -> bool:
     return bool(np.array_equal(a, b, equal_nan=a.dtype.kind == 'f'))
 
 
-def assert_masked_copies(masked_copy, X, feature_cols, is_realtime, per_row) -> dict:
+def assert_masked_copies(masked_copy, X, feature_cols, is_realtime, per_row, cell_stats) -> dict:
     """Every row marked a masked copy is the copy prepare_features writes of its source row.
 
     `per_row` is {name: array} of the other per-row values this script reads
-    (label, baseline, weight, city, ...); None values are skipped. Returns the
-    row counts, or None for a matrix with no copies.
+    (label, baseline, weight, city, ...); None values are skipped. `cell_stats`
+    is the pickle's category_cell_stats (None when it carries none): a copy's
+    group and category-cell indexes must be its source row's, because
+    FoldCategoryBaselines holds its subset rule on the original rows and reads
+    a copy's per-fold category features through those indexes. Returns the row
+    counts, or None for a matrix with no copies.
     """
     flags = np.asarray(masked_copy)
     if not flags.any():
@@ -470,6 +474,26 @@ def assert_masked_copies(masked_copy, X, feature_cols, is_realtime, per_row) -> 
                 'Everything but the masked live features is the source row\'s by definition; '
                 'a copy with another label, weight or city is a new training row under a '
                 'copy\'s mark.')
+    if cell_stats:
+        indexes = {'row_group': cell_stats.get('row_group')}
+        for block_name in ('category', 'refined'):
+            indexes[f'{block_name}.row_cell'] = (cell_stats.get(block_name) or {}).get('row_cell')
+        for name, values in indexes.items():
+            if values is None:
+                continue
+            values = np.asarray(values)
+            if len(values) != len(flags):
+                raise LabelContractError(
+                    f'category_cell_stats.{name} has {len(values)} entries for {len(flags)} '
+                    'rows, so a masked copy cannot be checked against its source row\'s '
+                    'category cell.')
+            if not np.array_equal(values[n0:], values[src]):
+                raise LabelContractError(
+                    'A masked copy must sit in its source row\'s category cell, and at least '
+                    f'one does not (category_cell_stats.{name}). The per-fold category '
+                    'features of a copy are read through these indexes and the subset rule '
+                    'is held on the original rows alone, so a copy filed under another cell '
+                    'would be scored against a category mean its source row never had.')
     every_copy = {cols.index('last_live_dev'): 0.0,
                   cols.index('last_live_age_h'): float(LIVE_MISSING_AGE_H)}
     no_reading_only = {cols.index('recent_offset'): 0.0, cols.index('recent_offset_n'): 0.0}
@@ -712,8 +736,9 @@ class FoldCategoryBaselines:
             # are every row and rows_counts, just shown equal to the rebuild, is
             # their count. A masked copy is a second row of its source's cell, so
             # with copies the count is rebuilt over the rows marked original
-            # (each copy is checked against its source row before this runs:
-            # assert_masked_copies) and those are held to the same rule.
+            # (each copy is checked against its source row before this runs,
+            # these indexes included: assert_masked_copies) and those are held
+            # to the same rule.
             if self.original is None:
                 original_counts = rows_counts
             else:
@@ -1940,7 +1965,8 @@ def main():
         copies = assert_masked_copies(masked_copy, X, feature_cols, realtime_flags(data), {
             'y': y, 'y_actual': y_actual, 'baseline': baseline, 'sample_weight': sample_weight,
             'run_length_divisor': data.get('run_length_divisor'), 'cities': cities,
-            'label_provenance': provenance, 'is_realtime': realtime_flags(data)})
+            'label_provenance': provenance, 'is_realtime': realtime_flags(data)},
+            data.get('category_cell_stats'))
     assert_copies_match_metadata(copies, metadata)
     original = (masked_copy == 0) if copies else None
     if not copies:

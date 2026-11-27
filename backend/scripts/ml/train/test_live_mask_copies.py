@@ -239,7 +239,8 @@ def trainer_args(data):
 
 def check_copies(data):
     return tm.assert_masked_copies(data[pf.MASKED_COPY_KEY], data['X'], data['feature_cols'],
-                                   data['is_realtime'], trainer_args(data))
+                                   data['is_realtime'], trainer_args(data),
+                                   data.get('category_cell_stats'))
 
 
 def train(data, with_mask=True, **switch_values):
@@ -471,7 +472,7 @@ def test_the_trainer_accepts_the_copies_and_still_refuses_unmarked_extra_rows():
     assert counts == {'original_rows': n, 'offset_only': record['offset_only'],
                       'no_reading': record['no_reading'], 'matrix_rows': record['matrix_rows']}
     assert tm.assert_masked_copies(np.zeros(n, dtype=np.int8), data['X'], FEATURES, data['is_realtime'],
-                                   trainer_args(data)) is None, 'no copies, nothing to check'
+                                   trainer_args(data), data.get('category_cell_stats')) is None, 'no copies'
     stats, flags = out['category_cell_stats'], out[pf.MASKED_COPY_KEY]
     fold_cats = tm.FoldCategoryBaselines(stats, out['cities'], FEATURES, out['y_actual'], masked_copy=flags)
     assert fold_cats.active and fold_cats.verify_reproduces_shipped(out['X']) == 0.0
@@ -563,6 +564,36 @@ def test_a_row_marked_a_copy_that_is_not_one_is_refused():
     }
     for name, (broken, needle) in cases.items():
         expect(tm.LabelContractError, needle, lambda: check_copies(broken))
+    # A copy filed under another category cell than its source's, with the pickle's own row
+    # statistics recounted to match. FoldCategoryBaselines accepts that pickle (its rebuild
+    # covers every row and its subset rule looks at original rows only), so this check is
+    # the one that refuses it.
+    stats = out['category_cell_stats']
+    y64 = np.asarray(out['y_actual'], dtype=np.float64)
+    finite = np.isfinite(y64)
+    for block_name, row in (('category', first_c), ('refined', first_b)):
+        block = stats[block_name]
+        n_cells = len(block['cells'])
+        row_cell = np.array(block['row_cell'], copy=True)
+        row_cell[row] = (int(row_cell[row]) + 1) % n_cells
+        flat = np.asarray(stats['row_group']).astype(np.int64) * n_cells + row_cell
+        shape = np.asarray(block['rows_counts']).shape
+        size = shape[0] * shape[1]
+        moved = {**stats, block_name: {
+            **block, 'row_cell': row_cell,
+            'rows_counts': np.bincount(flat[finite], minlength=size).reshape(shape),
+            'rows_sums': np.bincount(flat[finite], weights=y64[finite], minlength=size).reshape(shape)}}
+        tm.FoldCategoryBaselines(moved, out['cities'], FEATURES, out['y_actual'],
+                                 masked_copy=out[pf.MASKED_COPY_KEY])
+        expect(tm.LabelContractError, "source row's category cell",
+               lambda: check_copies({**out, 'category_cell_stats': moved}))
+    group = np.array(stats['row_group'], copy=True)
+    group[first_b] = (int(group[first_b]) + 1) % len(stats['groups'])
+    expect(tm.LabelContractError, "source row's category cell",
+           lambda: check_copies({**out, 'category_cell_stats': {**stats, 'row_group': group}}))
+    short = {**stats, 'refined': {**stats['refined'], 'row_cell': np.asarray(stats['refined']['row_cell'])[:-1]}}
+    expect(tm.LabelContractError, 'cannot be checked against its source row',
+           lambda: check_copies({**out, 'category_cell_stats': short}))
     # A copy too few, a row marked a copy that the rule does not call for, and the wrong order.
     fewer = {k: (v[:-1] if k in pf.TRAIN_PICKLE_ROW_KEYS + (pf.MASKED_COPY_KEY,) else v) for k, v in out.items()}
     expect(tm.LabelContractError, 'original rows call for', lambda: check_copies(fewer))
