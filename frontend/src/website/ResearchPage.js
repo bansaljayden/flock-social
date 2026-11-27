@@ -52,9 +52,10 @@ export const PAPER_CITATION = {
 // 09-01..05, so the note says they were fixed before the first reading, and
 // says it of that forecast only: the nowcast weights served from mid-October
 // were chosen on these same readings (MODEL-METRICS.md, "The two- and
-// three-hour nowcast weights set to zero"). Production has served
-// v2.6.0-starling in model mode since the evening of 2026-11-01
-// (backend/scripts/ml/RETRAIN.md), so the charted forecast is named by its
+// three-hour nowcast weights set to zero"). Production has served Starling
+// in model mode since the evening of 2026-11-01 (v2.6.0-starling until
+// 2.8.0-starling replaced it with the ship of 2026-11-26;
+// backend/scripts/ml/RETRAIN.md), so the charted forecast is named by its
 // dates and never as the number on a card today. The counter's figures are
 // owl-4.9 with its crowd model and the heat rule as deployed on all six real
 // benchmark sets, which also guided Owl's development (paper Figure 14 and
@@ -142,12 +143,16 @@ export default function ResearchPage() {
             {/* The chart below scores the online correction, a venue's
                 weekly pattern moved by its live readings, as served from
                 26 September to mid-October. Since the evening of 1 November
-                production serves Starling (v2.6.0-starling, model mode), and
+                production serves Starling (model mode; v2.6.0-starling until
+                the ship of 26 November, 2.8.0-starling since), and
                 live readings ended on 25 November, so the lead dates the
                 charted forecast and says a card's number starts from
-                Starling's forecast: model mode adds 0.5 x the venue's
-                trailing offset to it (mlPredictor.js DEVIATION_WEIGHT), and
-                until 25 November an hour-old reading replaced it outright.
+                Starling's forecast: under v2.6.0 model mode added 0.5 x the
+                venue's trailing offset to it (mlPredictor.js
+                DEVIATION_WEIGHT), and until 25 November an hour-old reading
+                replaced it outright. 2.8.0 reads both as inputs and nothing
+                is added after it (artifactLearnsOffset); verified crowd
+                reports can still move the number (crowdEngine.js).
                 A venue with no pattern gets the no-curve fallback or the rule
                 engine (crowdEngine.js), so the lead never puts Starling
                 behind every card. */}

@@ -32,9 +32,9 @@ const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 //   on the App Store since November 4, 2026                               Apple released 1.0; apps.apple.com/app/id6781442127
 //   Roost sold in the venue dashboard since November 10, 2026 (VENUE_BILLING_ENABLED=true);
 //     Flock Pro on sale on the web since November 13, 2026 (PAYWALL_ENABLED=true)
-//   the next Starling is not trained as of 2026-11-26; a                  backend/scripts/ml/RETRAIN.md (the 2026-11-26 block) and
-//     version trained without November 12 to 25 is scored on those days   the paper's section 7.2; the thresholds were committed on
-//     and decides the ship                                                September 25 and 26, 2026
+//   2.8.0-starling, trained 2026-11-26 without the readings of            backend/scripts/ml/models/model_metadata.json (ship_gate.band_gate),
+//     November 12 to 25, was scored on those days, passed all eight       backend/scripts/ml/RETRAIN.md and the paper's section 7.2; the
+//     tests and took over from v2.6.0-starling                            thresholds were committed on September 25 and 26, 2026
 // The story and the bios were filled out on 2026-11-13 from the record (see
 // PEOPLE and STORY); Asad's photo is up, the maintainer's is still to come.
 // The names are in the title and description because the page is what a
@@ -398,10 +398,9 @@ export default function AboutPage() {
             </p>
             <p>
               Flux, a sensor that counts the people in a room, was tested on research footage. Testing in real venues
-              comes next. Once the next version of Starling is trained, it gets
+              comes next. The newest version of Starling took over after it was
               scored on the crowd readings of November 12 to 25, which it never
-              sees, and it takes over only if it passes thresholds set in
-              September.
+              trained on, and passed every threshold set in September.
             </p>
           </div>
         </section>

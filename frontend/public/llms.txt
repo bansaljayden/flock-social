@@ -59,12 +59,12 @@ Updated: November 26, 2026.
 - Crowd levels: Flock estimates how busy a venue will be tonight, so a group can see
   how packed somewhere will be before leaving. Where Flock knows a venue's usual
   pattern, the number starts from Starling's forecast: that pattern plus
-  Starling's prediction of how far each hour will move from it. Until late
-  December 2026, the number for a venue Flock read live also moves by half of how
-  far its live readings from the last four weeks ran above or below that pattern;
-  the last were taken on November 25, 2026. A place Flock has no pattern for yet
-  gets an estimate from what is typical for its kind. It gives an hour-by-hour
-  forecast and a best time to arrive.
+  Starling's prediction of how far each hour will move from it. For a venue
+  Flock read live, one of Starling's inputs is how far its live readings from
+  the last four weeks ran above or below that pattern. The last readings were
+  taken on November 25, 2026, so that input runs out by late December 2026. A
+  place Flock has no pattern for yet gets an estimate from what is typical for
+  its kind. It gives an hour-by-hour forecast and a best time to arrive.
 - Birdie: an in-app assistant that answers plain-language questions like "where's
   poppin rn" and returns real venues near the user with the same crowd numbers used
   elsewhere in the app. Birdie is AI, built on Google Gemini.
@@ -87,33 +87,59 @@ Updated: November 26, 2026.
 Since November 1, 2026, the number for a venue with a usual pattern has
 started from a forecast by Starling, Flock's own crowd model. Starling predicts
 how far each hour will move from the venue's usual pattern, using
-gradient-boosted decision trees (XGBoost, exported to ONNX; version 2.6.0 is
-800 trees, each up to 8 splits deep). When Flock has no pattern for a venue
-yet, it answers from the usual pattern for that kind of venue, or otherwise
-from a rule-based engine, and the number is tagged with whichever produced it.
+gradient-boosted decision trees (XGBoost, exported to ONNX; version 2.8.0 is
+2,000 trees, each up to 10 splits deep, a size picked on November 26, 2026 by
+a test on training cities, before training). When Flock has no pattern for a
+venue yet, it answers from the usual pattern for that kind of venue, or
+otherwise from a rule-based engine, and the number is tagged with whichever
+produced it.
 
 These figures are taken from Starling's metadata,
-as of the August 18, 2026 training run (version 2.6.0 "Starling"):
+as of the November 26, 2026 training run (version 2.8.0 "Starling"):
 
-- It reads 106 input signals: time patterns, weather, nearby events, the
+- It reads 104 input signals: time patterns, weather, nearby events, the
   venue's type, rating and price, and how venues of the same kind and venues
-  nearby usually run at that hour.
-- It was trained on 1,934,988 venue-hour rows across 30 cities, collected from
-  March to May 2026: 1,565,912 of them are venues' typical-week values, and the
-  other 369,076 are realtime rows whose source, a live reading or the
-  provider's forecast, was not recorded.
-- It was evaluated on 395,464 held-out venue-hour rows from three cities the
-  model never trained on: Barcelona, Miami, and Tokyo. Its ship gate scores
-  the 67,249 realtime rows among them that have a usable curve.
+  nearby usually run at that hour. New in this version are professional and
+  college game schedules, the usual pattern one hour earlier, and the venue's
+  own recent live readings: its latest reading and how old it is, and its
+  typical gap from the usual pattern over the last four weeks with how many
+  readings that rests on. The month inputs were dropped.
+- It was trained on 3,533,480 venue-hour rows across 31 cities: 2,052,008 of
+  them are venues' typical-week values, and the other 1,481,472 are verified
+  live readings taken from September 1 to November 11, 2026. The realtime rows
+  from March to May 2026, whose source was not recorded, are no longer used.
+- It was evaluated on 367,007 held-out venue-hour rows from three cities the
+  model never trained on: Barcelona, Miami, and Tokyo. Its point gate scores
+  the 39,752 realtime rows among them that have a usable curve, all of them
+  in Miami.
 
-As of November 26, 2026 the next version of Starling is not trained. It will
-be larger, 2,000 trees each up to 10 splits deep, a size chosen that day by a
-test on training cities, and it will learn from live readings taken through
-November 11, 2026. It replaces version 2.6.0 only if it passes all eight tests
-of a gate fixed in advance, decided on the 705,642 live readings of November 12
-to 25, 2026 in the six cities Flock read every hour (1,218,939 across all
-cities), none of which it trains on, against the rule Flock served from October
-13 to November 1.
+On November 26, 2026, version 2.8.0 passed all eight tests of a gate fixed in
+advance. It then replaced version 2.6.0. The gate was decided on 712,165 live
+readings the model never trained on, taken from November 12 to 25, 2026 in the
+six cities Flock read every hour (Chicago, Denver, Los Angeles, the Lehigh
+Valley, Philadelphia and Seattle), against the rule Flock served from October
+13 to November 1. On those readings Starling's number was within 10 points of
+the reading 96.2% of the time, against 86.9% for that rule and 61.5% for the
+usual weekly pattern alone. It named the exact crowd level, one of five, 83.9%
+of the time against 71.8% for the rule, and its average miss (mean absolute
+error) was 3.49 points against 6.39. Across all 31 cities with live readings
+in those two weeks (1,227,914 readings), it was within 10 points 94.3% of the
+time.
+
+Those readings were scored with the live feed on: 88% of the six-city readings
+had a reading from the hour before. Flock's live readings ended on November
+25, 2026, so today the app runs Starling without a fresh reading. Replayed on
+those 1,227,914 readings with no reading newer than a week, version 2.8.0 is
+within 10 points 87.1% of the time, and with none inside four weeks 84.5%.
+Version 2.6.0 scores 69.6% and 59.7% in the same replays. The replays reuse
+the gate's readings, so they are a second look at them and do not count as a
+separate test. The readings are a busyness provider's relative estimates, 0 to
+100 within each venue. They are not head counts.
+
+Version 2.6.0, the previous version, was 800 trees, each up to 8 splits deep,
+trained on August 18, 2026 on 1,934,988 venue-hour rows across 30 cities, with
+106 input signals. It made the forecast from November 1, 2026 until version
+2.8.0 replaced it.
 
 ## Key facts about the forecast Flock served in September and October
 

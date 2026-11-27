@@ -481,14 +481,17 @@ export default function LandingPage() {
             {/* What the number is since 2026-11-01 (CROWD_SERVE_MODE=model;
                 research paper 5.1 and 5.2): where a venue has a weekly curve,
                 that curve plus Starling's forecast of how far the hour departs
-                from it (v2.6.0-starling, a delta model whose inputs include the
-                weather and the venues around it, paper Table 3). A venue with
-                no curve gets the category table or the rule engine, what is
-                typical for its kind of place (lib/crowd.js), never the model.
+                from it (2.8.0-starling since the ship of 2026-11-26,
+                v2.6.0-starling before it; a delta model whose inputs include
+                the weather and the venues around it, model_metadata.json
+                feature_names). A venue with no curve gets the category table
+                or the rule engine, what is typical for its kind of place
+                (lib/crowd.js), never the model.
                 No live reading has come in since 2026-11-25 15:59 UTC (the
                 provider's subscription was cancelled at 11:08 EST, 16:08 UTC,
                 that day), so the copy names none; the trailing offset from
-                earlier readings still enters at weight 0.5 until its 28-day
+                earlier readings is one of 2.8.0's inputs (recent_offset;
+                v2.6.0 added it after the model at weight 0.5) until its 28-day
                 window empties, about 2026-12-23
                 (mlPredictor.js OFFSET_WINDOW_HOURS). "Will be": every number is
                 a forecast. The quieter pick is the venue card's own suggestion. */}

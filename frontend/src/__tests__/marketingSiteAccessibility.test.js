@@ -1032,9 +1032,11 @@ describe('copy rules (DESIGN-STANDARD)', () => {
   // mid-October; production has served Starling in model mode since the
   // evening of 1 November (backend/scripts/ml/RETRAIN.md), so the lead dates
   // the charted forecast and says a card's number starts from Starling's
-  // forecast today. "Has come from Starling" said more: model mode adds half
-  // the venue's trailing offset (mlPredictor.js DEVIATION_WEIGHT), and until
-  // 25 November an hour-old reading replaced the forecast outright.
+  // forecast today. "Has come from Starling" said more: under v2.6.0 model
+  // mode added half the venue's trailing offset (mlPredictor.js
+  // DEVIATION_WEIGHT), and until 25 November an hour-old reading replaced the
+  // forecast outright. 2.8.0-starling, serving since the ship of 26 November,
+  // reads both as inputs, and verified crowd reports can still move the number.
   test('/research limits the charted forecast to the venues and readings it was measured on', () => {
     const page = readJs('ResearchPage.js').replace(/\s+/g, ' ');
     expect(page).not.toMatch(/every venue card/);

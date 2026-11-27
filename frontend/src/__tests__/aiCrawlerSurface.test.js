@@ -409,14 +409,66 @@ describe('llms.txt stays true to the shipped model', () => {
   test('the five crowd-model figures match model_metadata.json', () => {
     // Same pinning AboutPage and the landing proof line get. A retrain that
     // changes the corpus must change llms.txt in the same commit.
-    expect(meta.training_rows).toBe(1934988);
-    expect(llms).toContain('1,934,988');
-    expect(meta.holdout_rows).toBe(395464);
-    expect(llms).toContain('395,464');
-    expect(meta.training_cities).toHaveLength(30);
-    expect(llms).toContain('across 30 cities');
-    expect(meta.feature_names).toHaveLength(106);
-    expect(llms).toContain('106 input signals');
+    // Re-recorded 2026-11-26 from 2.8.0-starling's metadata (v2.6.0's were
+    // 1,934,988 rows, 395,464 held out, 30 cities and 106 signals; llms.txt
+    // now gives those as the previous version's).
+    expect(meta.training_rows).toBe(3533480);
+    expect(llms).toContain('3,533,480');
+    expect(meta.holdout_rows).toBe(367007);
+    expect(llms).toContain('367,007');
+    expect(meta.training_cities).toHaveLength(31);
+    expect(llms).toContain('across 31 cities');
+    expect(meta.feature_names).toHaveLength(104);
+    expect(llms).toContain('104 input signals');
+  });
+
+  // llms.txt also states how the corpus splits and which rows the point gate
+  // scores, so those are held to the same file.
+  test("the corpus split and the point gate's rows match model_metadata.json", () => {
+    const flat = llms.replace(/\s+/g, ' ');
+    const by = meta.training_metrics_by_population;
+    expect(by.weekly_anchor.rows).toBe(2052008);
+    expect(by.realtime_served.rows).toBe(1481472);
+    expect(by.weekly_anchor.rows + by.realtime_served.rows).toBe(meta.training_rows);
+    expect(flat).toContain("2,052,008 of them are venues' typical-week values, and the other 1,481,472 are verified live readings taken from September 1 to November 11, 2026");
+    expect(meta.time_holdout.training_live_through).toBe('2026-11-11');
+    expect(meta.ship_gate.realtime_rows).toBe(39752);
+    expect(Object.keys(meta.ship_gate.per_city)).toEqual(['miami']);
+    expect(flat).toContain('the 39,752 realtime rows among them that have a usable curve, all of them in Miami');
+  });
+
+  // The gate's figures are the artifact's own record of its ship gate
+  // (ship_gate.band_gate), and each one is quoted with what it was measured
+  // on. They were scored with the live feed on, and live readings ended on
+  // 2026-11-25, so the paragraph after them says what the app runs on today
+  // and gives the replays without a fresh reading. Those figures never
+  // travel without that paragraph.
+  test("the gate figures match the metadata's band gate and carry the live-feed caveat", () => {
+    const flat = llms.replace(/\s+/g, ' ');
+    const gate = meta.ship_gate.band_gate;
+    expect(meta.ship_gate.overall_pass).toBe(true);
+    expect(gate.pass).toBe(true);
+    expect(Object.keys(gate.criteria)).toHaveLength(8);
+    for (const c of Object.values(gate.criteria)) expect(c.pass).toBe(true);
+    expect(flat).toContain('passed all eight tests of a gate fixed in advance');
+    expect(gate.window_from).toBe('2026-11-12');
+    expect(gate.candidate.n).toBe(712165);
+    expect(flat).toContain('712,165 live readings the model never trained on, taken from November 12 to 25, 2026 in the six cities Flock read every hour');
+    expect(Object.keys(gate.criteria.no_city_regression.per_city).sort())
+      .toEqual(['chicago', 'denver', 'la', 'lehigh', 'philly', 'seattle']);
+    expect(flat).toContain('(Chicago, Denver, Los Angeles, the Lehigh Valley, Philadelphia and Seattle)');
+    expect(gate.incumbent_serving).toEqual({ serve_mode: 'curve_offset', nowcast: true });
+    expect(flat).toContain('against the rule Flock served from October 13 to November 1');
+    expect(flat).toContain(`within 10 points of the reading ${gate.candidate.within_10}% of the time, against ${gate.incumbent.within_10}% for that rule and ${gate.naive_curve.within_10}% for the usual weekly pattern alone`);
+    expect(flat).toContain(`named the exact crowd level, one of five, ${gate.candidate.band_exact}% of the time against ${gate.incumbent.band_exact}% for the rule`);
+    expect(flat).toContain(`was ${gate.candidate.mae} points against ${gate.incumbent.mae}`);
+    // The caveat, in the paragraph straight after the figures.
+    expect(flat).toContain("in those two weeks (1,227,914 readings), it was within 10 points 94.3% of the time. Those readings were scored with the live feed on: 88% of the six-city readings had a reading from the hour before. Flock's live readings ended on November 25, 2026, so today the app runs Starling without a fresh reading.");
+    expect(flat).toContain('with no reading newer than a week, version 2.8.0 is within 10 points 87.1% of the time, and with none inside four weeks 84.5%. Version 2.6.0 scores 69.6% and 59.7% in the same replays.');
+    expect(flat).toContain('They are not head counts.');
+    // The version it replaced is named as the previous one, never as serving.
+    expect(flat).toContain('Version 2.6.0, the previous version,');
+    expect(flat).not.toMatch(/next version of Starling|is not trained|not trained yet/);
   });
 
   // The served-number figures have their own section, after Starling's, and
@@ -475,20 +527,26 @@ describe('llms.txt stays true to the shipped model', () => {
   // A venue with no pattern is answered by its kind's pattern or the rule
   // engine, so no sentence that describes every venue's number may credit it
   // to Starling or to live readings. Production has served the model since
-  // the evening of 2026-11-01 (CROWD_SERVE_MODE=model), and model mode adds
-  // half the venue's trailing offset, the median gap of its live readings in
-  // the 28 days before the hour (backend/services/mlPredictor.js
-  // DEVIATION_WEIGHT, trailingOffsetBefore), to Starling's forecast. No live
-  // reading has arrived since 2026-11-25 15:59 UTC (the provider's
-  // subscription was cancelled at 11:08 EST, 16:08 UTC, that day), so the
-  // offset empties by about 2026-12-23. The crowd-levels sentence therefore
-  // says the number starts from Starling's forecast and names the offset
-  // with its end, and the pattern-plus-live-readings sentence is the
-  // forecast the September to October figures measured, in the past tense.
+  // the evening of 2026-11-01 (CROWD_SERVE_MODE=model). Under v2.6.0 model
+  // mode added half the venue's trailing offset, the median gap of its live
+  // readings in the 28 days before the hour (backend/services/mlPredictor.js
+  // DEVIATION_WEIGHT, trailingOffsetBefore), to Starling's forecast.
+  // 2.8.0-starling lists that offset among its inputs (recent_offset), so
+  // nothing is added after the model (artifactLearnsOffset). No live reading
+  // has arrived since 2026-11-25 15:59 UTC (the provider's subscription was
+  // cancelled at 11:08 EST, 16:08 UTC, that day), so the offset empties by
+  // about 2026-12-23. The crowd-levels sentence therefore says the number
+  // starts from Starling's forecast and names the offset as an input, with
+  // its end, and the pattern-plus-live-readings sentence is the forecast the
+  // September to October figures measured, in the past tense.
   test('the crowd sentences limit live readings to the venues Flock has them for', () => {
     const flat = llms.replace(/\s+/g, ' ');
     expect(flat).not.toMatch(/Each venue's number/);
-    expect(flat).toContain("Where Flock knows a venue's usual pattern, the number starts from Starling's forecast: that pattern plus Starling's prediction of how far each hour will move from it. Until late December 2026, the number for a venue Flock read live also moves by half of how far its live readings from the last four weeks ran above or below that pattern; the last were taken on November 25, 2026. A place Flock has no pattern for yet gets an estimate from what is typical for its kind.");
+    // The sentence is true of an artifact that reads the offset as an input.
+    expect(meta.feature_names).toContain('recent_offset');
+    expect(flat).toContain("Where Flock knows a venue's usual pattern, the number starts from Starling's forecast: that pattern plus Starling's prediction of how far each hour will move from it. For a venue Flock read live, one of Starling's inputs is how far its live readings from the last four weeks ran above or below that pattern. The last readings were taken on November 25, 2026, so that input runs out by late December 2026. A place Flock has no pattern for yet gets an estimate from what is typical for its kind.");
+    // v2.6.0's step, which 2.8.0 does not take.
+    expect(flat).not.toMatch(/also moves by half/);
     expect(flat).not.toMatch(/the number is Starling's forecast/);
     expect(flat).not.toMatch(/has come from Starling/);
     expect(flat).not.toMatch(/moved by the venue's latest live reading/);

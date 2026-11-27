@@ -24,8 +24,9 @@ import { shareThisPage } from './shareCard';
 // in plain sentences on 2026-10-21 (the maintainer's ask), with the same facts.
 // Starling's line changed on 2026-11-26 to say what the model predicts, how
 // far an hour moves from the venue's usual week (model_metadata.json
-// label_type delta). Its 800 trees describe v2.6.0, the version serving
-// today, and the next version is sized differently (RETRAIN.md 2026-11-26).
+// label_type delta). The 800 trees it used to name were v2.6.0's;
+// 2.8.0-starling, which replaced it, has 2,000 (model_metadata.json
+// best_params), so the line names no size.
 // The held-out cities are model_metadata.json evaluation.holdout_cities.
 
 // The app's three-minute video (2:57), the Congressional App Challenge entry.

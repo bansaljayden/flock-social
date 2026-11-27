@@ -1,9 +1,12 @@
 # Trained model artifacts
 
-This directory is where `crowd_model.onnx` and `model_metadata.json` live at
-runtime. Both are tracked in the deployment source, because that is the one
-Railway builds from and there is no other route by which a deploy could receive
-them. Neither is distributed with the source distribution.
+This directory is where the model graph and `model_metadata.json` live at
+runtime. The graph is `crowd_model.onnx`, or `crowd_model.onnx.gz` for a model
+too big to commit plain (next section). The shipped model is 2.8.0-starling,
+tracked as `crowd_model.onnx.gz` since 2026-11-26. Both files are tracked in
+the deployment source, because that is the one Railway builds from and there
+is no other route by which a deploy could receive them. Neither is distributed
+with the source distribution.
 
 They are Flock's own artifacts, built from data Flock collected. The pipeline
 that produces them is published in full:
@@ -13,13 +16,17 @@ data collection in `../` (`runCollection.js`, `collectWeekly.js`,
 
 ## A model over 50 MB: commit `crowd_model.onnx.gz` instead
 
-GitHub refuses any file over 100 MB, and a 2,000-tree depth-10 model is about
-120-135 MB as a plain `.onnx`. So `export_model.py` writes
-`crowd_model.onnx.gz` beside it on every export: the same graph, gzipped at
-level 9 with mtime 0 and no file name in the header, so the same graph always
-gives the same bytes (about 14% of the plain size; it decompresses in tens of
-milliseconds). `model_metadata.json` records both files' fingerprints as
-`onnx_sha256`, `onnx_bytes`, `onnx_gz_sha256` and `onnx_gz_bytes`.
+GitHub refuses any file over 100 MB, and this file's estimate for a 2,000-tree
+depth-10 model was about 120-135 MB as a plain `.onnx`. So `export_model.py`
+writes `crowd_model.onnx.gz` beside it on every export: the same graph,
+gzipped at level 9 with mtime 0 and no file name in the header, so the same
+graph always gives the same bytes (it decompresses in tens of milliseconds).
+2.8.0-starling, the shipped model, came out at 71.0 MB plain (70,995,619
+bytes) and 11.3 MB gzipped (11,261,627 bytes), about 16% of the plain size.
+`model_metadata.json` records both files' fingerprints as `onnx_sha256`,
+`onnx_bytes`, `onnx_gz_sha256` and `onnx_gz_bytes`. 2.8.0-starling's metadata
+does not carry these four keys, because it was exported from the commit before
+that code landed.
 
 The rule every reader follows (`services/mlPredictor.js`, `../train/bandEval.js`,
 and the Python readers through `../train/model_files.py`): **read

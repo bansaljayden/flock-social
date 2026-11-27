@@ -16,32 +16,44 @@ import { shareThisPage } from './shareCard';
 // no figure of its own: that page of the video shows a venue photo, which
 // may not be republished. four-models-v3 (2026-11-26) is a new still of the
 // same page (frame 975), cut at the same box, with Starling's second chip
-// saying what the model does ("corrects the usual week") in place of the
-// serving version's "800 trees".
+// saying what the model does ("corrects the usual week") in place of
+// "800 trees", the size of the version that served then (v2.6.0).
 //
 // What the copy rests on (competitions/_shared/claims.md):
 //   Starling learns how far each hour moves from the venue's usual week
 //     (label_type delta) from the hour, weather, events and the kind of
-//     venue; 30 training cities on six continents; tested on three
+//     venue; 31 training cities on six continents (model_metadata.json
+//     training_cities; 30 until 2.8.0 added Beijing); tested on three
 //     cities it never trained on                      C-040, C-042, C-159
-//   the version serving today, 2.6.0-starling, trained 2026-08-18:
-//     XGBoost, 800 trees up to 8 deep (model_metadata.json)          C-035
-//   the next version: 2,000 trees up to 10 deep, chosen 2026-11-26 on
-//     training cities (backend/scripts/ml/RETRAIN.md); it learns from
-//     live readings through 11 November and ships only if it passes all
-//     eight tests of the gate on 12 to 25 November (research paper 7.2).
-//     Not trained as of 2026-11-26, so the copy says "will"
+//   the version serving today, 2.8.0-starling, trained 2026-11-26:
+//     XGBoost, 2,000 trees up to 10 deep (model_metadata.json
+//     best_params), a size chosen 2026-11-26 on training cities
+//     (backend/scripts/ml/RETRAIN.md). It learned from live readings
+//     through 11 November (time_holdout.training_live_through) and passed
+//     all eight tests of the gate, scored on the live readings of 12 to
+//     25 November in the six cities read every hour, none of which it
+//     trained on (ship_gate.band_gate; research paper 7.2)
+//   the version before it, 2.6.0-starling, trained 2026-08-18: 800 trees
+//     up to 8 deep. The trees figure and the code figure are stills of
+//     that version, so their alt text and captions say "the previous
+//     version" and give today's size. The map is a still too: it marks
+//     the 30 cities v2.6.0 learned from, and its alt text says Beijing
+//     is not marked                                                  C-035
 //   the readings are 0 to 100 estimates, not head counts          C-058
 //   where Flock knows the venue's usual week, the card's number starts
 //     from Starling's forecast: CROWD_SERVE_MODE=model since the evening
-//     of 2026-11-01 (C-157). Model mode then adds 0.5 x the venue's
+//     of 2026-11-01 (C-157). 2.8.0 takes the venue's live readings as
+//     inputs: its newest earlier reading and that reading's age, and its
 //     trailing offset, the median gap of its live readings in the 28 days
-//     before the hour (backend/services/mlPredictor.js DEVIATION_WEIGHT,
-//     trailingOffsetBefore; v2.6.0 has no offset input). No live reading
-//     has arrived since 2026-11-25 15:59 UTC, so the nowcast moves no
-//     number and the offset empties by about 2026-12-23, hence "until
-//     late December". The delta model cannot score a venue with no usual
-//     week; that venue gets its kind's pattern or the rule engine
+//     before the hour, with the count behind it (last_live_dev,
+//     last_live_age_h, recent_offset, recent_offset_n;
+//     backend/services/mlPredictor.js liveFeatureValues). Nothing is
+//     added after the model (artifactLearnsOffset); v2.6.0 added 0.5 x
+//     that offset instead. No live reading has arrived since 2026-11-25
+//     15:59 UTC, so the newest-reading input is empty and the offset
+//     input empties by about 2026-12-23, hence "until late December".
+//     The delta model cannot score a venue with no usual week; that
+//     venue gets its kind's pattern or the rule engine
 //   a venue can set its live number; groups see it credited to the place (utils/venueLabel.js picks the noun);
 //     it lasts 90 minutes                                         C-131
 //   Owl: runs on the Pi; generated frames and 28 public
@@ -168,11 +180,11 @@ export default function AiPage() {
               <p>
                 Starling learned what pushes a venue’s crowd above or below its
                 usual week: the hour, the weather, events nearby and the kind of
-                place. It learned that from venues in 30 cities on six continents.
+                place. It learned that from venues in 31 cities on six continents.
                 For every hour it predicts how far the crowd will move and adds
                 that to the usual week, which gives a busyness score from 0 to 100.
                 Where Flock knows a venue’s usual week, the number on its card
-                starts from that score. Until late December there’s one more step. If Flock has live readings for a venue from the last four weeks, the venue’s number moves by half of how far those readings ran above or below that week.
+                starts from that score. Starling also reads a venue’s live readings from the last four weeks. No live reading has arrived since November 25, so those readings inform the forecast until late December.
               </p>
               <p>
                 We tested it on three cities it never trained on: Miami, Barcelona
@@ -181,34 +193,34 @@ export default function AiPage() {
                 in the paper on the <a href="/research">research page</a>.
               </p>
               <p>
-                The version serving today is 800 small decision trees up to 8
+                The version serving today is 2,000 small decision trees up to 10
                 splits deep, each one fixing what the trees before it got wrong.
-                We trained it in August. The next version will be bigger, 2,000
-                trees up to 10 splits deep, a size we picked on November 26 by
-                testing on training cities. It will learn from live readings taken
-                up to November 11, and it takes over only if it passes all eight
-                tests of a gate we fixed in advance, scored on the live readings of November 12 to 25 that it never trains on.
+                We trained it on November 26, and it learned from live readings
+                taken up to November 11. It took over after passing all eight
+                tests of a gate we fixed in advance. The gate was scored on live
+                readings it never trained on, taken from November 12 to 25 in the
+                six cities we read every hour. The version before it had 800 trees.
               </p>
             </div>
             <Figure
               img={FIGURES.trees}
               sizes={WIDE}
               className="ai-wide"
-              alt="Inputs such as the hour, the temperature, rain and events nearby go in. On the chart, the forecast rises above the venue’s usual week toward the peak and runs through the dots that mark what happened. A counter reads 800 of 800 trees, the size of the version serving today, and each tree fixes what the ones before it got wrong. Out comes the usual week plus a correction: busyness for each hour, 0 to 100."
-              caption="A schematic of the version serving today, not real readings."
+              alt="Inputs such as the hour, the temperature, rain and events nearby go in. On the chart, the forecast rises above the venue’s usual week toward the peak and runs through the dots that mark what happened. A counter reads 800 of 800 trees, the size of the previous version, and each tree fixes what the ones before it got wrong. Out comes the usual week plus a correction: busyness for each hour, 0 to 100."
+              caption="A schematic of the previous version, not real readings. The version serving today has 2,000 trees."
             />
             <div className="ai-pair">
               <Figure
                 img={FIGURES.map}
                 sizes={HALF}
-                alt="A world map of the cities Starling learned from, with Miami, Barcelona and Tokyo circled."
+                alt="A world map of the cities Starling learned from, with Miami, Barcelona and Tokyo circled. Beijing, which the newest version added, is not marked."
                 caption="Miami, Barcelona and Tokyo were held out of training."
               />
               <Figure
                 img={FIGURES.code}
                 sizes={HALF}
-                alt="Code from backend/scripts/ml/train/train_model.py: 800 estimators, minimum child weight 7, maximum depth 8, cross-validation grouped by city, and the forecast clipped to 0 to 100."
-                caption="How the version serving today was trained, from the repository."
+                alt="Code from backend/scripts/ml/train/train_model.py as it trained the previous version: 800 estimators, minimum child weight 7, maximum depth 8, cross-validation grouped by city, and the forecast clipped to 0 to 100."
+                caption="How the previous version was trained, from the repository. Today’s version uses 2,000 estimators and a maximum depth of 10."
               />
             </div>
           </div>

@@ -1,8 +1,12 @@
 # Crowd model: retrain runbook + the continuous-learning loop
 
-**Currently shipped: v2.6.0-starling** (`models/model_metadata.json`, trained
-2026-08-18 on the clock-corrected corpus, 106 features, ship gate
-`verdict: ship` on the realtime holdout slice, CPU-trained and bit-reproducible).
+**Currently shipped: 2.8.0-starling** (`models/model_metadata.json`, trained
+2026-11-26 on the 2026-11-25 export, 104 features, 2,000 trees up to 10 deep,
+ship gate `verdict: ship` with the point gate and the band gate both passed,
+CPU-trained and bit-reproducible). It replaced v2.6.0-starling (trained
+2026-08-18 on the clock-corrected corpus, 106 features). The dated sections
+below were written before the November run, so where they say v2.6.0-starling
+is shipped or serving they describe the model 2.8.0 replaced.
 The artifact's own metadata is the authority on every live figure; this file is
 the procedure that produces one.
 
