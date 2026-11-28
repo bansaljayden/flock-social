@@ -696,6 +696,9 @@ test('the gate scores the candidate as --candidate-serve says, records it, and t
     // Each new column goes last, so no earlier column moves: fresh_reading,
     // then the month average's and the zero-curve hour's flags.
     assert.deepEqual(H.slice(-3), ['fresh_reading', 'month_support', 'zero_curve'], 'the new columns come last, so no earlier column moves');
+    // The replay stamp (services/labelQuarantine.js): bandEval writes it beside
+    // the rows, and the readers (compareCandidates.js) accept what it wrote.
+    assert.doesNotThrow(() => require('../services/labelQuarantine').requireReplayStamp(rowsOut, {}));
     const ix = Object.fromEntries(H.map((k, i) => [k, i]));
     const num = (s) => (s === '' ? null : Number(s));
     let fresh = 0;

@@ -54,7 +54,13 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
-import features_io  # the label-trust stamp every pickle carries (2026-11-27); X beside a pickle
+# features_io sits beside this file. A caller that loads this file by path
+# (importlib, as __tests__/mlExportColumnGrowth.test.js's driver does) has not
+# put this folder on sys.path, so it goes on here before the import.
+import sys as _sys
+if str(Path(__file__).resolve().parent) not in _sys.path:
+    _sys.path.insert(0, str(Path(__file__).resolve().parent))
+import features_io  # noqa: E402  the label-trust stamp every pickle carries (2026-11-27); X beside a pickle
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)

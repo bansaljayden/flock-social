@@ -176,6 +176,28 @@ def test_a_replay_needs_a_current_stamp_beside_it():
             raise AssertionError('hour_ranking_served read an unstamped replay')
 
 
+def test_a_pickle_stamped_by_an_admitting_check_needs_the_same_override_to_load():
+    # The stamps here come from check_label_trust's own records, not written by hand.
+    import features_io as fio
+    with tempfile.TemporaryDirectory() as tmp:
+        t = write(tmp, 'training_data.csv', weekly() + rows(['2026-10-09', '2026-11-06'], [40, 30]))
+        rec_q = pf.check_label_trust([t], windows=WINDOWS, env={pf.QUARANTINE_ENV: 'true'})
+        recs = []
+        for v in range(600):
+            recs += rows(fridays('2027-01-01', 2), [40, 40], venue=v)
+        r = write(tmp, 'repeat.csv', weekly() + recs)
+        rec_r = pf.check_label_trust([r], windows=WINDOWS, env={pf.REPETITION_ENV: 'true'})
+        for rec, env_name in ((rec_q, fio.QUARANTINE_ENV), (rec_r, fio.REPETITION_ENV)):
+            data = {fio.LABEL_TRUST_KEY: fio.label_trust_stamp(rec)}
+            try:
+                fio.require_label_trust(data, 'p', env={})
+            except fio.LabelTrustError as err:
+                assert env_name in str(err), str(err)
+            else:
+                raise AssertionError(f'a pickle stamped under {env_name} loaded without it')
+            fio.require_label_trust(data, 'p', env={env_name: 'true'})
+
+
 def test_a_stamp_names_the_version_the_check_read_even_if_the_file_changes_after():
     import features_io as fio
     ok = {'id': 'w', 'label_source': 'live', 'from_date': '2026-10-23', 'through_date': '2026-11-25', 'evidence': ['x']}
