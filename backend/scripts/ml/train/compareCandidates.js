@@ -41,6 +41,7 @@
 const fs = require('fs');
 const readline = require('readline');
 const { parseCsvLine, pairedDateBootstrap, BAND_GATE, BAND_GATE_CITIES } = require('./bandEval');
+const labelQuarantine = require('../../../services/labelQuarantine');
 
 // bandEval main()'s label for the time-holdout section of a rows file; the
 // other section (--legacy) is never a gate input.
@@ -98,6 +99,13 @@ function extendRange(range, date) {
 async function readPopulation(file) {
   if (!file) throw new Refusal('no file given');
   if (!fs.existsSync(file)) throw new Refusal(`${file} does not exist`);
+  // The replay stamp (services/labelQuarantine.js): a rows file scored before
+  // the label quarantine may score readings the provider generated.
+  try {
+    labelQuarantine.requireReplayStamp(file);
+  } catch (err) {
+    throw new Refusal(err.message);
+  }
   const input = fs.createReadStream(file, { encoding: 'utf8' });
   const rl = readline.createInterface({ input, crlfDelay: Infinity });
   let header = null;

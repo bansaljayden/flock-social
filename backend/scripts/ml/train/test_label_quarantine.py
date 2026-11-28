@@ -135,6 +135,38 @@ def test_the_loader_refuses_a_pickle_that_never_met_the_current_quarantine():
         assert fio.load_features(p)['X'].shape == (2, 1)
 
 
+def test_a_replay_needs_a_current_stamp_beside_it():
+    # bandEval.js --rows-out writes <rows>.label-trust.json (services/labelQuarantine.js
+    # writeReplayStamp); hour_ranking_served.py reads through require_replay_stamp.
+    import features_io as fio
+    with tempfile.TemporaryDirectory() as tmp:
+        rows = Path(tmp) / 'rows.csv'
+        rows.write_text('section,ml\nlive_time_holdout,1\n', encoding='utf-8')
+        stamp = Path(str(rows) + fio.REPLAY_STAMP_SUFFIX)
+        for content, why in ((None, 'scored before the label quarantine'),
+                             (json.dumps({'quarantine_sha256': '0' * 64}), 'another version')):
+            if content is None:
+                stamp.unlink(missing_ok=True)
+            else:
+                stamp.write_text(content, encoding='utf-8')
+            try:
+                fio.require_replay_stamp(rows, env={})
+            except ValueError as err:
+                assert why in str(err), str(err)
+            else:
+                raise AssertionError(f'accepted a replay: {why}')
+        stamp.write_text(json.dumps({'quarantine_sha256': fio.quarantine_sha256()}), encoding='utf-8')
+        fio.require_replay_stamp(rows, env={})
+        import hour_ranking_served as hrs
+        stamp.unlink()
+        try:
+            hrs.load(rows)
+        except ValueError as err:
+            assert 'scored before the label quarantine' in str(err)
+        else:
+            raise AssertionError('hour_ranking_served read an unstamped replay')
+
+
 def test_an_export_holding_a_quarantined_row_is_refused_and_the_override_is_recorded():
     with tempfile.TemporaryDirectory() as tmp:
         t = write(tmp, 'training_data.csv', weekly() + rows(['2026-10-09', '2026-10-12', '2026-10-23'], [40, 35, 30]))

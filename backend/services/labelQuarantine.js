@@ -17,7 +17,13 @@
 // repetition check in train/prepare_features.py, not a date.
 // ---------------------------------------------------------------------------
 
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+
 const RAW = require('./labelQuarantine.json');
+const QUARANTINE_PATH = path.join(__dirname, 'labelQuarantine.json');
+const QUARANTINE_ENV = 'FLOCK_ALLOW_QUARANTINED_LABELS';
 
 const DAY_MS = 86400000;
 
@@ -94,4 +100,45 @@ function overlapsQuarantine(fromMs, toMs, windows = WINDOWS) {
   return windows.some((w) => a <= w.throughDay && b >= w.fromDay);
 }
 
-module.exports = { WINDOWS, dayNumber, validate, windowForDay, isQuarantinedDate, withoutQuarantinedSlots, overlapsQuarantine };
+// THE REPLAY STAMP. bandEval.js --rows-out writes every scored row to a CSV
+// that later scripts compare (train/compareCandidates.js,
+// train/hour_ranking_served.py) without reading the export again. A replay
+// written before the quarantine, or against another version of this file, may
+// score generated readings or carry predictions their offsets steered, so the
+// replay gets a stamp beside it (<file>.label-trust.json, the SHA-256 of
+// labelQuarantine.json it was scored under) and the readers refuse one
+// without a current stamp. FLOCK_ALLOW_QUARANTINED_LABELS=true reads it anyway,
+// for an analysis. The Python side is features_io.require_replay_stamp.
+const REPLAY_STAMP_SUFFIX = '.label-trust.json';
+
+function quarantineSha256(file = QUARANTINE_PATH) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+function writeReplayStamp(replayFile) {
+  fs.writeFileSync(replayFile + REPLAY_STAMP_SUFFIX, `${JSON.stringify({
+    quarantine_sha256: quarantineSha256(), windows: WINDOWS.map((w) => w.id), written_by: 'bandEval.js --rows-out',
+  }, null, 1)}\n`);
+}
+
+function requireReplayStamp(replayFile, env = process.env) {
+  if (String(env[QUARANTINE_ENV] || '').trim().toLowerCase() === 'true') return;
+  const stampFile = replayFile + REPLAY_STAMP_SUFFIX;
+  let stamp;
+  try {
+    stamp = JSON.parse(fs.readFileSync(stampFile, 'utf8'));
+  } catch {
+    throw new Error(`${replayFile} has no readable ${path.basename(stampFile)} beside it: it was scored before the label `
+      + 'quarantine (2026-11-27) and may score readings the provider generated. Score it again with bandEval.js '
+      + `--rows-out, or set ${QUARANTINE_ENV}=true for an analysis that knows what it is reading.`);
+  }
+  if (!stamp || stamp.quarantine_sha256 !== quarantineSha256()) {
+    throw new Error(`${replayFile} was scored under another version of labelQuarantine.json. Score it again with `
+      + `bandEval.js --rows-out, or set ${QUARANTINE_ENV}=true for an analysis.`);
+  }
+}
+
+module.exports = {
+  WINDOWS, dayNumber, validate, windowForDay, isQuarantinedDate, withoutQuarantinedSlots, overlapsQuarantine,
+  REPLAY_STAMP_SUFFIX, quarantineSha256, writeReplayStamp, requireReplayStamp,
+};

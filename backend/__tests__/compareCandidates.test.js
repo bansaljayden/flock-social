@@ -34,7 +34,9 @@ const HEADER = [
   'served_model_when_fresh_nowcast', 'fresh_reading',
 ];
 
-const DATES = Array.from({ length: 10 }, (_, i) => `2026-11-${String(4 + i).padStart(2, '0')}`);
+// Before the label quarantine's window (services/labelQuarantine.json): the
+// readings of 23 October to 25 November are the provider's own forecast.
+const DATES = Array.from({ length: 10 }, (_, i) => `2026-09-${String(4 + i).padStart(2, '0')}`);
 const HOURS = [12, 15, 18, 20, 22];
 const VENUES_PER_CITY = 4;
 const ROWS_PER_DATE = B.BAND_GATE_CITIES.length * VENUES_PER_CITY * HOURS.length; // 120
@@ -81,9 +83,12 @@ function line(r) {
 }
 
 let seq = 0;
-function write(rows, { header = HEADER.join(','), extraLines = [] } = {}) {
+// A rows file as bandEval.js --rows-out leaves it: the CSV and its replay stamp
+// (services/labelQuarantine.js writeReplayStamp), unless `stamp: false`.
+function write(rows, { header = HEADER.join(','), extraLines = [], stamp = true } = {}) {
   const file = path.join(TMP, `rows_${++seq}.csv`);
   fs.writeFileSync(file, [header, ...rows.map(line), ...extraLines].join('\n') + '\n');
+  if (stamp) require('../services/labelQuarantine').writeReplayStamp(file);
   return file;
 }
 
@@ -204,6 +209,7 @@ test('the columns are found by name, so an older rows file (fewer serve columns)
   const olderLine = (r) => line(r).split(',').slice(0, older.length).join(',');
   const file = path.join(TMP, 'older.csv');
   fs.writeFileSync(file, [older.join(','), ...rows.map(olderLine)].join('\n') + '\n');
+  require('../services/labelQuarantine').writeReplayStamp(file);
   const r = await C.compareFiles(file, write(rows));
   assert.equal(r.pairing.paired, rows.length);
   assert.equal(r.bootstrap.delta, 0);
@@ -261,7 +267,7 @@ test('fewer than 99% of either file\'s population pairing refuses, naming rows t
   assert.match(err.message, /only in registered \(24\)/);
   assert.equal(err.result.pairing.only_in_registered, 24);
   assert.equal(err.result.pairing.examples.only_in_registered.length, 5);
-  assert.match(err.result.pairing.examples.only_in_registered[0], /^venue \d+ \(\w+\) 2026-11-\d\d \d\d:00 y=\d+ served=\d+$/);
+  assert.match(err.result.pairing.examples.only_in_registered[0], /^venue \d+ \(\w+\) 2026-09-\d\d \d\d:00 y=\d+ served=\d+$/);
 
   // And from the other side: extra readings only the challenger scored.
   const extra = clone(reg).map((r, i) => (i % 40 === 3 ? { ...r, venue_id: `${r.venue_id}9` } : r));
@@ -274,11 +280,11 @@ test('different windows refuse before any row is paired', async () => {
   // The challenger's run declared a later from_date: its first date is gone.
   const later = clone(reg).filter((r) => r.date !== DATES[0]);
   const err = await refusal(C.compareFiles(write(reg), write(later)));
-  assert.match(err.message, /different windows: registered 2026-11-04 \.\. 2026-11-13, challenger 2026-11-05 \.\. 2026-11-13/);
+  assert.match(err.message, /different windows: registered 2026-09-04 \.\. 2026-09-13, challenger 2026-09-05 \.\. 2026-09-13/);
   assert.equal(err.result.pairing, null);
 
   // A window that differs only outside the gate's cities still differs.
-  const earlier = [...clone(reg), { section: 'live_time_holdout', venue_id: '8001', city: 'miami', date: '2026-11-03', hour: 19, y: 50, ml: 1, served: 50 }];
+  const earlier = [...clone(reg), { section: 'live_time_holdout', venue_id: '8001', city: 'miami', date: '2026-09-03', hour: 19, y: 50, ml: 1, served: 50 }];
   const err2 = await refusal(C.compareFiles(write(reg), write(earlier)));
   assert.match(err2.message, /different windows/);
 });
@@ -335,4 +341,18 @@ test('the population, bootstrap defaults and cities are imported from bandEval, 
   assert.doesNotMatch(src, /resamples:\s*\d/);
   assert.match(src, /require\('\.\/bandEval'\)/);
   assert.ok(src.includes('pairedDateBootstrap(rows, chalHits, regHits)'));
+});
+
+test('a rows file scored before the label quarantine, or under another version of it, is refused', async () => {
+  // A replay with no stamp beside it was scored before 2026-11-27 and may
+  // score readings the provider generated (services/labelQuarantine.js).
+  const reg = population();
+  const unstamped = write(reg, { stamp: false });
+  const stamped = write(clone(reg));
+  let err = await refusal(C.compareFiles(unstamped, stamped));
+  assert.match(err.message, /scored before the label quarantine/);
+  const stale = write(clone(reg));
+  fs.writeFileSync(`${stale}.label-trust.json`, JSON.stringify({ quarantine_sha256: '0'.repeat(64) }));
+  err = await refusal(C.compareFiles(stamped, stale));
+  assert.match(err.message, /another version of labelQuarantine\.json/);
 });

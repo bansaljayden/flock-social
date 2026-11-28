@@ -50,6 +50,8 @@ import sys
 import numpy as np
 import pandas as pd
 
+import features_io
+
 MIN_GAP = 10
 RESAMPLES = 1000
 SEED = 42
@@ -57,6 +59,9 @@ BUCKETS = [('1-5', 1, 5), ('6-10', 6, 10), ('11-20', 11, 20), ('21+', 21, 10 ** 
 
 
 def load(path):
+    # The replay stamp (features_io.require_replay_stamp): rows scored before
+    # the label quarantine (2026-11-27) may score readings the provider generated.
+    features_io.require_replay_stamp(path)
     d = pd.read_csv(path)
     d = d[d['ml'] == 1].copy()
     d['curve'] = d['smoothed'].round().clip(0, 100)

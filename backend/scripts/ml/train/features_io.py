@@ -127,6 +127,29 @@ def finish_x(pickle_path, arr) -> dict:
     return {X_FILE_KEY: path.name, X_SHAPE_KEY: shape, X_SHA_KEY: sha256_file(path)}
 
 
+REPLAY_STAMP_SUFFIX = '.label-trust.json'
+
+
+def require_replay_stamp(replay_path, env=None, path=QUARANTINE_FILE) -> None:
+    """A bandEval.js --rows-out file scored under the current quarantine
+    (services/labelQuarantine.js requireReplayStamp, the same rule)."""
+    import json
+    env = os.environ if env is None else env
+    if _true(env, QUARANTINE_ENV):
+        return
+    stamp_path = Path(str(replay_path) + REPLAY_STAMP_SUFFIX)
+    try:
+        stamp = json.loads(stamp_path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        raise ValueError(
+            f'{replay_path} has no readable {stamp_path.name} beside it: it was scored before the label '
+            'quarantine (2026-11-27) and may score readings the provider generated. Score it again with '
+            f'bandEval.js --rows-out, or set {QUARANTINE_ENV}=true for an analysis.')
+    if not isinstance(stamp, dict) or stamp.get('quarantine_sha256') != quarantine_sha256(path):
+        raise ValueError(f'{replay_path} was scored under another version of labelQuarantine.json. '
+                         'Score it again with bandEval.js --rows-out.')
+
+
 def load_features(pickle_path, mmap: bool = True, verify: bool = False, require_trust: bool = True) -> dict:
     """The pickle's dict, with data['X'] always present.
 

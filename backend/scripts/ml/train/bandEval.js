@@ -1909,7 +1909,10 @@ async function main(argv = process.argv.slice(2)) {
       ['month_support', (x) => (x.mine.monthSupport ? 1 : 0)],
       ['zero_curve', (x) => (x.mine.zeroCurve ? 1 : 0)],
     ]);
-    console.log(`[BandEval] rows -> ${args['rows-out']}`);
+    // The replay stamp (services/labelQuarantine.js): these rows were scored
+    // under this quarantine, and the scripts that compare them require it.
+    labelQuarantine.writeReplayStamp(args['rows-out']);
+    console.log(`[BandEval] rows -> ${args['rows-out']} (+ ${labelQuarantine.REPLAY_STAMP_SUFFIX})`);
   }
   return { sections, gate: gateResult, fit: fitResult };
 }
