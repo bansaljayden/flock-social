@@ -295,8 +295,9 @@ test('every label path of the export carries the same exclusion, and only one fl
   const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'train', 'export_training_data.js'), 'utf8');
   assert.match(src, /venueClause: harvestedClause\('v', includeHarvested\)/, 'the owner path is handed the exclusion');
 
-  assert.deepEqual(exporter.parseExportArgs(['node', 'x']), { includeHarvested: false });
-  assert.deepEqual(exporter.parseExportArgs(['node', 'x', '--include-harvested']), { includeHarvested: true });
+  assert.deepEqual(exporter.parseExportArgs(['node', 'x']), { includeHarvested: false, includeQuarantined: false });
+  assert.deepEqual(exporter.parseExportArgs(['node', 'x', '--include-harvested']), { includeHarvested: true, includeQuarantined: false });
+  assert.deepEqual(exporter.parseExportArgs(['node', 'x', '--include-quarantined']), { includeHarvested: false, includeQuarantined: true });
   assert.match(exporter.parseExportArgs(['node', 'x', '--include-harvest']).error, /Unknown argument "--include-harvest"/,
     'a misspelt flag must not quietly produce the default export');
 });

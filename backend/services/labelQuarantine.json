@@ -1,0 +1,21 @@
+{
+  "about": "Live readings that are not live. Every tool that reads Flock's stored crowd readings reads this file (services/labelQuarantine.js): serving drops these readings from the per-venue offset and the nowcast, the export leaves them out, preparation refuses a file that still holds them, and the evaluation scripts never score them. A window is closed on what was found; widening or closing one is a change to this file, with its evidence, in review.",
+  "windows": [
+    {
+      "id": "besttime-live-generated-2026-10-23",
+      "label_source": "live",
+      "source": "BestTime /api/v1/forecasts/live, collected by scripts/ml/collectRealtime.js with venue_live_busyness_available true",
+      "from_date": "2026-10-23",
+      "through_date": "2026-11-25",
+      "found_on": "2026-11-27",
+      "evidence": [
+        "A venue's reading equals its reading at the same hour seven days earlier in 89% to 99% of pairs in every week from 23 October (98.9, 97.0, 93.1, 89.2, 92.3 by week), against 13% to 18% in September and early October.",
+        "The reading is 0 wherever the vendor forecast for that hour is 0.",
+        "Readings track the vendor forecast with correlation 0.94, against 0.34 before 12 October.",
+        "The collector code did not change between 28 September and 27 October, and exports of 8 October, 5 November and 25 November agree on the rows they share."
+      ],
+      "what_is_not_known": "Why the provider's live endpoint answered with forecast-derived values from 23 October 07:09 (provider clock). The raw answers were never stored.",
+      "record": "Research/studies/RETRAIN-NOVEMBER-RUNBOOK.md, blocks of 2026-11-27; backend/scripts/ml/MODEL-METRICS.md, section of 2026-11-27"
+    }
+  ]
+}

@@ -273,6 +273,11 @@ const HOUR_AXIS_VENUE_LOCAL = 'venue_local';
 // ---------------------------------------------------------------------------
 const HARVESTED_STATUS = 'harvested';
 const INCLUDE_HARVESTED_FLAG = '--include-harvested';
+// Keeps the quarantined windows' live rows (services/labelQuarantine.json) in
+// the export, for an analysis; prepare_features.py refuses such a file unless
+// FLOCK_ALLOW_QUARANTINED_LABELS=true.
+const INCLUDE_QUARANTINED_FLAG = '--include-quarantined';
+const labelQuarantine = require('../../../services/labelQuarantine');
 
 // The WHERE-clause fragment for ml_venues under `alias`: empty when harvested
 // venues are included, otherwise the exclusion serving applies.
@@ -1537,11 +1542,24 @@ let cursorSeq = 0;
 // WHOLE result set as JS objects before returning — for the largest city that
 // is hundreds of thousands of ~40-field objects, and the failure mode is an
 // out-of-memory crash two thirds of the way through a two-hour export.
-async function exportCity(pool, city, stream, optional, onRows, { includeHarvested = false } = {}) {
+// THE LABEL QUARANTINE (services/labelQuarantine.json, 2026-11-27). A realtime
+// row labelled live and dated inside a quarantined window is a value the
+// provider made from its own forecast, so the export leaves it out of both
+// files and counts it; prepare_features.py refuses a file that still holds one.
+// --include-quarantined keeps them, for an analysis that knows what they are.
+function isQuarantinedRow(row) {
+  return row.collection_mode === 'realtime'
+    && labelSource(row) === 'live'
+    && labelQuarantine.isQuarantinedDate(observedDate(row));
+}
+
+async function exportCity(pool, city, stream, optional, onRows,
+  { includeHarvested = false, includeQuarantined = false, quarantined = null } = {}) {
   const q = cityQuery(city, optional, { includeHarvested });
   const name = `flock_export_cur_${++cursorSeq}`;
   const client = await pool.connect();
   let rows = 0;
+  let written = 0;
   try {
     // Explicit READ ONLY on top of the connection-level default: the guarantee
     // should not depend on how the pool was constructed.
@@ -1551,7 +1569,14 @@ async function exportCity(pool, city, stream, optional, onRows, { includeHarvest
       const batch = await client.query(`FETCH FORWARD ${FETCH_SIZE} FROM ${name}`);
       if (batch.rows.length === 0) break;
       let chunk = '';
-      for (const row of batch.rows) chunk += rowToCsv(row) + '\n';
+      for (const row of batch.rows) {
+        if (!includeQuarantined && isQuarantinedRow(row)) {
+          if (quarantined) quarantined.rows += 1;
+          continue;
+        }
+        chunk += rowToCsv(row) + '\n';
+        written += 1;
+      }
       const backpressure = write(stream, chunk);
       if (backpressure) await backpressure;
       rows += batch.rows.length;
@@ -1565,7 +1590,8 @@ async function exportCity(pool, city, stream, optional, onRows, { includeHarvest
   } finally {
     client.release();
   }
-  return rows;
+  // Rows written: a quarantined row is read and counted, never written.
+  return written;
 }
 
 // ---------------------------------------------------------------------------
@@ -1590,7 +1616,7 @@ async function harvestedCensus(db) {
   return { venues: Number(r.venues), rows: Number(r.rows) };
 }
 
-async function runExport({ pool, outDir = __dirname, log = console.log, includeHarvested = false } = {}) {
+async function runExport({ pool, outDir = __dirname, log = console.log, includeHarvested = false, includeQuarantined = false } = {}) {
   const started = Date.now();
   const trainPath = path.join(outDir, 'training_data.csv');
   const holdoutPath = path.join(outDir, 'holdout_data.csv');
@@ -1639,6 +1665,11 @@ async function runExport({ pool, outDir = __dirname, log = console.log, includeH
   const holdoutStream = fs.createWriteStream(holdoutTmp);
   let trainCount = 0;
   let holdoutCount = 0;
+  const quarantinedCounts = {};
+  log(`[Export] Label quarantine: ${labelQuarantine.WINDOWS.map((w) => `${w.id} (${w.fromDate}..${w.throughDate})`).join(', ')}; `
+    + (includeQuarantined
+      ? `its live rows are INCLUDED (${INCLUDE_QUARANTINED_FLAG}); prepare_features.py refuses this export unless told otherwise.`
+      : `its live rows are left out. ${INCLUDE_QUARANTINED_FLAG} keeps them for an analysis.`));
   const cityCounts = {};
 
   // Round 23. Resolved BEFORE a single byte is written: an operator who set the
@@ -1704,15 +1735,20 @@ async function runExport({ pool, outDir = __dirname, log = console.log, includeH
       // A city can take minutes. Say something every 250k rows so a long export
       // is distinguishable from a hung one.
       let announced = 0;
+      const cityQuarantine = { rows: 0 };
       const n = await exportCity(pool, city, stream, pre.optional, (soFar) => {
         if (soFar - announced >= 250000) {
           announced = soFar;
           log(`    ... ${soFar} rows`);
         }
-      }, { includeHarvested });
+      }, { includeHarvested, includeQuarantined, quarantined: cityQuarantine });
       cityCounts[city] = n;
       if (isHoldout) holdoutCount += n; else trainCount += n;
       log(`  ${n} rows ${isHoldout ? '(holdout)' : '(train)'}`);
+      if (cityQuarantine.rows > 0) {
+        quarantinedCounts[city] = cityQuarantine.rows;
+        log(`  ${cityQuarantine.rows} live-labelled rows inside a quarantined window left out (services/labelQuarantine.json)`);
+      }
 
       if (feedbackEnabled) {
         const before = feedbackCounters.emitted;
@@ -1810,6 +1846,8 @@ async function runExport({ pool, outDir = __dirname, log = console.log, includeH
   log(`[Export] Holdout set: ${holdoutCount} rows → ${holdoutPath} (${mb(holdoutBytes)} MB)`);
   log(`[Export] Holdout cities: ${HOLDOUT_CITIES.join(', ')}`);
   log(`[Export] Elapsed: ${(elapsedMs / 1000).toFixed(1)}s for ${trainCount + holdoutCount} rows`);
+  const quarantinedTotal = Object.values(quarantinedCounts).reduce((a, b) => a + b, 0);
+  log(`[Export] Quarantined live rows left out: ${quarantinedTotal}${includeQuarantined ? ` (none: ${INCLUDE_QUARANTINED_FLAG})` : ''}`);
 
   if (feedbackEnabled) {
     log(`\n[Export] Feedback labels: ${feedbackCounters.candidates} verified reports -> `
@@ -1843,6 +1881,7 @@ async function runExport({ pool, outDir = __dirname, log = console.log, includeH
     trainCount, holdoutCount, cityCounts, trainPath, holdoutPath,
     trainBytes, holdoutBytes, elapsedMs,
     harvested: { included: includeHarvested, ...harvested },
+    quarantined: { included: includeQuarantined, rows: quarantinedTotal, byCity: quarantinedCounts },
     feedback: { enabled: feedbackEnabled, ...feedbackCounters },
     owner: { enabled: ownerEnabled, ...ownerCounters },
   };
@@ -1872,15 +1911,15 @@ function createPool() {
   });
 }
 
-// The one flag. Anything else is refused rather than ignored: a misspelt
+// The two flags. Anything else is refused rather than ignored: a misspelt
 // --include-harvested must not quietly produce the default export.
 function parseExportArgs(argv) {
   const args = argv.slice(2);
-  const unknown = args.filter((a) => a !== INCLUDE_HARVESTED_FLAG);
+  const unknown = args.filter((a) => a !== INCLUDE_HARVESTED_FLAG && a !== INCLUDE_QUARANTINED_FLAG);
   if (unknown.length > 0) {
-    return { error: `Unknown argument ${unknown.map((a) => `"${a}"`).join(', ')}; the only one is ${INCLUDE_HARVESTED_FLAG}.` };
+    return { error: `Unknown argument ${unknown.map((a) => `"${a}"`).join(', ')}; the only ones are ${INCLUDE_HARVESTED_FLAG} and ${INCLUDE_QUARANTINED_FLAG}.` };
   }
-  return { includeHarvested: args.includes(INCLUDE_HARVESTED_FLAG) };
+  return { includeHarvested: args.includes(INCLUDE_HARVESTED_FLAG), includeQuarantined: args.includes(INCLUDE_QUARANTINED_FLAG) };
 }
 
 async function main(argv = process.argv) {
@@ -1888,7 +1927,7 @@ async function main(argv = process.argv) {
   if (args.error) throw new Error(args.error);
   const pool = createPool();
   try {
-    await runExport({ pool, includeHarvested: args.includeHarvested });
+    await runExport({ pool, includeHarvested: args.includeHarvested, includeQuarantined: args.includeQuarantined });
   } finally {
     await pool.end();
   }
@@ -1903,6 +1942,8 @@ if (require.main === module) {
 
 module.exports = {
   cityQuery,
+  isQuarantinedRow,
+  INCLUDE_QUARANTINED_FLAG,
   rowToCsv,
   HEADER,
   labelProvenance,

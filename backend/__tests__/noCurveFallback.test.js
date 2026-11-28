@@ -1670,7 +1670,9 @@ test('the no-curve eval refuses a retrained artifact by default, and --allow-ver
 
   // End to end, on a candidate whose table differs from 2.8.0's at the one
   // slot scored: a bar on a Friday at 9 PM with no curve and 900 reviews.
-  const date = '2026-11-20';
+  // Dated before the quarantined window (services/labelQuarantine.js): a live
+  // row from 23 October to 25 November is not read as a reading at all.
+  const date = '2026-10-09';
   const hour = 21;
   const y = 40;
   const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
@@ -1687,7 +1689,7 @@ test('the no-curve eval refuses a retrained artifact by default, and --allow-ver
   }));
   const csv = path.join(dir, 'export.csv');
   fs.writeFileSync(csv, `${exporter.HEADER}\n${exporter.rowToCsv({
-    venue_id: 9301, day_of_week: dow, hour, month: 11, season: 'fall',
+    venue_id: 9301, day_of_week: dow, hour, month: 10, season: 'fall',
     venue_category: 'bar', price_level: 2, rating: 4.4, review_count: 900,
     temperature: 55, humidity: 60, wind_speed: 5, weather_condition: 'clear sky', weather_condition_code: 800, is_raining: false,
     events_observed: false, baseline_busyness: 0, collection_mode: 'realtime', busyness_pct: y, city: 'philly',

@@ -419,6 +419,11 @@ def digest(out: Path) -> dict:
     meta = json.loads((out / 'model_metadata.json').read_text(encoding='utf-8'))
     if 'final_refit' in meta:
         meta['final_refit']['gated_metadata_path'] = '<gated_metadata.json>'   # a temporary folder
+    # label_trust (2026-11-27) is written by check_label_trust, which the
+    # pre-refactor code never ran; its values are pinned in
+    # test_label_quarantine.py. With it set aside, every other byte still has
+    # to match the goldens.
+    meta.get('corpus_contract', {}).pop('label_trust', None)
     got = {'model_metadata.json': hashlib.sha256(json.dumps(meta, sort_keys=True).encode()).hexdigest()}
     for f in ('features_train.pkl', 'features_holdout.pkl'):
         data = features_io.load_features(out / f, mmap=False)

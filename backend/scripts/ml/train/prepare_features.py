@@ -296,6 +296,173 @@ def unknown_provenance_report(n_rt: int, n_unknown: int, label: str) -> Dict:
     return record
 
 # ---------------------------------------------------------------------------
+# THE LABEL QUARANTINE AND THE REPETITION CHECK (2026-11-27).
+#
+# From 23 October 2026 the provider's live endpoint answered with values made
+# from its own weekly forecast, still flagged live, and they sit in the corpus
+# as label_source 'live'. They were found only by looking: a venue's reading
+# equalled its reading at the same hour seven days earlier in 89% to 99% of
+# pairs, week after week, where real readings do so in 13% to 18%. The November
+# retrain passed its gate on them.
+#
+# Two refusals, both made before anything is read into memory, on both export
+# files, by one pass over five columns (check_label_trust):
+#
+#   1. QUARANTINE. backend/services/labelQuarantine.json names the windows that
+#      were found; serving, the export and the evaluation scripts read the same
+#      file. A live row dated inside one stops the run: export_training_data.js
+#      leaves those rows out, so a file that holds them is an old export, and
+#      training on it again is how the November result happened.
+#   2. REPETITION. Every live-weight realtime row this run would train on is
+#      paired with the same venue and hour seven days earlier; a week in which
+#      half or more of at least REPETITION_MIN_PAIRS pairs are equal stops the
+#      run. That is how the next feed that answers with its own forecast gets
+#      caught before a model learns it, whatever the date.
+#
+# FLOCK_ALLOW_QUARANTINED_LABELS=true and FLOCK_ALLOW_REPEATING_LABELS=true let
+# an analysis run that knows what it is reading proceed; both are recorded in
+# model_metadata.json (label_trust), and neither belongs in a run that ships.
+# ---------------------------------------------------------------------------
+QUARANTINE_FILE = SCRIPT_DIR.parent.parent.parent / 'services' / 'labelQuarantine.json'
+QUARANTINE_ENV = 'FLOCK_ALLOW_QUARANTINED_LABELS'
+REPETITION_ENV = 'FLOCK_ALLOW_REPEATING_LABELS'
+REPETITION_LIMIT_PCT = 50.0
+REPETITION_MIN_PAIRS = 500
+LABEL_TRUST: Dict = {}
+
+
+def _env_true(name: str, env=os.environ) -> bool:
+    return str(env.get(name, '')).strip().lower() == 'true'
+
+
+def load_label_quarantine(path: Path = QUARANTINE_FILE) -> List[Dict]:
+    """The windows of labelQuarantine.json, validated as services/labelQuarantine.js validates them."""
+    raw = json.loads(Path(path).read_text(encoding='utf-8'))
+    windows, ids = [], set()
+    for i, w in enumerate(raw.get('windows') or []):
+        where = f'labelQuarantine.json windows[{i}]'
+        if not isinstance(w, dict) or not w.get('id'):
+            raise CorpusContractError(f'{where}: no id')
+        if w['id'] in ids:
+            raise CorpusContractError(f'{where}: duplicate id {w["id"]}')
+        ids.add(w['id'])
+        if w.get('label_source') != 'live':
+            raise CorpusContractError(f"{where}: label_source must be 'live'")
+        try:
+            lo = pd.Timestamp(w.get('from_date')).strftime('%Y-%m-%d')
+            hi = pd.Timestamp(w.get('through_date')).strftime('%Y-%m-%d')
+        except Exception as err:
+            raise CorpusContractError(f'{where}: from_date and through_date must both be dates ({err})')
+        if lo != w.get('from_date') or hi != w.get('through_date'):
+            raise CorpusContractError(f'{where}: dates must be written YYYY-MM-DD')
+        if hi < lo:
+            raise CorpusContractError(f'{where}: through_date is before from_date')
+        if not w.get('evidence'):
+            raise CorpusContractError(f'{where}: no evidence')
+        windows.append({'id': w['id'], 'from_date': lo, 'through_date': hi})
+    return windows
+
+
+def quarantined_live_mask(source: pd.Series, dates: pd.Series, windows: List[Dict]) -> np.ndarray:
+    """Realtime rows labelled live and dated inside a window (callers pass realtime rows only)."""
+    live = source.astype('string').fillna('').str.strip() == 'live'
+    d = dates.astype('string').fillna('')
+    inside = pd.Series(False, index=d.index)
+    for w in windows:
+        inside |= (d >= w['from_date']) & (d <= w['through_date'])
+    return (live & inside).to_numpy()
+
+
+def weekly_repetition(frame: pd.DataFrame) -> Dict:
+    """Share of readings equal to the same venue and hour seven days earlier, by ISO week of the later one."""
+    f = frame[['venue_id', 'observed_date', 'hour', 'busyness_pct']].dropna()
+    if not len(f):
+        return {}
+    f = f.assign(d=pd.to_datetime(f['observed_date'], errors='coerce')).dropna(subset=['d'])
+    prior = f[['venue_id', 'd', 'hour', 'busyness_pct']].rename(columns={'busyness_pct': 'prior'})
+    prior = prior.assign(d=prior['d'] + pd.Timedelta(days=7)).drop_duplicates(['venue_id', 'd', 'hour'])
+    pairs = f.drop_duplicates(['venue_id', 'd', 'hour']).merge(prior, on=['venue_id', 'd', 'hour'], how='inner')
+    if not len(pairs):
+        return {}
+    iso = pairs['d'].dt.isocalendar()
+    pairs = pairs.assign(week=iso['year'].astype(str) + '-W' + iso['week'].astype(int).map('{:02d}'.format),
+                         equal=(pairs['busyness_pct'] == pairs['prior']))
+    out = {}
+    for week, g in pairs.groupby('week'):
+        out[str(week)] = {'pairs': int(len(g)), 'equal_pct': round(100.0 * float(g['equal'].mean()), 2)}
+    return out
+
+
+def check_label_trust(paths: List[Path], windows: List[Dict] = None, env=os.environ,
+                      chunk_rows: int = 1_000_000) -> Dict:
+    """Both refusals (see the block above). Returns the record model_metadata.json carries."""
+    windows = load_label_quarantine() if windows is None else windows
+    admit_quarantined = _env_true(QUARANTINE_ENV, env)
+    admit_repeating = _env_true(REPETITION_ENV, env)
+    admit_unknown = unknown_provenance_admitted(env)
+    cols = ['venue_id', 'hour', 'is_realtime', 'busyness_pct', 'observed_date', 'label_source']
+    quarantined_by_file: Dict[str, int] = {}
+    trained_parts = []
+    for path in paths:
+        path = Path(path)
+        if not path.exists():
+            continue
+        n_q = 0
+        for chunk in pd.read_csv(path, usecols=cols, chunksize=chunk_rows, low_memory=False,
+                                 dtype={'observed_date': 'string', 'label_source': 'string'}):
+            rt = chunk[pd.to_numeric(chunk['is_realtime'], errors='coerce') == 1]
+            if not len(rt):
+                continue
+            q = quarantined_live_mask(rt['label_source'], rt['observed_date'], windows)
+            n_q += int(q.sum())
+            src = rt['label_source'].astype('string').fillna('').str.strip()
+            live_weight = (src == 'live') & ~q if not admit_quarantined else (src == 'live')
+            if admit_unknown:
+                live_weight = live_weight | (src == '')
+            trained_parts.append(rt.loc[np.asarray(live_weight), ['venue_id', 'observed_date', 'hour', 'busyness_pct']])
+        quarantined_by_file[path.name] = n_q
+    n_quarantined = sum(quarantined_by_file.values())
+    record = {
+        'quarantine': {'windows': windows, 'live_rows_inside': quarantined_by_file,
+                       'policy': 'admitted_for_analysis' if (n_quarantined and admit_quarantined) else 'refuse',
+                       'env': QUARANTINE_ENV, 'file': 'backend/services/labelQuarantine.json'},
+    }
+    if n_quarantined and not admit_quarantined:
+        raise CorpusContractError(
+            f'{n_quarantined} live-labelled realtime rows ({quarantined_by_file}) are dated inside a '
+            f'quarantined window ({", ".join(w["id"] for w in windows)}): the provider made them from its '
+            'own forecast. export_training_data.js leaves them out, so this is an old export; re-export, '
+            f'or set {QUARANTINE_ENV}=true for an analysis run that knows it is reading them.')
+    if n_quarantined:
+        logger.warning('POLICY OVERRIDE %s=true: %d quarantined live rows are read as live (%s). '
+                       'Recorded in model_metadata.json; never ship this run.', QUARANTINE_ENV,
+                       n_quarantined, quarantined_by_file)
+    trained = pd.concat(trained_parts, ignore_index=True) if trained_parts else pd.DataFrame(
+        columns=['venue_id', 'observed_date', 'hour', 'busyness_pct'])
+    by_week = weekly_repetition(trained)
+    flagged = {w: s for w, s in by_week.items()
+               if s['pairs'] >= REPETITION_MIN_PAIRS and s['equal_pct'] >= REPETITION_LIMIT_PCT}
+    record['repetition'] = {'limit_pct': REPETITION_LIMIT_PCT, 'min_pairs': REPETITION_MIN_PAIRS,
+                            'rows_checked': int(len(trained)), 'by_week': by_week,
+                            'flagged_weeks': flagged,
+                            'policy': 'admitted_for_analysis' if (flagged and admit_repeating) else 'refuse',
+                            'env': REPETITION_ENV}
+    if flagged and not admit_repeating:
+        raise CorpusContractError(
+            f'{len(flagged)} week(s) of live-weight readings repeat the same venue and hour seven days '
+            f'earlier in {REPETITION_LIMIT_PCT:.0f}% or more of pairs ({flagged}); real readings do so in '
+            'about 13% to 18%. A feed doing this is answering with its forecast. Add the window to '
+            f'backend/services/labelQuarantine.json with its evidence, or set {REPETITION_ENV}=true for an '
+            'analysis run that knows it is reading them.')
+    if flagged:
+        logger.warning('POLICY OVERRIDE %s=true: %d week(s) of repeating labels are trained on: %s',
+                       REPETITION_ENV, len(flagged), flagged)
+    logger.info('Label trust: %d quarantined live rows, %d live-weight rows checked for weekly repetition, '
+                'highest week %s%%.', n_quarantined, len(trained),
+                max((s['equal_pct'] for s in by_week.values()), default=0))
+    return record
+
+# ---------------------------------------------------------------------------
 # THE TIME HOLDOUT (2026-09-25): the live readings the band gate scores.
 #
 # The band gate (bandEval.js --gate) scores the exported candidate the way the
@@ -4325,6 +4492,9 @@ def write_model_metadata(*, time_holdout: Dict, final_refit, weekly_weight_polic
             'weather_imputation': weather_imputation,
             'event_type_normalisation': event_type_stats,
             'unknown_provenance': unknown_provenance_record,
+            # 2026-11-27: the label quarantine and the weekly repetition check
+            # (check_label_trust), as this run found them.
+            'label_trust': dict(LABEL_TRUST),
             'feature_nan_policy': 'refuse (refuse_unfilled_features); no blanket fillna(0)',
             'constant_feature_slots': constant_cols,
             # Round 22. Not just WHICH slots are dead but why each one is
@@ -4355,6 +4525,10 @@ def main():
             f'{train_path} does not exist. Run `node export_training_data.js` first — '
             'the retrain starts at the export, not at this script.'
         )
+    # The label quarantine and the repetition check, on both files, before
+    # either path reads a row into memory (see the block above check_label_trust).
+    LABEL_TRUST.clear()
+    LABEL_TRUST.update(check_label_trust([train_path, SCRIPT_DIR / 'holdout_data.csv']))
     streamed, why = prep_stream_mode(train_path)
     if streamed:
         return main_streamed(train_path, why)

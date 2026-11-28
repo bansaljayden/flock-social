@@ -21,6 +21,7 @@ const { upstreamSignal } = require('../utils/upstream');
 const { validTimeZone, instantForWallClock, serverWallDate, zoneHourSlots } = require('../utils/venueZone');
 // When the hour's live readings are in, for the recent-deviation cache below.
 const { readingsExpiry } = require('../utils/liveReadingsClock');
+const labelQuarantine = require('./labelQuarantine');
 
 const MODEL_DIR = path.join(__dirname, '..', 'scripts', 'ml', 'models');
 const ONNX_PATH = path.join(MODEL_DIR, 'crowd_model.onnx');
@@ -634,11 +635,24 @@ async function recentDeviationEntry(placeId) {
     );
     const row = rows[0];
     let data = null;
+    // THE LABEL QUARANTINE (services/labelQuarantine.js, 2026-11-27). The
+    // stored single offset is the median of the readings stored beside it
+    // (offset_readings). When those were read (a switch on), it is refused if
+    // any of them is quarantined; when they were not (both switches off, the
+    // statement that reads no readings), it is refused if the 28 days before
+    // the builder's run touch a quarantined window, since it may be a median of
+    // readings the provider generated.
+    const offsetParsed = withReadings ? parseOffsetReadings(row ? row.offset_readings : null) : undefined;
+    const builtAt = row && row.updated_at ? new Date(row.updated_at).getTime() : NaN;
+    const singleOffsetQuarantined = Array.isArray(offsetParsed)
+      ? labelQuarantine.withoutQuarantinedSlots(offsetParsed).length !== offsetParsed.length
+      : labelQuarantine.overlapsQuarantine(builtAt - OFFSET_WINDOW_HOURS * 3600000, builtAt);
     if (row
       && Number.isFinite(Number(row.offset_pct))
       && Number(row.n_readings) >= DEVIATION_MIN_READINGS
       && row.updated_at
-      && Date.now() - new Date(row.updated_at).getTime() < DEVIATION_MAX_AGE_MS) {
+      && Date.now() - builtAt < DEVIATION_MAX_AGE_MS
+      && !singleOffsetQuarantined) {
       const raw = Number(row.offset_pct);
       data = {
         offset: Math.max(-DEVIATION_CLAMP, Math.min(DEVIATION_CLAMP, raw)),
@@ -651,8 +665,12 @@ async function recentDeviationEntry(placeId) {
     // reading an hour ago is the nowcast's best evidence and an anecdote to
     // the median, and the nowcast has its own limit, on the reading's age.
     if (withReadings) {
-      entry.readings = parseRecentReadings(row ? row.recent_readings : null);
-      entry.offsetReadings = parseOffsetReadings(row ? row.offset_readings : null);
+      // Quarantined readings leave both lists here, at the one read production
+      // makes, not inside the parsers: bandEval.js and the tests call those on
+      // lists they build themselves, and the corpus they read is quarantined
+      // where it is read (bandEval.readCorpus).
+      entry.readings = labelQuarantine.withoutQuarantinedSlots(parseRecentReadings(row ? row.recent_readings : null));
+      entry.offsetReadings = labelQuarantine.withoutQuarantinedSlots(offsetParsed);
       // `fresh` means the row was read. Its readings carry their own 28-day
       // window (trailingOffsetBefore), so the row's age is not a second gate.
       entry.fresh = Boolean(row);

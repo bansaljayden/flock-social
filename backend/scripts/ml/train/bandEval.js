@@ -74,6 +74,7 @@
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
+const labelQuarantine = require('../../../services/labelQuarantine');
 
 const BACKEND_DIR = path.resolve(__dirname, '..', '..', '..');
 const DEFAULT_MODELS_DIR = path.resolve(__dirname, '..', 'models');
@@ -253,12 +254,18 @@ function realtimeRow(f, ix) {
 // (168 slots, -1 = no ml_venue_baselines row); realtime rows are kept whole
 // when they are live, or when they are unknown-provenance rows in a legacy
 // reference city and the caller asked for them.
-async function readCorpus(files, { legacyCities = [] } = {}) {
+//
+// THE LABEL QUARANTINE (services/labelQuarantine.js, 2026-11-27). A 'live' row
+// dated inside a quarantined window is not a live reading (the provider made it
+// from its forecast), so it is neither scored nor read as a reading; the census
+// counts it under `quarantined`. `quarantine: false` is for the tests whose
+// fixtures happen to be dated inside the window, never for a report.
+async function readCorpus(files, { legacyCities = [], quarantine = true } = {}) {
   const venues = new Map();
   const curves = new Map();
   const live = [];
   const legacy = [];
-  const census = { files: [], rows: 0, weekly: 0, realtime: 0, bySource: {} };
+  const census = { files: [], rows: 0, weekly: 0, realtime: 0, bySource: {}, quarantined: 0 };
   const legacySet = new Set(legacyCities);
 
   for (const file of files) {
@@ -304,7 +311,11 @@ async function readCorpus(files, { legacyCities = [] } = {}) {
       census.realtime++;
       const src = f[ix.label_source] || '';
       census.bySource[src || 'unknown'] = (census.bySource[src || 'unknown'] || 0) + 1;
-      if (src === 'live') live.push(realtimeRow(f, ix));
+      if (src === 'live') {
+        const r = realtimeRow(f, ix);
+        if (quarantine && labelQuarantine.isQuarantinedDate(r.date)) census.quarantined++;
+        else live.push(r);
+      }
       else if (src === '' && legacySet.has(f[ix.city])) legacy.push(realtimeRow(f, ix));
     }
     census.files.push({ file: path.basename(file), rows: n });
