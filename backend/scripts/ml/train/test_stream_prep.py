@@ -467,7 +467,8 @@ def digest(out: Path) -> dict:
     got = {'model_metadata.json': hashlib.sha256(json.dumps(meta, sort_keys=True).encode()).hexdigest()}
     for f in ('features_train.pkl', 'features_holdout.pkl'):
         data = features_io.load_features(out / f, mmap=False)
-        got.update({f'{f}:{k}': fingerprint(v) for k, v in data.items()})
+        # The label-trust stamp (2026-11-27) is pinned in test_label_quarantine.py.
+        got.update({f'{f}:{k}': fingerprint(v) for k, v in data.items() if k != features_io.LABEL_TRUST_KEY})
     return got
 
 

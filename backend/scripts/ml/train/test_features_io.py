@@ -30,7 +30,7 @@ def test_an_inline_pickle_loads_exactly_as_pickle_load():
             pickle.dump({'X': X, **rest}, f)
         with open(p, 'rb') as f:
             plain = pickle.load(f)
-        got = fio.load_features(p)
+        got = fio.load_features(p, require_trust=False)
         assert set(got) == set(plain)
         assert got['X'].tobytes(order='A') == plain['X'].tobytes(order='A')
         assert got['X'].flags.f_contiguous == plain['X'].flags.f_contiguous
@@ -50,12 +50,12 @@ def test_an_external_x_round_trips_every_value_and_the_layout():
         with open(p, 'wb') as f:
             pickle.dump({**rest, **keys}, f)
         for mmap in (True, False):
-            got = fio.load_features(p, mmap=mmap, verify=True)
+            got = fio.load_features(p, mmap=mmap, verify=True, require_trust=False)
             assert np.array_equal(got['X'], X)
             assert got['X'].dtype == np.float32 and got['X'].flags.f_contiguous
             assert got['feature_cols'] == rest['feature_cols']
             del got
-        got = fio.load_features(p)
+        got = fio.load_features(p, require_trust=False)
         assert fio.x_is_external(got) and isinstance(got['X'], np.memmap)
         del got
         gc.collect()  # Windows keeps a mapped file locked until the map is gone
@@ -73,7 +73,7 @@ def test_a_changed_file_or_a_wrong_shape_is_refused():
             pickle.dump({**rest, **keys, fio.X_SHAPE_KEY: [49, 4]}, f)
         for verify in (False, True):
             try:
-                fio.load_features(p, verify=verify)
+                fio.load_features(p, verify=verify, require_trust=False)
             except ValueError:
                 pass
             else:
@@ -86,7 +86,7 @@ def test_a_changed_file_or_a_wrong_shape_is_refused():
         del m
         gc.collect()
         try:
-            fio.load_features(p, verify=True)
+            fio.load_features(p, verify=True, require_trust=False)
         except ValueError:
             return
         raise AssertionError('a changed X file passed verify')
@@ -112,7 +112,7 @@ def test_a_wrong_dtype_or_a_c_order_file_is_refused_even_with_its_own_hash():
             for mmap in (True, False):
                 for verify in (False, True):
                     try:
-                        fio.load_features(p, mmap=mmap, verify=verify)
+                        fio.load_features(p, mmap=mmap, verify=verify, require_trust=False)
                     except ValueError as err:
                         assert 'float32 in Fortran order' in str(err), err
                         refused.append((mmap, verify))
@@ -127,7 +127,7 @@ def test_x_both_inline_and_external_is_refused():
         with open(p, 'wb') as f:
             pickle.dump({'X': X, **rest, fio.X_FILE_KEY: 'features_train.X.npy'}, f)
         try:
-            fio.load_features(p)
+            fio.load_features(p, require_trust=False)
         except ValueError:
             return
         raise AssertionError('a pickle with X twice was accepted')

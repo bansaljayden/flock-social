@@ -54,6 +54,8 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
+import features_io  # the label-trust stamp every pickle carries (2026-11-27); X beside a pickle
+
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -4033,6 +4035,9 @@ def train_pickle_dict(cols: Dict, x_entry: Dict, sample_weight: np.ndarray, run_
         'category_cell_stats': cell_stats,
         'weather_observed': cols['weather_observed'],
         'is_realtime': cols['is_realtime'],
+        # 2026-11-27: what check_label_trust found, bound to this pickle so a
+        # loader can refuse one that never met it (features_io.require_label_trust).
+        features_io.LABEL_TRUST_KEY: features_io.label_trust_stamp(LABEL_TRUST),
     }
 
 
@@ -4104,7 +4109,7 @@ LIVE_READING_FEATURES = ('last_live_dev', 'last_live_age_h', 'recent_offset', 'r
 TRAIN_PICKLE_ROW_KEYS = ('X', 'y', 'y_actual', 'baseline', 'sample_weight', 'run_length_divisor',
                          'cities', 'hour', 'venue_category', 'label_provenance', 'label_source',
                          'vendor_forecast_pct', 'observed_date', 'weather_observed', 'is_realtime')
-TRAIN_PICKLE_FRAME_KEYS = ('feature_cols', 'label_type', 'category_cell_stats')
+TRAIN_PICKLE_FRAME_KEYS = ('feature_cols', 'label_type', 'category_cell_stats', features_io.LABEL_TRUST_KEY)
 
 
 def require_live_mask_copies_possible(streamed: bool = False) -> None:
@@ -4377,6 +4382,7 @@ def holdout_pickle_dict(holdout_df: pd.DataFrame, feature_cols: List[str]) -> Di
         'observed_date': holdout_df['observed_date'].astype('string').fillna('').values.astype(str),
         'weather_observed': holdout_df['weather_observed'].values.astype(np.int8),
         'is_realtime': holdout_df['is_realtime'].values.astype(np.int8),
+        features_io.LABEL_TRUST_KEY: features_io.label_trust_stamp(LABEL_TRUST),
     }
 
 

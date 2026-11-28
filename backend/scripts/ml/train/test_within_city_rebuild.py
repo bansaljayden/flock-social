@@ -272,7 +272,7 @@ def _write_external(folder, x_name, write_file=True):
         del arr
         keys[fio.X_SHA_KEY] = fio.sha256_file(x_path)
     with open(folder / 'features_train.pkl', 'wb') as f:
-        pickle.dump({'feature_cols': ['a', 'b', 'c'], 'y': np.zeros(8, np.float32), **keys}, f)
+        pickle.dump({'feature_cols': ['a', 'b', 'c'], 'y': np.zeros(8, np.float32), fio.LABEL_TRUST_KEY: fio.label_trust_stamp({}), **keys}, f)
 
 
 def test_an_x_file_under_another_name_is_refused_before_the_rebuild():
@@ -289,10 +289,11 @@ def test_a_pickle_naming_a_missing_x_file_is_refused_before_the_rebuild():
 
 def test_an_x_in_the_pickle_goes_on_to_the_rebuild_with_its_columns():
     import pickle
+    import features_io as fio
 
     def inline(d):
         with open(d / 'features_train.pkl', 'wb') as f:
-            pickle.dump({'X': _x(), 'feature_cols': ['a', 'b', 'c'], 'y': np.zeros(8, np.float32)}, f)
+            pickle.dump({'X': _x(), 'feature_cols': ['a', 'b', 'c'], 'y': np.zeros(8, np.float32), fio.LABEL_TRUST_KEY: fio.label_trust_stamp({})}, f)
 
     outcome, cols = _run_main_on(inline)
     assert outcome == 'rebuilt' and cols == ['a', 'b', 'c'], (outcome, cols)

@@ -134,7 +134,7 @@ class external_x:
         del arr
         with open(p, 'wb') as f:
             pickle.dump({'feature_cols': FEATURES, **keys}, f)
-        self.data = fio.load_features(p, verify=True)
+        self.data = fio.load_features(p, verify=True, require_trust=False)
         assert isinstance(self.data['X'], np.memmap) and tm.reads_in_chunks(self.data['X'])
         return self.data['X']
 

@@ -15,6 +15,7 @@ import tempfile
 import traceback
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -93,6 +94,45 @@ def test_the_limit_is_decided_on_whole_counts_not_a_rounded_percentage():
     assert pf.repeating_week({'pairs': 10001, 'equal': 5001, 'equal_pct': 50.0})
     assert pf.repeating_week({'pairs': 10000, 'equal': 5000, 'equal_pct': 50.0})
     assert not pf.repeating_week({'pairs': pf.REPETITION_MIN_PAIRS - 1, 'equal': pf.REPETITION_MIN_PAIRS - 1, 'equal_pct': 100.0})
+
+
+def test_the_loader_refuses_a_pickle_that_never_met_the_current_quarantine():
+    import pickle
+    import features_io as fio
+    good = fio.label_trust_stamp({'quarantine': {'policy': 'refuse'}, 'repetition': {'policy': 'refuse'}})
+    cases = {
+        'unstamped': ({'y': [1]}, {}, 'no label-trust stamp'),
+        'stale file': ({'y': [1], fio.LABEL_TRUST_KEY: dict(good, quarantine_sha256='0' * 64)}, {}, 'another version'),
+        'quarantine admitted': ({'y': [1], fio.LABEL_TRUST_KEY: dict(good, quarantine_policy='admitted_for_analysis')}, {},
+                                'quarantined readings admitted'),
+        'repetition admitted': ({'y': [1], fio.LABEL_TRUST_KEY: dict(good, repetition_policy='admitted_for_analysis')}, {},
+                                'repeating labels admitted'),
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, (data, env, why) in cases.items():
+            try:
+                fio.require_label_trust(data, name, env=env)
+            except ValueError as err:
+                assert why in str(err), (name, str(err))
+            else:
+                raise AssertionError(f'{name}: loaded')
+        fio.require_label_trust({'y': [1], fio.LABEL_TRUST_KEY: good}, 'current', env={})
+        fio.require_label_trust({'y': [1]}, 'unstamped, analysis', env={fio.QUARANTINE_ENV: 'true'})
+        fio.require_label_trust({'y': [1], fio.LABEL_TRUST_KEY: dict(good, repetition_policy='admitted_for_analysis')},
+                                'repetition, analysis', env={fio.REPETITION_ENV: 'true'})
+        # Through load_features itself, which every training and evaluation script calls.
+        p = Path(tmp) / 'features_train.pkl'
+        with open(p, 'wb') as f:
+            pickle.dump({'X': np.zeros((2, 1), np.float32), 'y': np.zeros(2, np.float32)}, f)
+        try:
+            fio.load_features(p)
+        except ValueError as err:
+            assert 'no label-trust stamp' in str(err)
+        else:
+            raise AssertionError('load_features loaded an unstamped pickle')
+        with open(p, 'wb') as f:
+            pickle.dump({'X': np.zeros((2, 1), np.float32), 'y': np.zeros(2, np.float32), fio.LABEL_TRUST_KEY: good}, f)
+        assert fio.load_features(p)['X'].shape == (2, 1)
 
 
 def test_an_export_holding_a_quarantined_row_is_refused_and_the_override_is_recorded():

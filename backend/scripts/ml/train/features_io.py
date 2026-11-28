@@ -14,6 +14,7 @@ small enough to keep it inline, loads exactly as pickle.load always did.
 Run its checks: python test_features_io.py
 """
 import hashlib
+import os
 import pickle
 from pathlib import Path
 
@@ -22,6 +23,67 @@ import numpy as np
 X_FILE_KEY = 'X_file'
 X_SHAPE_KEY = 'X_shape'
 X_SHA_KEY = 'X_sha256'
+
+# ---------------------------------------------------------------------------
+# THE LABEL-TRUST STAMP (2026-11-27). prepare_features.check_label_trust refuses
+# an export holding readings the provider generated (backend/services/
+# labelQuarantine.json) or weeks of readings that repeat their own week. A
+# pickle prepared before that check existed, or against another version of the
+# quarantine file, never met it, and training on it again is how the November
+# result happened. So every pickle prepare_features writes carries a stamp: the
+# SHA-256 of the quarantine file it was checked against and what the check
+# admitted. load_features refuses a pickle without a current stamp, and one
+# whose check admitted quarantined or repeating labels for an analysis, unless
+# the same override (FLOCK_ALLOW_QUARANTINED_LABELS / FLOCK_ALLOW_REPEATING_LABELS)
+# is set where it is loaded.
+# ---------------------------------------------------------------------------
+LABEL_TRUST_KEY = 'label_trust_stamp'
+QUARANTINE_FILE = Path(__file__).resolve().parents[3] / 'services' / 'labelQuarantine.json'
+QUARANTINE_ENV = 'FLOCK_ALLOW_QUARANTINED_LABELS'
+REPETITION_ENV = 'FLOCK_ALLOW_REPEATING_LABELS'
+
+
+def quarantine_sha256(path=QUARANTINE_FILE) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def label_trust_stamp(record: dict, path=QUARANTINE_FILE) -> dict:
+    """The stamp a prepared pickle carries, from check_label_trust's record."""
+    return {
+        'quarantine_sha256': quarantine_sha256(path),
+        'quarantine_policy': ((record or {}).get('quarantine') or {}).get('policy'),
+        'repetition_policy': ((record or {}).get('repetition') or {}).get('policy'),
+    }
+
+
+def _true(env, name) -> bool:
+    return str(env.get(name, '')).strip().lower() == 'true'
+
+
+def require_label_trust(data: dict, pickle_path, env=None, path=QUARANTINE_FILE) -> None:
+    """Refuse a feature pickle that did not meet the current label quarantine (the block above)."""
+    env = os.environ if env is None else env
+    stamp = data.get(LABEL_TRUST_KEY)
+    analysis = _true(env, QUARANTINE_ENV)
+    if not isinstance(stamp, dict):
+        if analysis:
+            return
+        raise ValueError(
+            f'{pickle_path} carries no label-trust stamp: it was prepared before the label quarantine '
+            '(2026-11-27) and may hold readings the provider generated. Prepare it again from a fresh '
+            f'export, or set {QUARANTINE_ENV}=true for an analysis that knows what it is reading.')
+    if stamp.get('quarantine_sha256') != quarantine_sha256(path) and not analysis:
+        raise ValueError(
+            f'{pickle_path} was checked against another version of labelQuarantine.json. Prepare it '
+            f'again, or set {QUARANTINE_ENV}=true for an analysis.')
+    if stamp.get('quarantine_policy') == 'admitted_for_analysis' and not analysis:
+        raise ValueError(
+            f'{pickle_path} was prepared with quarantined readings admitted ({QUARANTINE_ENV}=true); '
+            'set the same override to load it, and never ship what it trains.')
+    if stamp.get('repetition_policy') == 'admitted_for_analysis' and not _true(env, REPETITION_ENV):
+        raise ValueError(
+            f'{pickle_path} was prepared with repeating labels admitted ({REPETITION_ENV}=true); '
+            'set the same override to load it, and never ship what it trains.')
 
 
 def x_file_for(pickle_path) -> Path:
@@ -65,7 +127,7 @@ def finish_x(pickle_path, arr) -> dict:
     return {X_FILE_KEY: path.name, X_SHAPE_KEY: shape, X_SHA_KEY: sha256_file(path)}
 
 
-def load_features(pickle_path, mmap: bool = True, verify: bool = False) -> dict:
+def load_features(pickle_path, mmap: bool = True, verify: bool = False, require_trust: bool = True) -> dict:
     """The pickle's dict, with data['X'] always present.
 
     Inline X: returned exactly as pickle.load gives it. External X: the .npy
@@ -75,6 +137,10 @@ def load_features(pickle_path, mmap: bool = True, verify: bool = False) -> dict:
     """
     with open(pickle_path, 'rb') as f:
         data = pickle.load(f)
+    # require_trust=False is for tests that build a pickle by hand to check
+    # this file's mechanics; every training and evaluation script loads with it on.
+    if require_trust:
+        require_label_trust(data, pickle_path)
     if X_FILE_KEY not in data:
         return data
     if 'X' in data:
