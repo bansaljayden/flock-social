@@ -2169,10 +2169,11 @@ test('the model block: the loaded version, within one band from the database wit
   assert.deepStrictEqual(m.cache, { ttlSeconds: 3600 });
   // The stub predictor names no switches, so the arithmetic is not claimed.
   assert.deepStrictEqual(m.serving, { mode: null, nowcast: null });
-  // Asked the window, crowdEngine's cuts and the pairing window, and nothing else.
+  // Asked the window, crowdEngine's cuts, the pairing window and the label
+  // quarantine's windows (services/labelQuarantine.json), and nothing else.
   const q = servedChecks();
   assert.strictEqual(q.length, 1);
-  assert.deepStrictEqual(q[0].params, [30, [20, 39, 69, 84], 3]);
+  assert.deepStrictEqual(q[0].params, [30, [20, 39, 69, 84], 3, ['2026-10-23'], ['2026-11-25']]);
   // The blended training figure is not this and appears nowhere in it.
   assert.ok(!/85\.1|87\.3/.test(JSON.stringify(m)), 'the blended training figure reached the model block');
 });
@@ -2351,6 +2352,9 @@ test('the check pairs forecasts made from a venue\'s own data with live readings
   assert.ok(I.servedModelVersion('2.6.0-starling', true, { bucket: 1 }).includes('+curve_offset'));
   assert.ok(!I.servedModelVersion('2.6.0-starling', false, { bucket: 1 }).includes('+curve_offset'), 'the nowcast on the model\'s number is still the model\'s');
   assert.ok(!/\$\{/.test(moneyHub.SERVED_BAND_ACCURACY_SQL), 'static, so the sqlParameterTypes suite prepares it');
+  // The label quarantine (services/labelQuarantine.json): a live row dated
+  // inside a window is the provider's forecast, so it is never a reading here.
+  assert.match(sql, /AND NOT EXISTS \(SELECT 1 FROM unnest\(\$4::date\[\], \$5::date\[\]\) AS q\(from_date, through_date\) WHERE t\.observed_date BETWEEN q\.from_date AND q\.through_date\)/);
   // The pairing window is short of the week that separates two of the same
   // weekday and hour, by a wide margin.
   assert.ok(moneyHub.__test.MODEL_PAIR_WINDOW_HOURS * 2 < 7 * 24);

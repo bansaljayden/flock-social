@@ -74,6 +74,7 @@ const billing = require('./proBilling');
 const besttime = require('./besttimeAccount');
 const maptilerUsage = require('./maptilerUsage');
 const resendUsage = require('./resendUsage');
+const labelQuarantine = require('./labelQuarantine');
 const { legacyRoostPrices } = require('./venueBilling');
 // The error-reporting step quotes the alert threshold, so it reads the numbers
 // the alert uses rather than a copy of them.
@@ -3210,6 +3211,11 @@ const SERVED_BAND_ACCURACY_SQL = `WITH served AS MATERIALIZED (
           AND t.collection_mode = 'realtime'
           AND t.label_source = 'live'
           AND t.observed_date IS NOT NULL
+          -- The label quarantine (services/labelQuarantine.json): a live row
+          -- dated inside a window was made by the provider from its forecast,
+          -- so a forecast checked against it is checked against a forecast.
+          AND NOT EXISTS (SELECT 1 FROM unnest($4::date[], $5::date[]) AS q(from_date, through_date)
+                           WHERE t.observed_date BETWEEN q.from_date AND q.through_date)
           AND t.day_of_week = s.local_day
           AND t.hour = s.local_hour
           AND t.observed_date BETWEEN (s.served_at AT TIME ZONE 'UTC')::date - 1
@@ -3235,7 +3241,8 @@ const SERVED_BAND_ACCURACY_SQL = `WITH served AS MATERIALIZED (
 async function readServedBandAccuracy(db = pool, { windowDays = MODEL_WINDOW_DAYS, cuts } = {}) {
   let row;
   try {
-    const r = await db.query(SERVED_BAND_ACCURACY_SQL, [windowDays, cuts, MODEL_PAIR_WINDOW_HOURS]);
+    const r = await db.query(SERVED_BAND_ACCURACY_SQL, [windowDays, cuts, MODEL_PAIR_WINDOW_HOURS,
+      labelQuarantine.WINDOWS.map((w) => w.fromDate), labelQuarantine.WINDOWS.map((w) => w.throughDate)]);
     row = (r && r.rows && r.rows[0]) || {};
   } catch (err) {
     console.error('[money] served forecast check failed:', err && err.message ? err.message : err);
