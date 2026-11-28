@@ -88,3 +88,63 @@ test('the older CSV export leaves out exactly the live rows dated inside the win
   assert.deepEqual(new Set(rtRows.map((r) => r.id)),
     new Set(CASES.filter((c) => c.kept && c.mode === 'realtime').map((c) => ids[c.tag])));
 });
+
+// The admin Model card. One served forecast and one live reading on each of
+// the two days either side of each edge of the window, every pair inside the
+// card's pairing rules, and each forecast carrying its own date as its model
+// version, so the versions the card reports name exactly the days it graded.
+const CARD_DAYS = [
+  { date: '2026-10-21', kept: true },
+  { date: '2026-10-22', kept: true },
+  { date: '2026-10-23', kept: false },
+  { date: '2026-10-24', kept: false },
+  { date: '2026-11-24', kept: false },
+  { date: '2026-11-25', kept: false },
+  { date: '2026-11-26', kept: true },
+  { date: '2026-11-27', kept: true },
+];
+
+test('the admin Model card grades only the served forecasts whose reading falls outside the window', async () => {
+  const { rows: [u] } = await pool.query(
+    `INSERT INTO users (email, password, name) VALUES ('quarantine-card@example.test', 'x', 'Card') RETURNING id`);
+  const place = 'ChIJ-quarantine-card';
+  const { rows: [v] } = await pool.query(
+    `INSERT INTO ml_venues (google_place_id, name, city, latitude, longitude, venue_category, timezone)
+     VALUES ($1, 'Quarantine Card Bar', 'philly', 39.95, -75.16, 'bar', 'America/New_York') RETURNING id`, [place]);
+  for (const d of CARD_DAYS) {
+    const servedAt = `${d.date}T15:00:00Z`;
+    const dow = new Date(servedAt).getUTCDay();
+    await pool.query(
+      `INSERT INTO served_predictions (user_id, venue_place_id, score, prediction_method, model_version, served_at, local_day, local_hour)
+       VALUES ($1, $2, 40, 'ml', $3, $4::timestamptz, $5, 15)`,
+      [u.id, place, `v-${d.date}`, servedAt, dow]);
+    await pool.query(
+      `INSERT INTO ml_training_data (venue_id, collection_mode, day_of_week, hour, venue_category, busyness_pct, label_source,
+                                     observed_date, collected_at)
+       VALUES ($1, 'realtime', $2, 15, 'bar', 40, 'live', $3::date, $4::timestamptz)`,
+      [v.id, dow, d.date, servedAt]);
+  }
+  const moneyHub = require('../services/moneyHub');
+  const { cuts } = moneyHub.crowdBandLadder();
+  // A window that reaches back past the first day, however long after it this runs.
+  const windowDays = Math.ceil((Date.now() - Date.parse('2026-10-20T00:00:00Z')) / 86400000) + 1;
+  const versions = (row) => [...row.versions].sort();
+  const kept = CARD_DAYS.filter((d) => d.kept).map((d) => `v-${d.date}`);
+
+  // Without the quarantine, every one of the eight pairs is graded, so the
+  // pairing itself is not what leaves anything out below.
+  const { rows: [open] } = await pool.query(moneyHub.SERVED_BAND_ACCURACY_SQL,
+    [windowDays, cuts, 3, [], []]);
+  assert.equal(open.matched, CARD_DAYS.length);
+  assert.deepEqual(versions(open), CARD_DAYS.map((d) => `v-${d.date}`));
+
+  // With it, exactly the four days outside the window, from the card's own reader.
+  const card = await moneyHub.readServedBandAccuracy(pool, { windowDays, cuts });
+  assert.equal(card.status, 'ok');
+  assert.equal(card.served, CARD_DAYS.length);
+  assert.equal(card.matched, kept.length);
+  assert.equal(card.days, kept.length);
+  const { rows: [shut] } = await pool.query(moneyHub.SERVED_BAND_ACCURACY_SQL,
+    [windowDays, cuts, 3, ['2026-10-23'], ['2026-11-25']]);
+  assert.deepEqual(versions(shut), kept);
+});
