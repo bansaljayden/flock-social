@@ -99,7 +99,24 @@ const GOLDEN = {
 
 // The fixture through the real predictBusyness, with a pool answering from it
 // (and offering recent readings to any statement that asks for them).
+// The fixture's readings are dated 2026-09-04 to 09-06 and its stored offset
+// rows are stamped with the clock, so the fixture is served on a fixed clock
+// the day after them: on the wall clock a row "built now" may fall within 28
+// days of a quarantined window (services/labelQuarantine.json), where its
+// median is refused, and the record below would depend on the date it ran.
+const FIXTURE_CLOCK = Date.parse('2026-09-07T12:00:00Z');
+
 async function serveFixture(env) {
+  const { mock } = require('node:test');
+  mock.timers.enable({ apis: ['Date'], now: FIXTURE_CLOCK });
+  try {
+    return await serveFixtureAtClock(env);
+  } finally {
+    mock.timers.reset();
+  }
+}
+
+async function serveFixtureAtClock(env) {
   const fx = FX.buildFixture();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-servemodes-'));
   const csv = path.join(dir, 'fixture.csv');

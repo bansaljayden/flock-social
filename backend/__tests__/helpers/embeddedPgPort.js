@@ -240,6 +240,9 @@ const SUITE_SLOTS = {
                                  // --offline through the harvest's real writer,
                                  // exported, and compared row for row with the
                                  // offline import's generator (--parity).
+  labelQuarantineSql: 37,        // new in 2026-11-27; the label quarantine's
+                                 // SQL (the older CSV export and the admin
+                                 // Model card) run against the real schema.
   addFriendsRealDb: 44,          // new in 2026-11-23; the Add Friends rebuild's
                                  // server half (code links and previews, the
                                  // cancel that only cancels, a yes to a

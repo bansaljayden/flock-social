@@ -49,6 +49,12 @@ test('the file refuses an open, reversed, unevidenced or non-live window', () =>
   assert.throws(() => Q.validate({ windows: [{ ...ok, evidence: [] }] }), /no evidence/);
   assert.throws(() => Q.validate({ windows: [{ ...ok, label_source: 'forecast' }] }), /must be 'live'/);
   assert.throws(() => Q.validate({ windows: [ok, ok] }), /duplicate id/);
+  // The same broken shapes scripts/ml/train/test_label_quarantine.py refuses.
+  for (const bad of [{}, { windows: null }, { windows: {} }, [],
+    { windows: [{ ...ok, id: 7 }] }, { windows: [{ ...ok, id: '' }] },
+    { windows: [{ ...ok, evidence: 'a sentence' }] }, { windows: [{ ...ok, from_date: '2026-10-3' }] }]) {
+    assert.throws(() => Q.validate(bad), undefined, JSON.stringify(bad));
+  }
 });
 
 test('a reading list loses exactly its quarantined readings, and no list stays no list', () => {
@@ -63,13 +69,28 @@ test('a reading list loses exactly its quarantined readings, and no list stays n
   assert.deepEqual(Q.withoutQuarantinedSlots([]), []);
 });
 
-test('a span touches the window by calendar day', () => {
+test('a span touches the window by calendar day, widened a day each way for the venue\'s time zone', () => {
   const at = (s) => Date.parse(`${s}T12:00:00Z`);
   assert.equal(Q.overlapsQuarantine(at('2026-09-17'), at('2026-10-15')), false);
-  assert.equal(Q.overlapsQuarantine(at('2026-09-26'), at('2026-10-23')), true);
+  assert.equal(Q.overlapsQuarantine(at('2026-09-26'), at('2026-10-22')), true, 'a reading dated the 23rd locally can be the 22nd in UTC');
   assert.equal(Q.overlapsQuarantine(at('2026-10-28'), at('2026-11-25')), true);
-  assert.equal(Q.overlapsQuarantine(at('2026-11-26'), at('2026-12-24')), false);
+  // A Los Angeles reading dated 25 November at 20:00 was taken on the 26th in UTC.
+  assert.equal(Q.overlapsQuarantine(Date.parse('2026-11-26T04:00:00Z'), at('2026-12-24')), true);
+  assert.equal(Q.overlapsQuarantine(at('2026-11-27'), at('2026-12-25')), false);
 });
+
+// recentDeviationEntry on a fixed clock: the stored single offset's refusal
+// depends on when the builder ran relative to the window, so these tests
+// name the date instead of reading the wall clock.
+async function entryAt(nowIso, row, env) {
+  const { mock } = require('node:test');
+  mock.timers.enable({ apis: ['Date'], now: Date.parse(nowIso) });
+  try {
+    return await entryFor(row, env);
+  } finally {
+    mock.timers.reset();
+  }
+}
 
 async function entryFor(row, env) {
   const saved = Object.fromEntries(SWITCHES.map((k) => [k, process.env[k]]));
@@ -124,22 +145,36 @@ test('serving: real readings beside generated ones survive, and only they make t
   assert.equal(I.trailingOffsetBefore(entry.offsetReadings, target).offset, 12);
 });
 
-test('serving: a row whose stored readings are all real keeps its single offset', async () => {
+test('serving: a stored single offset built a day before the window, from real readings, is served', async () => {
   const row = {
-    offset_pct: 12, n_readings: REAL.length, updated_at: new Date(Date.now() - DAY),
+    offset_pct: 12, n_readings: REAL.length, updated_at: new Date('2026-10-11T12:00:00Z'),
     recent_readings: null, offset_readings: REAL,
   };
-  const { entry } = await entryFor(row, { CROWD_SERVE_MODE: 'curve_offset' });
+  const { entry } = await entryAt('2026-10-12T12:00:00Z', row, { CROWD_SERVE_MODE: 'curve_offset' });
   assert.ok(entry.data);
   assert.equal(entry.data.offset, 12);
 });
 
-test('serving, both switches off: a single offset built within 28 days of the window is refused', async () => {
-  const row = { offset_pct: -15, n_readings: 4, updated_at: new Date(Date.now() - DAY) };
-  const built = Date.now() - DAY;
-  const { entry } = await entryFor(row, {});
-  const touches = Q.overlapsQuarantine(built - 28 * DAY, built);
-  assert.equal(entry.data === null, touches);
+test('serving: a stored single offset built within 28 days after the window is refused, even beside a clean list', async () => {
+  // Written apart from its list, the median cannot be vouched for by it.
+  const row = {
+    offset_pct: 12, n_readings: REAL.length, updated_at: new Date('2026-12-01T12:00:00Z'),
+    recent_readings: null, offset_readings: REAL,
+  };
+  const { entry } = await entryAt('2026-12-02T12:00:00Z', row, { CROWD_SERVE_MODE: 'curve_offset' });
+  assert.equal(entry.data, null);
+  assert.deepEqual(entry.offsetReadings.map((r) => r.dev), [12, 12], 'the list itself is clean and kept');
+});
+
+test('serving, both switches off: the stored single offset is refused inside the reach of the window and served outside it', async () => {
+  const row = (built) => ({ offset_pct: -15, n_readings: 4, updated_at: new Date(built) });
+  const inside = await entryAt('2026-11-27T12:00:00Z', row('2026-11-26T12:00:00Z'), {});
+  assert.equal(inside.entry.data, null);
+  const late = await entryAt('2026-12-24T12:00:00Z', row('2026-12-23T12:00:00Z'), {});
+  assert.equal(late.entry.data, null, 'its 28 days still reach 25 November, a day widened');
+  const outside = await entryAt('2027-01-15T12:00:00Z', row('2027-01-14T12:00:00Z'), {});
+  assert.ok(outside.entry.data);
+  assert.equal(outside.entry.data.offset, -15);
 });
 
 test('the evaluations: readCorpus never scores a quarantined row as a live reading, and counts it', async () => {

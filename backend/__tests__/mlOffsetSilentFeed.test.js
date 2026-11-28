@@ -32,7 +32,23 @@ const READINGS = [
   { d: '2026-09-25', h: 21, dev: 12 }, { d: '2026-09-25', h: 20, dev: 12 },
 ];
 
+// A fixed clock after these readings and before the label quarantine's window
+// (services/labelQuarantine.json): a stored single offset built within 28 days
+// of that window is refused whatever its age, which is a different rule from
+// the one this file pins, and the wall clock would decide which one a test met.
+const NOW = Date.parse('2026-10-20T12:00:00Z');
+
 async function entryFor(row, env) {
+  const { mock } = require('node:test');
+  mock.timers.enable({ apis: ['Date'], now: NOW });
+  try {
+    return await entryAtFixedClock(row, env);
+  } finally {
+    mock.timers.reset();
+  }
+}
+
+async function entryAtFixedClock(row, env) {
   const saved = Object.fromEntries(SWITCHES.map((k) => [k, process.env[k]]));
   for (const k of SWITCHES) delete process.env[k];
   Object.assign(process.env, env);
@@ -56,7 +72,7 @@ function rowAged(days) {
   return {
     offset_pct: 12,
     n_readings: READINGS.length,
-    updated_at: new Date(Date.now() - days * DAY),
+    updated_at: new Date(NOW - days * DAY),
     recent_readings: null,
     offset_readings: READINGS,
   };

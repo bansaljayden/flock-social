@@ -71,6 +71,30 @@ def test_the_file_refuses_what_the_js_refuses():
             raise AssertionError('accepted a duplicate id')
 
 
+def test_the_file_refuses_a_broken_shape_as_the_js_does():
+    # The same fixtures as __tests__/labelQuarantine.test.js's shape test.
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp) / 'q.json'
+        ok = {'id': 'w', 'label_source': 'live', 'from_date': '2026-10-23', 'through_date': '2026-11-25', 'evidence': ['x']}
+        for bad in ({}, {'windows': None}, {'windows': {}}, [],
+                    {'windows': [dict(ok, id=7)]}, {'windows': [dict(ok, id='')]},
+                    {'windows': [dict(ok, evidence='a sentence')]}, {'windows': [dict(ok, from_date='2026-10-3')]}):
+            p.write_text(json.dumps(bad), encoding='utf-8')
+            try:
+                pf.load_label_quarantine(p)
+            except pf.CorpusContractError:
+                continue
+            raise AssertionError(f'accepted {bad}')
+
+
+def test_the_limit_is_decided_on_whole_counts_not_a_rounded_percentage():
+    # 5,000 of 10,001 is 49.995%, which rounds to 50.00 but is under half.
+    assert not pf.repeating_week({'pairs': 10001, 'equal': 5000, 'equal_pct': 50.0})
+    assert pf.repeating_week({'pairs': 10001, 'equal': 5001, 'equal_pct': 50.0})
+    assert pf.repeating_week({'pairs': 10000, 'equal': 5000, 'equal_pct': 50.0})
+    assert not pf.repeating_week({'pairs': pf.REPETITION_MIN_PAIRS - 1, 'equal': pf.REPETITION_MIN_PAIRS - 1, 'equal_pct': 100.0})
+
+
 def test_an_export_holding_a_quarantined_row_is_refused_and_the_override_is_recorded():
     with tempfile.TemporaryDirectory() as tmp:
         t = write(tmp, 'training_data.csv', weekly() + rows(['2026-10-09', '2026-10-12', '2026-10-23'], [40, 35, 30]))
@@ -123,7 +147,7 @@ def test_real_looking_readings_pass_and_too_few_pairs_never_flag():
         rec = pf.check_label_trust([t], windows=WINDOWS, env={})
         weeks = rec['repetition']['by_week']
         assert weeks['2027-W01']['pairs'] == 600 and 16.0 <= weeks['2027-W01']['equal_pct'] <= 17.0, weeks
-        assert weeks['2027-W10'] == {'pairs': 20, 'equal_pct': 100.0}, weeks
+        assert weeks['2027-W10'] == {'pairs': 20, 'equal': 20, 'equal_pct': 100.0}, weeks
         assert rec['repetition']['flagged_weeks'] == {}
 
 

@@ -58,6 +58,7 @@ order at the top-30 boundary of the Google types.
 
 Run: python test_stream_prep.py     (no pytest needed; about a minute)
 """
+import csv
 import gc
 import hashlib
 import importlib.util
@@ -376,6 +377,45 @@ def in_memory(name: str, module=pf) -> Path:
 
 class Skip(Exception):
     """A check that cannot decide here; main() reports it apart from passes and failures."""
+
+
+def test_both_paths_refuse_an_export_holding_a_quarantined_reading_before_writing_anything():
+    # The label quarantine (check_label_trust, 2026-11-27) is called by main()
+    # itself, before either path reads a row: one live row moved into the
+    # window must stop the in-memory run and the streamed run alike, with no
+    # pickle and no metadata left behind.
+    e = Export(**VARIANTS['cold'])
+    try:
+        path = e.train / 'training_data.csv'
+        with open(path, newline='', encoding='utf-8') as fh:
+            rows = list(csv.reader(fh))
+        header = rows[0]
+        src, day = header.index('label_source'), header.index('observed_date')
+        live = next(r for r in rows[1:] if r[src] == 'live')
+        moved = list(live)
+        moved[day] = '2026-11-06'
+        with open(path, 'a', newline='', encoding='utf-8') as fh:
+            csv.writer(fh, lineterminator='\n').writerow(moved)
+        models = e.train.parent / 'models'
+        for stream in (False, True):
+            try:
+                run(e.train, stream=stream)
+            except pf.CorpusContractError as err:
+                assert 'quarantined window' in str(err), str(err)
+            else:
+                raise AssertionError(f'stream={stream}: an export holding a quarantined reading was prepared')
+            for f in ('features_train.pkl', 'features_holdout.pkl', 'features_train.X.npy'):
+                assert not (e.train / f).exists(), f'stream={stream}: {f} was written'
+            assert not (models / 'model_metadata.json').exists(), f'stream={stream}: metadata was written'
+    finally:
+        e.close()
+
+
+def test_a_prepared_run_records_its_label_trust():
+    meta = json.loads((in_memory('cold') / 'model_metadata.json').read_text(encoding='utf-8'))
+    trust = meta['corpus_contract']['label_trust']
+    assert trust['quarantine']['policy'] == 'refuse' and trust['quarantine']['windows'], trust['quarantine']
+    assert trust['repetition']['rows_checked'] > 0 and trust['repetition']['flagged_weeks'] == {}, trust['repetition']
 
 
 def _canon(v, h) -> None:

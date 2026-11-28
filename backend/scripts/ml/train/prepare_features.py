@@ -338,10 +338,15 @@ def _env_true(name: str, env=os.environ) -> bool:
 def load_label_quarantine(path: Path = QUARANTINE_FILE) -> List[Dict]:
     """The windows of labelQuarantine.json, validated as services/labelQuarantine.js validates them."""
     raw = json.loads(Path(path).read_text(encoding='utf-8'))
+    # The same schema services/labelQuarantine.js enforces: an object holding a
+    # windows array (an empty or missing one is not "no quarantine", it is a
+    # broken file), string ids, and evidence that is a non-empty list.
+    if not isinstance(raw, dict) or not isinstance(raw.get('windows'), list):
+        raise CorpusContractError('labelQuarantine.json: no windows array')
     windows, ids = [], set()
-    for i, w in enumerate(raw.get('windows') or []):
+    for i, w in enumerate(raw['windows']):
         where = f'labelQuarantine.json windows[{i}]'
-        if not isinstance(w, dict) or not w.get('id'):
+        if not isinstance(w, dict) or not isinstance(w.get('id'), str) or not w['id']:
             raise CorpusContractError(f'{where}: no id')
         if w['id'] in ids:
             raise CorpusContractError(f'{where}: duplicate id {w["id"]}')
@@ -357,7 +362,7 @@ def load_label_quarantine(path: Path = QUARANTINE_FILE) -> List[Dict]:
             raise CorpusContractError(f'{where}: dates must be written YYYY-MM-DD')
         if hi < lo:
             raise CorpusContractError(f'{where}: through_date is before from_date')
-        if not w.get('evidence'):
+        if not isinstance(w.get('evidence'), list) or not w['evidence']:
             raise CorpusContractError(f'{where}: no evidence')
         windows.append({'id': w['id'], 'from_date': lo, 'through_date': hi})
     return windows
@@ -389,8 +394,16 @@ def weekly_repetition(frame: pd.DataFrame) -> Dict:
                          equal=(pairs['busyness_pct'] == pairs['prior']))
     out = {}
     for week, g in pairs.groupby('week'):
-        out[str(week)] = {'pairs': int(len(g)), 'equal_pct': round(100.0 * float(g['equal'].mean()), 2)}
+        # The decision reads the two whole counts (repeating_week); the
+        # percentage is for people, rounded, and never compared.
+        equal = int(g['equal'].sum())
+        out[str(week)] = {'pairs': int(len(g)), 'equal': equal, 'equal_pct': round(100.0 * equal / len(g), 2)}
     return out
+
+
+def repeating_week(stats: Dict) -> bool:
+    """A week whose pairs are enough to decide and whose equal share reaches the limit, in whole counts."""
+    return stats['pairs'] >= REPETITION_MIN_PAIRS and stats['equal'] * 100 >= REPETITION_LIMIT_PCT * stats['pairs']
 
 
 def check_label_trust(paths: List[Path], windows: List[Dict] = None, env=os.environ,
@@ -440,8 +453,7 @@ def check_label_trust(paths: List[Path], windows: List[Dict] = None, env=os.envi
     trained = pd.concat(trained_parts, ignore_index=True) if trained_parts else pd.DataFrame(
         columns=['venue_id', 'observed_date', 'hour', 'busyness_pct'])
     by_week = weekly_repetition(trained)
-    flagged = {w: s for w, s in by_week.items()
-               if s['pairs'] >= REPETITION_MIN_PAIRS and s['equal_pct'] >= REPETITION_LIMIT_PCT}
+    flagged = {w: s for w, s in by_week.items() if repeating_week(s)}
     record['repetition'] = {'limit_pct': REPETITION_LIMIT_PCT, 'min_pairs': REPETITION_MIN_PAIRS,
                             'rows_checked': int(len(trained)), 'by_week': by_week,
                             'flagged_weeks': flagged,

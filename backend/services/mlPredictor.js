@@ -636,17 +636,17 @@ async function recentDeviationEntry(placeId) {
     const row = rows[0];
     let data = null;
     // THE LABEL QUARANTINE (services/labelQuarantine.js, 2026-11-27). The
-    // stored single offset is the median of the readings stored beside it
-    // (offset_readings). When those were read (a switch on), it is refused if
-    // any of them is quarantined; when they were not (both switches off, the
-    // statement that reads no readings), it is refused if the 28 days before
-    // the builder's run touch a quarantined window, since it may be a median of
-    // readings the provider generated.
+    // stored single offset (offset_pct) is a median the builder writes apart
+    // from the reading list beside it, so the list cannot vouch for it: it is
+    // refused whenever the 28 days before the builder's run could hold a
+    // quarantined reading (overlapsQuarantine, widened a day each way for the
+    // venue's time zone), and also whenever the list it was read with holds
+    // one. The cost is a clean median refused until 28 days after a window
+    // closes (about 25 December for the November one), answered with no offset.
     const offsetParsed = withReadings ? parseOffsetReadings(row ? row.offset_readings : null) : undefined;
     const builtAt = row && row.updated_at ? new Date(row.updated_at).getTime() : NaN;
-    const singleOffsetQuarantined = Array.isArray(offsetParsed)
-      ? labelQuarantine.withoutQuarantinedSlots(offsetParsed).length !== offsetParsed.length
-      : labelQuarantine.overlapsQuarantine(builtAt - OFFSET_WINDOW_HOURS * 3600000, builtAt);
+    const singleOffsetQuarantined = labelQuarantine.overlapsQuarantine(builtAt - OFFSET_WINDOW_HOURS * 3600000, builtAt)
+      || (Array.isArray(offsetParsed) && labelQuarantine.withoutQuarantinedSlots(offsetParsed).length !== offsetParsed.length);
     if (row
       && Number.isFinite(Number(row.offset_pct))
       && Number(row.n_readings) >= DEVIATION_MIN_READINGS

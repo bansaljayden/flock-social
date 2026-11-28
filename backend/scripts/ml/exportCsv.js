@@ -8,6 +8,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.e
 const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
+const labelQuarantine = require('../../services/labelQuarantine');
 
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
   const host = process.env.PGHOST;
@@ -53,18 +54,31 @@ function escCsv(val) {
   return str;
 }
 
-async function exportCsv(opts) {
-  const { mode, output } = opts || parseArgs();
+// THE LABEL QUARANTINE (services/labelQuarantine.json, 2026-11-27). A realtime
+// row labelled live and dated inside a window is a value the provider made
+// from its own forecast; this CSV carries neither label_source nor
+// observed_date, so nothing downstream could tell it apart, and it is left out
+// here, in the query, and counted. train/export_training_data.js is the export
+// the retrain reads; this older one follows the same rule.
+function quarantinedRowSql(fromParam, throughParam) {
+  return `COALESCE(t.collection_mode = 'realtime' AND t.label_source = 'live'
+      AND EXISTS (SELECT 1 FROM unnest(${fromParam}::date[], ${throughParam}::date[]) AS q(from_date, through_date)
+                   WHERE t.observed_date BETWEEN q.from_date AND q.through_date), false)`;
+}
 
+function buildExportQuery(mode) {
   const params = [];
-  let whereClause = '';
-
+  const conds = [];
   if (mode !== 'all') {
     params.push(mode);
-    whereClause = 'WHERE t.collection_mode = $1';
+    conds.push(`t.collection_mode = $${params.length}`);
   }
-
-  const query = `
+  params.push(labelQuarantine.WINDOWS.map((w) => w.fromDate));
+  const from = `$${params.length}`;
+  params.push(labelQuarantine.WINDOWS.map((w) => w.throughDate));
+  const through = `$${params.length}`;
+  conds.push(`NOT ${quarantinedRowSql(from, through)}`);
+  const text = `
     SELECT
       t.id, v.city, v.google_place_id, v.name AS venue_name, t.collection_mode,
       t.day_of_week, t.hour, t.month, t.season, t.is_holiday, t.is_school_break,
@@ -73,11 +87,21 @@ async function exportCsv(opts) {
       t.busyness_pct, t.collected_at
     FROM ml_training_data t
     JOIN ml_venues v ON t.venue_id = v.id
-    ${whereClause}
+    WHERE ${conds.join(' AND ')}
     ORDER BY t.collected_at, t.venue_id, t.day_of_week, t.hour
   `;
+  const countText = `SELECT COUNT(*)::int AS n FROM ml_training_data t WHERE ${quarantinedRowSql('$1', '$2')}`;
+  const countParams = [labelQuarantine.WINDOWS.map((w) => w.fromDate), labelQuarantine.WINDOWS.map((w) => w.throughDate)];
+  return { text, params, countText, countParams };
+}
 
-  const { rows } = await pool.query(query, params);
+async function exportCsv(opts) {
+  const { mode, output } = opts || parseArgs();
+
+  const q = buildExportQuery(mode);
+  const { rows } = await pool.query(q.text, q.params);
+  const { rows: [left] } = await pool.query(q.countText, q.countParams);
+  console.log(`[ML:Export] Left out ${left ? left.n : 0} live rows inside a quarantined window (services/labelQuarantine.json).`);
 
   const stream = fs.createWriteStream(output);
   stream.write(COLUMNS.join(',') + '\n');
@@ -102,7 +126,7 @@ async function run(opts) {
   await exportCsv(opts);
 }
 
-module.exports = { run };
+module.exports = { run, buildExportQuery };
 
 if (require.main === module) {
   run().catch(err => {

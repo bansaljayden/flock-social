@@ -79,13 +79,18 @@ function withoutQuarantinedSlots(list, windows = WINDOWS) {
   return list.filter((r) => !(r && Number.isInteger(r.slot) && windowForDay(Math.floor(r.slot / 24), windows)));
 }
 
-// Whether the span [fromMs, toMs] touches a window, by UTC calendar day: the
-// stored single offset is a median over the readings of the window before the
-// builder's run, so one that ran within reach of a window may carry them.
+// Whether the span [fromMs, toMs] (instants) can hold a reading dated inside a
+// window. A window's dates are the venue's local calendar (observed_date), and
+// a venue-local date differs from the UTC date of the same instant by at most
+// one day either way (UTC-12 to UTC+14), so the span is widened by a day on
+// each side before the calendar days are compared: a Los Angeles reading dated
+// 25 November at 20:00 was taken on 26 November in UTC. Used where a number
+// was built from readings nobody can list any more (the stored single offset):
+// erring wide there refuses a median, which serving answers with no offset.
 function overlapsQuarantine(fromMs, toMs, windows = WINDOWS) {
   if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) return false;
-  const a = Math.floor(Math.min(fromMs, toMs) / DAY_MS);
-  const b = Math.floor(Math.max(fromMs, toMs) / DAY_MS);
+  const a = Math.floor(Math.min(fromMs, toMs) / DAY_MS) - 1;
+  const b = Math.floor(Math.max(fromMs, toMs) / DAY_MS) + 1;
   return windows.some((w) => a <= w.throughDay && b >= w.fromDay);
 }
 
