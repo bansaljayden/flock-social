@@ -120,11 +120,11 @@ const REAL = [{ d: '2026-10-09', h: 20, dev: 12 }, { d: '2026-10-02', h: 20, dev
 
 test('serving: a venue whose stored readings are all generated gets no offset and no nowcast reading', async () => {
   const row = {
-    offset_pct: -15, n_readings: GENERATED.length, updated_at: new Date(Date.now() - DAY),
+    offset_pct: -15, n_readings: GENERATED.length, updated_at: new Date('2026-11-26T12:00:00Z'),
     recent_readings: [{ d: '2026-11-25', h: 19, v: 40, at: '2026-11-25T19:05:00Z' }],
     offset_readings: GENERATED,
   };
-  const { entry, I } = await entryFor(row, { CROWD_NOWCAST_ENABLED: 'true' });
+  const { entry, I } = await entryAt('2026-11-27T12:00:00Z', row, { CROWD_NOWCAST_ENABLED: 'true' });
   assert.equal(entry.fresh, true);
   assert.deepEqual(entry.offsetReadings, []);
   assert.deepEqual(entry.readings, []);
@@ -135,14 +135,29 @@ test('serving: a venue whose stored readings are all generated gets no offset an
 
 test('serving: real readings beside generated ones survive, and only they make the offset', async () => {
   const row = {
-    offset_pct: -15, n_readings: GENERATED.length + REAL.length, updated_at: new Date(Date.now() - DAY),
+    offset_pct: -15, n_readings: GENERATED.length + REAL.length, updated_at: new Date('2026-11-26T12:00:00Z'),
     recent_readings: null, offset_readings: [...GENERATED, ...REAL],
   };
-  const { entry, I } = await entryFor(row, { CROWD_NOWCAST_ENABLED: 'true' });
+  const { entry, I } = await entryAt('2026-11-27T12:00:00Z', row, { CROWD_NOWCAST_ENABLED: 'true' });
   assert.deepEqual(entry.offsetReadings.map((r) => r.dev), [12, 12]);
   assert.equal(entry.data, null, 'its stored median included generated readings');
   const target = I.slotDayNumber('2026-10-16') * 24 + 20;
   assert.equal(I.trailingOffsetBefore(entry.offsetReadings, target).offset, 12);
+});
+
+test('serving, long after the window: a fresh single offset is refused when its list holds a quarantined reading', async () => {
+  // The build span (December to January) is clear of the window, so only the
+  // list clause can refuse this median; with that clause removed it is served.
+  const row = {
+    offset_pct: -15, n_readings: GENERATED.length + REAL.length, updated_at: new Date('2027-01-14T12:00:00Z'),
+    recent_readings: null, offset_readings: [...GENERATED, ...REAL],
+  };
+  const { entry } = await entryAt('2027-01-15T12:00:00Z', row, { CROWD_NOWCAST_ENABLED: 'true' });
+  assert.equal(entry.data, null);
+  assert.deepEqual(entry.offsetReadings.map((r) => r.dev), [12, 12]);
+  const clean = await entryAt('2027-01-15T12:00:00Z', { ...row, offset_pct: 12, n_readings: REAL.length, offset_readings: REAL },
+    { CROWD_NOWCAST_ENABLED: 'true' });
+  assert.ok(clean.entry.data, 'the same row with a clean list is served');
 });
 
 test('serving: a stored single offset built a day before the window, from real readings, is served', async () => {

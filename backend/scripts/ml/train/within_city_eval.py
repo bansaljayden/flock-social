@@ -665,9 +665,27 @@ def refit_category_features(frame, train_idx, X):
 # ---------------------------------------------------------------------------
 # Refit + score
 # ---------------------------------------------------------------------------
+def _fit_key(X, y, sample_weight, train_idx, test_idx) -> str:
+    """What a cached refit was fitted from: the label quarantine it ran under
+    (2026-11-27), the parameters, the split and the training rows themselves.
+    A cache from any other inputs, an unstamped one from before the quarantine
+    included, is never read: its predictions may come from a fit on readings the
+    provider generated."""
+    import hashlib
+    import json as _json
+    import features_io
+    h = hashlib.sha256()
+    h.update(features_io.quarantine_sha256().encode())
+    h.update(_json.dumps(FIXED_PARAMS, sort_keys=True, default=str).encode())
+    for a in (np.asarray(train_idx), np.asarray(test_idx), np.asarray(y)[train_idx],
+              np.asarray(sample_weight)[train_idx], np.asarray(X[train_idx[:1000]]), np.asarray(X.shape)):
+        h.update(np.ascontiguousarray(a).tobytes())
+    return h.hexdigest()[:16]
+
+
 def fit_and_predict(X, y, sample_weight, train_idx, test_idx, tag):
     from xgboost import XGBRegressor
-    cache = SCRATCH / f'model_{tag}.pkl'
+    cache = SCRATCH / f'model_{tag}_{_fit_key(X, y, sample_weight, train_idx, test_idx)}.pkl'
     if cache.exists():
         logger.info('  reusing refit %s', cache)
         with open(cache, 'rb') as f:

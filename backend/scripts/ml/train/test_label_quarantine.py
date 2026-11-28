@@ -21,18 +21,18 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent))
 import prepare_features as pf  # noqa: E402
 
-COLS = ['venue_id', 'hour', 'is_realtime', 'busyness_pct', 'observed_date', 'label_source']
+COLS = ['venue_id', 'hour', 'is_realtime', 'busyness_pct', 'observed_date', 'label_source', 'baseline_busyness']
 WINDOWS = [{'id': 'w', 'from_date': '2026-10-23', 'through_date': '2026-11-25'}]
 
 
-def rows(dates, values, source='live', venue=1, hour=20):
+def rows(dates, values, source='live', venue=1, hour=20, curve=30):
     return [{'venue_id': venue, 'hour': hour, 'is_realtime': 1, 'busyness_pct': v, 'observed_date': d,
-             'label_source': source} for d, v in zip(dates, values)]
+             'label_source': source, 'baseline_busyness': curve} for d, v in zip(dates, values)]
 
 
 def weekly(n=3):
     return [{'venue_id': 1, 'hour': h, 'is_realtime': 0, 'busyness_pct': 30, 'observed_date': '',
-             'label_source': ''} for h in range(n)]
+             'label_source': '', 'baseline_busyness': 30} for h in range(n)]
 
 
 def write(tmp, name, records):
@@ -155,8 +155,17 @@ def test_a_replay_needs_a_current_stamp_beside_it():
                 assert why in str(err), str(err)
             else:
                 raise AssertionError(f'accepted a replay: {why}')
-        stamp.write_text(json.dumps({'quarantine_sha256': fio.quarantine_sha256()}), encoding='utf-8')
+        stamp.write_text(json.dumps({'quarantine_sha256': fio.quarantine_sha256(),
+                                     'replay_sha256': fio.quarantine_sha256(rows)}), encoding='utf-8')
         fio.require_replay_stamp(rows, env={})
+        # The same stamp beside another replay copied over this one certifies nothing.
+        rows.write_text('section,ml\nlive_time_holdout,0\n', encoding='utf-8')
+        try:
+            fio.require_replay_stamp(rows, env={})
+        except ValueError as err:
+            assert 'not the replay its stamp certifies' in str(err), str(err)
+        else:
+            raise AssertionError('a replaced replay passed under the old stamp')
         import hour_ranking_served as hrs
         stamp.unlink()
         try:
@@ -221,6 +230,24 @@ def test_real_looking_readings_pass_and_too_few_pairs_never_flag():
         assert weeks['2027-W01']['pairs'] == 600 and 16.0 <= weeks['2027-W01']['equal_pct'] <= 17.0, weeks
         assert weeks['2027-W10'] == {'pairs': 20, 'equal': 20, 'equal_pct': 100.0}, weeks
         assert rec['repetition']['flagged_weeks'] == {}
+
+
+def test_closed_hours_that_honestly_read_zero_every_week_do_not_refuse_a_retrain():
+    # 600 venues closed at this hour (stored curve 0) read 0 on two Fridays: equal pairs,
+    # but rows the serving population never trains on. The same values at an open hour do refuse.
+    closed, open_ = [], []
+    for v in range(600):
+        closed += rows(fridays('2027-01-01', 2), [0, 0], venue=v, curve=0)
+        open_ += rows(fridays('2027-01-01', 2), [0, 0], venue=v, curve=30)
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = pf.check_label_trust([write(tmp, 'training_data.csv', weekly() + closed)], windows=WINDOWS, env={})
+        assert rec['repetition']['rows_checked'] == 0 and rec['repetition']['flagged_weeks'] == {}, rec['repetition']
+        try:
+            pf.check_label_trust([write(tmp, 'training_data.csv', weekly() + open_)], windows=WINDOWS, env={})
+        except pf.CorpusContractError as err:
+            assert 'repeat the same venue' in str(err)
+        else:
+            raise AssertionError('repeating zeros at open hours passed')
 
 
 def test_spring_rows_count_only_when_they_will_be_trained():

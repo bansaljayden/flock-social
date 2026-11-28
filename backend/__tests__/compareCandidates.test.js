@@ -355,4 +355,10 @@ test('a rows file scored before the label quarantine, or under another version o
   fs.writeFileSync(`${stale}.label-trust.json`, JSON.stringify({ quarantine_sha256: '0'.repeat(64) }));
   err = await refusal(C.compareFiles(stamped, stale));
   assert.match(err.message, /another version of labelQuarantine\.json/);
+  // A current stamp beside an older replay copied over the one it certified.
+  const swapped = write(clone(reg));
+  fs.writeFileSync(swapped, fs.readFileSync(unstamped));
+  fs.appendFileSync(swapped, '\n');
+  err = await refusal(C.compareFiles(stamped, swapped));
+  assert.match(err.message, /not the replay its stamp certifies/);
 });

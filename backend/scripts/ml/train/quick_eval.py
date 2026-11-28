@@ -30,7 +30,7 @@ from pathlib import Path
 
 import numpy as np
 
-from features_io import load_features
+from features_io import load_features, LabelTrustError
 from model_files import has_onnx
 from prepare_features import serving_population_mask
 # realtime_flags is re-exported: eval_two_head.py imports it from here.
@@ -316,7 +316,19 @@ def compare_incumbent(gate_mask, hold_y_actual, challenger_pred, current_feature
                     'challenger_feature_count': len(current_feature_cols),
                     'incumbent_version': inc_version}, False
 
-        inc_hold = load_features(inc_hold_path, mmap=False, verify=True)
+        # The label quarantine (2026-11-27): an incumbent holdout prepared before
+        # it carries no stamp, and is refused rather than read. That makes the
+        # comparison incomparable, the same as a pickle that was never kept,
+        # and the band gate decides alone; the pickle stays untrusted.
+        try:
+            inc_hold = load_features(inc_hold_path, mmap=False, verify=True)
+        except LabelTrustError as err:
+            logger.error('The incumbent holdout pickle is refused by the label quarantine: %s', err)
+            return {'status': 'incomparable',
+                    'reason': f'incumbent features_holdout.pkl refused by the label quarantine: {err}',
+                    'incumbent_feature_count': len(inc_feature_cols),
+                    'challenger_feature_count': len(current_feature_cols),
+                    'incumbent_version': inc_version}, False
         inc_y_actual = np.asarray(inc_hold['y_actual'], dtype=float)
         inc_baseline = np.asarray(inc_hold['baseline'], dtype=float)
         if len(inc_y_actual) != len(hold_y_actual):

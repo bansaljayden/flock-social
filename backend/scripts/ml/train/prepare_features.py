@@ -415,7 +415,7 @@ def check_label_trust(paths: List[Path], windows: List[Dict] = None, env=os.envi
     admit_quarantined = _env_true(QUARANTINE_ENV, env)
     admit_repeating = _env_true(REPETITION_ENV, env)
     admit_unknown = unknown_provenance_admitted(env)
-    cols = ['venue_id', 'hour', 'is_realtime', 'busyness_pct', 'observed_date', 'label_source']
+    cols = ['venue_id', 'hour', 'is_realtime', 'busyness_pct', 'observed_date', 'label_source', 'baseline_busyness']
     quarantined_by_file: Dict[str, int] = {}
     trained_parts = []
     for path in paths:
@@ -434,11 +434,17 @@ def check_label_trust(paths: List[Path], windows: List[Dict] = None, env=os.envi
             live_weight = (src == 'live') & ~q if not admit_quarantined else (src == 'live')
             if admit_unknown:
                 live_weight = live_weight | (src == '')
+            # The repetition check reads the rows training and the gate read: the
+            # serving population, a stored curve above zero. A closed venue reading
+            # 0 week after week at an hour its curve says is closed repeats itself
+            # honestly and never trains. The quarantine above scans every row.
+            live_weight = live_weight & (pd.to_numeric(rt['baseline_busyness'], errors='coerce') > 0)
             trained_parts.append(rt.loc[np.asarray(live_weight), ['venue_id', 'observed_date', 'hour', 'busyness_pct']])
         quarantined_by_file[path.name] = n_q
     n_quarantined = sum(quarantined_by_file.values())
     record = {
         'quarantine': {'windows': windows, 'live_rows_inside': quarantined_by_file,
+                       'quarantine_sha256': features_io.quarantine_sha256(),
                        'policy': 'admitted_for_analysis' if (n_quarantined and admit_quarantined) else 'refuse',
                        'env': QUARANTINE_ENV, 'file': 'backend/services/labelQuarantine.json'},
     }
@@ -594,6 +600,12 @@ def resolve_final_refit(env=os.environ):
             'Only a run that passed may be refitted on everything.')
     if gated.get('final_refit'):
         raise CorpusContractError(f'{FINAL_REFIT_ENV}: {path} is itself a refit; refit the gated run.')
+    # The label quarantine (2026-11-27): a verdict measured before it, or with
+    # quarantined or repeating labels admitted, is not one to refit on.
+    trust_problems = features_io.gated_label_trust_problems(gated)
+    if trust_problems:
+        raise CorpusContractError(f'{FINAL_REFIT_ENV}: {path}: ' + '; '.join(trust_problems)
+                                  + '. Gate a run prepared under the current quarantine, then refit that.')
     import hashlib
     return {
         'gated_metadata_path': str(path.resolve()),

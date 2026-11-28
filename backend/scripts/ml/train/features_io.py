@@ -43,6 +43,10 @@ QUARANTINE_ENV = 'FLOCK_ALLOW_QUARANTINED_LABELS'
 REPETITION_ENV = 'FLOCK_ALLOW_REPEATING_LABELS'
 
 
+class LabelTrustError(ValueError):
+    """A pickle or replay that did not meet the current label quarantine (the block above)."""
+
+
 def quarantine_sha256(path=QUARANTINE_FILE) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -68,20 +72,20 @@ def require_label_trust(data: dict, pickle_path, env=None, path=QUARANTINE_FILE)
     if not isinstance(stamp, dict):
         if analysis:
             return
-        raise ValueError(
+        raise LabelTrustError(
             f'{pickle_path} carries no label-trust stamp: it was prepared before the label quarantine '
             '(2026-11-27) and may hold readings the provider generated. Prepare it again from a fresh '
             f'export, or set {QUARANTINE_ENV}=true for an analysis that knows what it is reading.')
     if stamp.get('quarantine_sha256') != quarantine_sha256(path) and not analysis:
-        raise ValueError(
+        raise LabelTrustError(
             f'{pickle_path} was checked against another version of labelQuarantine.json. Prepare it '
             f'again, or set {QUARANTINE_ENV}=true for an analysis.')
     if stamp.get('quarantine_policy') == 'admitted_for_analysis' and not analysis:
-        raise ValueError(
+        raise LabelTrustError(
             f'{pickle_path} was prepared with quarantined readings admitted ({QUARANTINE_ENV}=true); '
             'set the same override to load it, and never ship what it trains.')
     if stamp.get('repetition_policy') == 'admitted_for_analysis' and not _true(env, REPETITION_ENV):
-        raise ValueError(
+        raise LabelTrustError(
             f'{pickle_path} was prepared with repeating labels admitted ({REPETITION_ENV}=true); '
             'set the same override to load it, and never ship what it trains.')
 
@@ -127,6 +131,27 @@ def finish_x(pickle_path, arr) -> dict:
     return {X_FILE_KEY: path.name, X_SHAPE_KEY: shape, X_SHA_KEY: sha256_file(path)}
 
 
+def gated_label_trust_problems(gated_meta: dict, path=QUARANTINE_FILE) -> list:
+    """Why a gated run's verdict may not be carried onto a final refit, by the
+    label quarantine: its preparation must have run check_label_trust against
+    the current labelQuarantine.json and admitted neither quarantined nor
+    repeating labels. A verdict measured before 2026-11-27 carries no record,
+    and the November one was measured on readings the provider generated."""
+    trust = ((gated_meta or {}).get('corpus_contract') or {}).get('label_trust')
+    if not isinstance(trust, dict) or not trust:
+        return ['the gated run carries no label_trust record: it was prepared before the label quarantine '
+                '(2026-11-27) and its verdict may rest on readings the provider generated']
+    q, r = trust.get('quarantine') or {}, trust.get('repetition') or {}
+    out = []
+    if q.get('quarantine_sha256') != quarantine_sha256(path):
+        out.append('the gated run was checked against another version of labelQuarantine.json')
+    if q.get('policy') == 'admitted_for_analysis':
+        out.append('the gated run admitted quarantined labels (FLOCK_ALLOW_QUARANTINED_LABELS=true)')
+    if r.get('policy') == 'admitted_for_analysis':
+        out.append('the gated run admitted repeating labels (FLOCK_ALLOW_REPEATING_LABELS=true)')
+    return out
+
+
 REPLAY_STAMP_SUFFIX = '.label-trust.json'
 
 
@@ -141,12 +166,15 @@ def require_replay_stamp(replay_path, env=None, path=QUARANTINE_FILE) -> None:
     try:
         stamp = json.loads(stamp_path.read_text(encoding='utf-8'))
     except (OSError, ValueError):
-        raise ValueError(
+        raise LabelTrustError(
             f'{replay_path} has no readable {stamp_path.name} beside it: it was scored before the label '
             'quarantine (2026-11-27) and may score readings the provider generated. Score it again with '
             f'bandEval.js --rows-out, or set {QUARANTINE_ENV}=true for an analysis.')
     if not isinstance(stamp, dict) or stamp.get('quarantine_sha256') != quarantine_sha256(path):
-        raise ValueError(f'{replay_path} was scored under another version of labelQuarantine.json. '
+        raise LabelTrustError(f'{replay_path} was scored under another version of labelQuarantine.json. '
+                         'Score it again with bandEval.js --rows-out.')
+    if stamp.get('replay_sha256') != quarantine_sha256(replay_path):
+        raise LabelTrustError(f'{replay_path} is not the replay its stamp certifies (its SHA-256 differs). '
                          'Score it again with bandEval.js --rows-out.')
 
 

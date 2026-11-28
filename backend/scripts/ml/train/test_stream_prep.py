@@ -361,7 +361,12 @@ def gated_metadata(e: Export) -> Path:
     """The passed gated run a final refit names."""
     gated = e.root / 'gated_metadata.json'
     if not gated.exists():
-        gated.write_text(json.dumps({'ship_gate': {'overall_pass': True}, 'model_version': 'v-test'}))
+        # With the label-trust record a run prepared under the current
+        # quarantine carries (2026-11-27); without it the refit is refused.
+        trust = {'quarantine': {'quarantine_sha256': features_io.quarantine_sha256(), 'policy': 'refuse'},
+                 'repetition': {'policy': 'refuse'}}
+        gated.write_text(json.dumps({'ship_gate': {'overall_pass': True}, 'model_version': 'v-test',
+                                     'corpus_contract': {'label_trust': trust}}))
     return gated
 
 
@@ -459,6 +464,11 @@ def digest(out: Path) -> dict:
     meta = json.loads((out / 'model_metadata.json').read_text(encoding='utf-8'))
     if 'final_refit' in meta:
         meta['final_refit']['gated_metadata_path'] = '<gated_metadata.json>'   # a temporary folder
+        # The fixture's gated file gained its label-trust record on 2026-11-27,
+        # which moves its SHA-256 and nothing the refit prepares; the goldens
+        # were written against the file as it was before (gated_metadata).
+        meta['final_refit']['gated_metadata_sha256'] = hashlib.sha256(
+            json.dumps({'ship_gate': {'overall_pass': True}, 'model_version': 'v-test'}).encode('utf-8')).hexdigest()
     # label_trust (2026-11-27) is written by check_label_trust, which the
     # pre-refactor code never ran; its values are pinned in
     # test_label_quarantine.py. With it set aside, every other byte still has

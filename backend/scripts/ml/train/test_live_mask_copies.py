@@ -753,7 +753,7 @@ def test_the_final_refit_must_match_the_gated_runs_policy():
         with tempfile.TemporaryDirectory() as tmp:
             contracts = []
             for rec in (gated_copies, refit_copies):
-                contract = dict(tfr.POLICY)
+                contract = dict(tfr.POLICY, label_trust=tfr.TRUST)   # prepared under the current quarantine
                 if rec is not None:
                     contract['live_mask_copies'] = rec
                 contracts.append(contract)

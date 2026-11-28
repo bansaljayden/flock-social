@@ -115,9 +115,13 @@ function quarantineSha256(file = QUARANTINE_PATH) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
+// The stamp names the replay it certifies by the replay's own SHA-256, so a
+// current stamp left beside an older CSV copied over the new one certifies
+// nothing.
 function writeReplayStamp(replayFile) {
   fs.writeFileSync(replayFile + REPLAY_STAMP_SUFFIX, `${JSON.stringify({
-    quarantine_sha256: quarantineSha256(), windows: WINDOWS.map((w) => w.id), written_by: 'bandEval.js --rows-out',
+    quarantine_sha256: quarantineSha256(), replay_sha256: quarantineSha256(replayFile),
+    windows: WINDOWS.map((w) => w.id), written_by: 'bandEval.js --rows-out',
   }, null, 1)}\n`);
 }
 
@@ -134,6 +138,10 @@ function requireReplayStamp(replayFile, env = process.env) {
   }
   if (!stamp || stamp.quarantine_sha256 !== quarantineSha256()) {
     throw new Error(`${replayFile} was scored under another version of labelQuarantine.json. Score it again with `
+      + `bandEval.js --rows-out, or set ${QUARANTINE_ENV}=true for an analysis.`);
+  }
+  if (stamp.replay_sha256 !== quarantineSha256(replayFile)) {
+    throw new Error(`${replayFile} is not the replay its stamp certifies (its SHA-256 differs). Score it again with `
       + `bandEval.js --rows-out, or set ${QUARANTINE_ENV}=true for an analysis.`);
   }
 }

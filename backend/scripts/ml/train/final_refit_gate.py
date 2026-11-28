@@ -27,6 +27,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import features_io  # noqa: E402  (the label quarantine's check on a gated verdict)
+
 MODELS_DIR = Path(__file__).parent.parent / 'models'
 META = MODELS_DIR / 'model_metadata.json'
 
@@ -162,6 +165,9 @@ def problems_with(refit: dict, gated: dict, gated_blob: bytes) -> list:
         if rc.get(k) != gc.get(k):
             out.append(f'corpus_contract.{k} differs: refit {rc.get(k)!r} vs gated {gc.get(k)!r}')
     out.extend(unknown_provenance_problems(rc, gc))
+    # The label quarantine (2026-11-27): the verdict carried must have been
+    # measured on labels that met it (features_io.gated_label_trust_problems).
+    out.extend(features_io.gated_label_trust_problems(gated))
     out.extend(live_mask_copies_problems(rc, gc))
     out.extend(weight_policy_problems(refit.get('sample_weight_policy'), gated.get('sample_weight_policy')))
     if 'training_metrics' not in refit:

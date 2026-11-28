@@ -53,9 +53,15 @@ def weights(policy='auto', **over):
 REFIT_WEIGHTS = {'weight': 0.05, 'realtime_loss_share': 0.9086}
 
 
+# What check_label_trust records for a run prepared under the current label
+# quarantine (2026-11-27): a gated run without it cannot be refitted on.
+TRUST = {'quarantine': {'quarantine_sha256': pf.features_io.quarantine_sha256(), 'policy': 'refuse'},
+         'repetition': {'policy': 'refuse'}}
+
+
 def gated_meta(**over):
     m = {'model_version': '2.8.0-starling', 'feature_names': ['a', 'b'], 'best_params': dict(PARAMS),
-         'corpus_contract': dict(POLICY), 'training_rows': 1000, 'sample_weight_policy': weights(),
+         'corpus_contract': dict(POLICY, label_trust=TRUST), 'training_rows': 1000, 'sample_weight_policy': weights(),
          'ship_gate': {'overall_pass': True, 'verdict': 'SHIP', 'score_qmap_fitted_on': None}}
     m.update(over)
     return m
@@ -264,6 +270,7 @@ def provenance_problems(gated_record, refit_record):
     corpus_contract.unknown_provenance. None leaves the record out."""
     def contract(rec):
         c = {k: v for k, v in POLICY.items() if k != 'unknown_provenance'}
+        c['label_trust'] = TRUST
         if rec is not None:
             c['unknown_provenance'] = rec
         return c
@@ -322,6 +329,26 @@ def test_gate_compares_the_provenance_records_prepare_features_writes():
     assert_refused(provenance_problems(excluded, admitted),
                    'corpus_contract.unknown_provenance.train.policy differs')
 
+
+
+def test_a_verdict_measured_before_the_label_quarantine_is_neither_refitted_on_nor_carried():
+    # The November gate passed on readings the provider generated and carries no label_trust.
+    for trust, why in ((None, 'prepared before the label quarantine'),
+                       (dict(TRUST, quarantine={'quarantine_sha256': '0' * 64, 'policy': 'refuse'}), 'another version'),
+                       (dict(TRUST, quarantine=dict(TRUST['quarantine'], policy='admitted_for_analysis')), 'admitted quarantined'),
+                       (dict(TRUST, repetition={'policy': 'admitted_for_analysis'}), 'admitted repeating')):
+        contract = dict(POLICY) if trust is None else dict(POLICY, label_trust=trust)
+        with tempfile.TemporaryDirectory() as tmp:
+            p = write(tmp, gated_meta(corpus_contract=contract))
+            try:
+                pf.resolve_final_refit({pf.FINAL_REFIT_ENV: str(p)})
+            except pf.CorpusContractError as err:
+                assert why in str(err), (why, str(err))
+            else:
+                raise AssertionError(f'resolve_final_refit accepted a gated run: {why}')
+            gated = json.loads(p.read_bytes())
+            problems = frg.problems_with(refit_meta(p), gated, p.read_bytes())
+            assert any(why in x for x in problems), (why, problems)
 
 def main():
     tests = [(name, fn) for name, fn in sorted(globals().items()) if name.startswith('test_') and callable(fn)]
