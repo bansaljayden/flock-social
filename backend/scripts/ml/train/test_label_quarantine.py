@@ -176,6 +176,39 @@ def test_a_replay_needs_a_current_stamp_beside_it():
             raise AssertionError('hour_ranking_served read an unstamped replay')
 
 
+def test_a_stamp_names_the_version_the_check_read_even_if_the_file_changes_after():
+    import features_io as fio
+    ok = {'id': 'w', 'label_source': 'live', 'from_date': '2026-10-23', 'through_date': '2026-11-25', 'evidence': ['x']}
+    with tempfile.TemporaryDirectory() as tmp:
+        q = Path(tmp) / 'labelQuarantine.json'
+        q.write_text(json.dumps({'windows': [ok]}), encoding='utf-8')
+        windows, checked = pf.load_label_quarantine_snapshot(q)
+        q.write_text(json.dumps({'windows': [dict(ok, through_date='2026-12-31')]}), encoding='utf-8')
+        record = {'quarantine': {'quarantine_sha256': checked, 'policy': 'refuse'}, 'repetition': {'policy': 'refuse'}}
+        stamp = fio.label_trust_stamp(record, path=q)
+        assert stamp['quarantine_sha256'] == checked != fio.quarantine_sha256(q)
+        try:
+            fio.require_label_trust({fio.LABEL_TRUST_KEY: stamp}, 'p', env={}, path=q)
+        except fio.LabelTrustError as err:
+            assert 'another version' in str(err)
+        else:
+            raise AssertionError('a stamp from the old version loaded under the new one')
+
+
+def test_a_cached_refit_is_keyed_by_every_feature_row_it_saw():
+    import within_city_eval as wce
+    rng = np.random.default_rng(1)
+    X = rng.random((3000, 4)).astype(np.float32)
+    y, w = rng.random(3000), np.ones(3000)
+    train, test = np.arange(0, 2500), np.arange(2500, 3000)
+    base = wce._fit_key(X, y, w, train, test)
+    X2 = X.copy(); X2[1100, 2] += 1.0
+    assert wce._fit_key(X2, y, w, train, test) != base, 'training row 1,100 is part of the key'
+    X3 = X.copy(); X3[2700, 0] += 1.0
+    assert wce._fit_key(X3, y, w, train, test) != base, 'a test row is part of the key'
+    assert wce._fit_key(X.copy(), y, w, train, test) == base
+
+
 def test_an_export_holding_a_quarantined_row_is_refused_and_the_override_is_recorded():
     with tempfile.TemporaryDirectory() as tmp:
         t = write(tmp, 'training_data.csv', weekly() + rows(['2026-10-09', '2026-10-12', '2026-10-23'], [40, 35, 30]))

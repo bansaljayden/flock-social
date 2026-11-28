@@ -166,8 +166,11 @@ def problems_with(refit: dict, gated: dict, gated_blob: bytes) -> list:
             out.append(f'corpus_contract.{k} differs: refit {rc.get(k)!r} vs gated {gc.get(k)!r}')
     out.extend(unknown_provenance_problems(rc, gc))
     # The label quarantine (2026-11-27): the verdict carried must have been
-    # measured on labels that met it (features_io.gated_label_trust_problems).
+    # measured on labels that met it, and the refit it is carried onto must
+    # have been prepared from labels that meet it too
+    # (features_io.gated_label_trust_problems, the same rules for both).
     out.extend(features_io.gated_label_trust_problems(gated))
+    out.extend(p.replace('the gated run', 'the refit') for p in features_io.gated_label_trust_problems(refit))
     out.extend(live_mask_copies_problems(rc, gc))
     out.extend(weight_policy_problems(refit.get('sample_weight_policy'), gated.get('sample_weight_policy')))
     if 'training_metrics' not in refit:

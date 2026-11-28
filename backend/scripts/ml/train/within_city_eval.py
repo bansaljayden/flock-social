@@ -304,9 +304,25 @@ def time_holdout_like_prepare_features(train_df: pd.DataFrame,
 REBUILD_VERSION = 3
 
 
+def _source_identity(name: str):
+    """(size, mtime in ns) of an export file the rebuild reads, or None."""
+    p = SCRIPT_DIR / name
+    if not p.exists():
+        return None
+    st = p.stat()
+    return [int(st.st_size), int(st.st_mtime_ns)]
+
+
 def rebuild_cache_key() -> dict:
+    import features_io
     return {
         'rebuild_version': REBUILD_VERSION,
+        # The label quarantine (2026-11-27) and the export the frame is rebuilt
+        # from: a frame cached before the quarantine, or from another export,
+        # is rebuilt rather than reused (and never refused against a fresh one).
+        'label_quarantine_sha256': features_io.quarantine_sha256(),
+        'training_data_csv': _source_identity('training_data.csv'),
+        'holdout_data_csv': _source_identity('holdout_data.csv'),
         'live_feature_policy': pf.LIVE_FEATURE_POLICY,
         'sports_features': bool(pf.sports_features_enabled()),
         'run_length_policy': pf.RUN_LENGTH_POLICY,
@@ -678,8 +694,12 @@ def _fit_key(X, y, sample_weight, train_idx, test_idx) -> str:
     h.update(features_io.quarantine_sha256().encode())
     h.update(_json.dumps(FIXED_PARAMS, sort_keys=True, default=str).encode())
     for a in (np.asarray(train_idx), np.asarray(test_idx), np.asarray(y)[train_idx],
-              np.asarray(sample_weight)[train_idx], np.asarray(X[train_idx[:1000]]), np.asarray(X.shape)):
+              np.asarray(sample_weight)[train_idx], np.asarray(X.shape)):
         h.update(np.ascontiguousarray(a).tobytes())
+    # Every training and every test feature row, a bounded slice at a time.
+    for idx in (np.asarray(train_idx), np.asarray(test_idx)):
+        for start in range(0, len(idx), 100_000):
+            h.update(np.ascontiguousarray(X[idx[start:start + 100_000]]).tobytes())
     return h.hexdigest()[:16]
 
 

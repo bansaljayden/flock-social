@@ -21,9 +21,14 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const RAW = require('./labelQuarantine.json');
 const QUARANTINE_PATH = path.join(__dirname, 'labelQuarantine.json');
 const QUARANTINE_ENV = 'FLOCK_ALLOW_QUARANTINED_LABELS';
+// One read of the file: the windows this process applies and the SHA-256 it
+// stamps and checks come from the same bytes, so a stamp can never name a
+// version of the file other than the one that decided what was quarantined.
+const BYTES = fs.readFileSync(QUARANTINE_PATH);
+const RAW = JSON.parse(BYTES.toString('utf8'));
+const SNAPSHOT_SHA256 = crypto.createHash('sha256').update(BYTES).digest('hex');
 
 const DAY_MS = 86400000;
 
@@ -111,7 +116,10 @@ function overlapsQuarantine(fromMs, toMs, windows = WINDOWS) {
 // for an analysis. The Python side is features_io.require_replay_stamp.
 const REPLAY_STAMP_SUFFIX = '.label-trust.json';
 
+// The SHA-256 of a file; for the quarantine file itself, the snapshot this
+// process read at load (above), not whatever is on disk now.
 function quarantineSha256(file = QUARANTINE_PATH) {
+  if (file === QUARANTINE_PATH) return SNAPSHOT_SHA256;
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 

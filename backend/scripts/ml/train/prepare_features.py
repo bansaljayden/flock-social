@@ -339,7 +339,19 @@ def _env_true(name: str, env=os.environ) -> bool:
 
 def load_label_quarantine(path: Path = QUARANTINE_FILE) -> List[Dict]:
     """The windows of labelQuarantine.json, validated as services/labelQuarantine.js validates them."""
-    raw = json.loads(Path(path).read_text(encoding='utf-8'))
+    return load_label_quarantine_snapshot(path)[0]
+
+
+def load_label_quarantine_snapshot(path: Path = QUARANTINE_FILE) -> Tuple[List[Dict], str]:
+    """(the windows, the SHA-256 of the very bytes they were parsed from): the
+    check and the stamps it leads to name one version of the file, even if the
+    file is edited while a preparation runs."""
+    import hashlib
+    blob = Path(path).read_bytes()
+    return _validate_label_quarantine(json.loads(blob.decode('utf-8'))), hashlib.sha256(blob).hexdigest()
+
+
+def _validate_label_quarantine(raw) -> List[Dict]:
     # The same schema services/labelQuarantine.js enforces: an object holding a
     # windows array (an empty or missing one is not "no quarantine", it is a
     # broken file), string ids, and evidence that is a non-empty list.
@@ -411,7 +423,10 @@ def repeating_week(stats: Dict) -> bool:
 def check_label_trust(paths: List[Path], windows: List[Dict] = None, env=os.environ,
                       chunk_rows: int = 1_000_000) -> Dict:
     """Both refusals (see the block above). Returns the record model_metadata.json carries."""
-    windows = load_label_quarantine() if windows is None else windows
+    if windows is None:
+        windows, checked_sha = load_label_quarantine_snapshot()
+    else:
+        checked_sha = features_io.quarantine_sha256()
     admit_quarantined = _env_true(QUARANTINE_ENV, env)
     admit_repeating = _env_true(REPETITION_ENV, env)
     admit_unknown = unknown_provenance_admitted(env)
@@ -444,7 +459,7 @@ def check_label_trust(paths: List[Path], windows: List[Dict] = None, env=os.envi
     n_quarantined = sum(quarantined_by_file.values())
     record = {
         'quarantine': {'windows': windows, 'live_rows_inside': quarantined_by_file,
-                       'quarantine_sha256': features_io.quarantine_sha256(),
+                       'quarantine_sha256': checked_sha,
                        'policy': 'admitted_for_analysis' if (n_quarantined and admit_quarantined) else 'refuse',
                        'env': QUARANTINE_ENV, 'file': 'backend/services/labelQuarantine.json'},
     }

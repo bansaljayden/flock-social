@@ -52,9 +52,11 @@ def quarantine_sha256(path=QUARANTINE_FILE) -> str:
 
 
 def label_trust_stamp(record: dict, path=QUARANTINE_FILE) -> dict:
-    """The stamp a prepared pickle carries, from check_label_trust's record."""
+    """The stamp a prepared pickle carries, from check_label_trust's record: the
+    version of labelQuarantine.json the check read, not whatever is on disk now."""
+    checked = ((record or {}).get('quarantine') or {}).get('quarantine_sha256')
     return {
-        'quarantine_sha256': quarantine_sha256(path),
+        'quarantine_sha256': checked or quarantine_sha256(path),
         'quarantine_policy': ((record or {}).get('quarantine') or {}).get('policy'),
         'repetition_policy': ((record or {}).get('repetition') or {}).get('policy'),
     }

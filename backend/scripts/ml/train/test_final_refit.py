@@ -75,7 +75,7 @@ def write(tmp, meta):
 
 def refit_meta(gated_path, **over):
     blob = gated_path.read_bytes()
-    m = {'feature_names': ['a', 'b'], 'best_params': dict(PARAMS), 'corpus_contract': dict(POLICY),
+    m = {'feature_names': ['a', 'b'], 'best_params': dict(PARAMS), 'corpus_contract': dict(POLICY, label_trust=TRUST),
          'training_rows': 1400, 'training_metrics': {'within_15': 50.0},
          'sample_weight_policy': weights(**REFIT_WEIGHTS),
          'final_refit': {'gated_metadata_path': str(gated_path),
@@ -349,6 +349,21 @@ def test_a_verdict_measured_before_the_label_quarantine_is_neither_refitted_on_n
             gated = json.loads(p.read_bytes())
             problems = frg.problems_with(refit_meta(p), gated, p.read_bytes())
             assert any(why in x for x in problems), (why, problems)
+
+
+def test_a_refit_prepared_with_labels_the_quarantine_refuses_does_not_inherit_a_clean_verdict():
+    # A clean gated run, then a refit prepared with quarantined or repeating labels admitted
+    # for analysis, or before the quarantine, or against another version of it.
+    for trust, why in ((None, 'prepared before the label quarantine'),
+                       (dict(TRUST, quarantine={'quarantine_sha256': '0' * 64, 'policy': 'refuse'}), 'another version'),
+                       (dict(TRUST, quarantine=dict(TRUST['quarantine'], policy='admitted_for_analysis')), 'admitted quarantined'),
+                       (dict(TRUST, repetition={'policy': 'admitted_for_analysis'}), 'admitted repeating')):
+        contract = dict(POLICY) if trust is None else dict(POLICY, label_trust=trust)
+        with tempfile.TemporaryDirectory() as tmp:
+            p = write(tmp, gated_meta())
+            gated = json.loads(p.read_bytes())
+            problems = frg.problems_with(refit_meta(p, corpus_contract=contract), gated, p.read_bytes())
+            assert any(why in x and 'the refit' in x for x in problems), (why, problems)
 
 def main():
     tests = [(name, fn) for name, fn in sorted(globals().items()) if name.startswith('test_') and callable(fn)]
